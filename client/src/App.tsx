@@ -8,6 +8,8 @@ import LandingPage from "@/pages/landing-page";
 import AuthPage from "@/pages/auth-page";
 import ProfileSetup from "@/pages/profile-setup";
 import ProfilePage from "@/pages/profile-page";
+import PieceDetailPage from "@/pages/piece-detail";
+import InsightsPage from "@/pages/insights";
 
 function Router() {
   return (
@@ -16,6 +18,8 @@ function Router() {
       <Route path="/auth" component={AuthPage} />
       <Route path="/profile-setup" component={ProfileSetup} />
       <Route path="/profile" component={ProfilePage} />
+      <Route path="/piece/:id" component={PieceDetailPage} />
+      <Route path="/insights" component={InsightsPage} />
       <Route component={NotFound} />
     </Switch>
   );

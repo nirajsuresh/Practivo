@@ -4,9 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2 } from "lucide-react";
+import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { Link } from "wouter";
 
 export default function ProfilePage() {
   return (
@@ -35,15 +36,16 @@ export default function ProfilePage() {
             </div>
 
             <div className="pb-4 flex gap-3">
-              <Button variant="outline" className="bg-background/50 backdrop-blur-sm">
-                <Edit2 className="w-4 h-4 mr-2" /> Edit Profile
-              </Button>
+              <Link href="/insights">
+                <Button variant="outline" className="bg-background/50 backdrop-blur-sm">
+                  <TrendingUp className="w-4 h-4 mr-2" /> Artistic Insights
+                </Button>
+              </Link>
               <Button>Connect</Button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            {/* Sidebar */}
             <div className="space-y-6 lg:col-span-1">
               <Card>
                 <CardHeader>
@@ -77,7 +79,6 @@ export default function ProfilePage() {
               </Card>
             </div>
 
-            {/* Main Content - Repertoire */}
             <div className="lg:col-span-3">
               <Tabs defaultValue="all" className="w-full">
                 <div className="flex items-center justify-between mb-6">
@@ -110,6 +111,7 @@ export default function ProfilePage() {
                         movement="I. Allegro"
                         status="Performance-ready"
                         date="2023-09-15"
+                        id="brahms-sonata-3"
                       />
                       <RepertoireRow 
                         composer="J.S. Bach"
@@ -117,20 +119,7 @@ export default function ProfilePage() {
                         movement="V. Chaconne"
                         status="In Progress"
                         date="2024-01-10"
-                      />
-                      <RepertoireRow 
-                        composer="Eugène Ysaÿe"
-                        piece="Sonata No. 3 'Ballade'"
-                        movement="Full"
-                        status="Learned"
-                        date="2023-11-20"
-                      />
-                      <RepertoireRow 
-                        composer="Jean Sibelius"
-                        piece="Violin Concerto"
-                        movement="I. Allegro"
-                        status="Wishlist"
-                        date="—"
+                        id="bach-partita-2"
                       />
                     </TableBody>
                   </Table>
@@ -144,21 +133,23 @@ export default function ProfilePage() {
   );
 }
 
-function RepertoireRow({ composer, piece, movement, status, date }: { composer: string, piece: string, movement: string, status: string, date: string }) {
+function RepertoireRow({ composer, piece, movement, status, date, id }: { composer: string, piece: string, movement: string, status: string, date: string, id: string }) {
   const getStatusColor = (s: string) => {
     switch(s) {
       case "Performance-ready": return "bg-green-100 text-green-700 border-green-200";
       case "In Progress": return "bg-blue-100 text-blue-700 border-blue-200";
-      case "Learned": return "bg-amber-100 text-amber-700 border-amber-200";
-      case "Wishlist": return "bg-slate-100 text-slate-600 border-slate-200";
       default: return "bg-muted text-muted-foreground";
     }
   };
 
   return (
-    <TableRow className="group hover:bg-muted/20 transition-colors">
-      <TableCell className="font-semibold text-primary">{composer}</TableCell>
-      <TableCell className="font-serif italic">{piece}</TableCell>
+    <TableRow className="group hover:bg-muted/20 transition-colors cursor-pointer">
+      <TableCell className="font-semibold text-primary">
+        <Link href={`/piece/${id}`}>{composer}</Link>
+      </TableCell>
+      <TableCell className="font-serif italic">
+        <Link href={`/piece/${id}`}>{piece}</Link>
+      </TableCell>
       <TableCell className="text-muted-foreground">{movement}</TableCell>
       <TableCell>
         <Badge variant="outline" className={cn("font-medium", getStatusColor(status))}>
