@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,14 +10,179 @@ import { useLocation } from "wouter";
 import { Check, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { SearchableCombobox } from "@/components/searchable-combobox";
+import { useQuery } from "@tanstack/react-query";
+
+interface Composer {
+  id: number;
+  name: string;
+}
+
+interface Piece {
+  id: number;
+  title: string;
+  composerId: number;
+  composerName: string;
+}
+
+interface Movement {
+  id: number;
+  name: string;
+  pieceId: number;
+}
 
 interface RepertoireRow {
   id: string;
-  composer: string;
-  piece: string;
-  movement: string;
+  composerId: string;
+  pieceId: string;
+  movementId: string;
   status: string;
   dateStarted: string;
+}
+
+function RepertoireSetupRow({ 
+  row, 
+  onUpdate, 
+  onRemove, 
+  canRemove 
+}: { 
+  row: RepertoireRow; 
+  onUpdate: (field: keyof RepertoireRow, value: string) => void; 
+  onRemove: () => void;
+  canRemove: boolean;
+}) {
+  const [composerQuery, setComposerQuery] = useState("");
+  const [pieceQuery, setPieceQuery] = useState("");
+
+  const { data: composers = [], isLoading: composersLoading } = useQuery<Composer[]>({
+    queryKey: ["/api/composers/search", composerQuery],
+    queryFn: async () => {
+      const res = await fetch(`/api/composers/search?q=${encodeURIComponent(composerQuery)}`);
+      if (!res.ok) throw new Error("Failed to fetch composers");
+      return res.json();
+    },
+  });
+
+  const { data: pieces = [], isLoading: piecesLoading } = useQuery<Piece[]>({
+    queryKey: ["/api/pieces/search", pieceQuery, row.composerId],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (pieceQuery) params.set("q", pieceQuery);
+      if (row.composerId) params.set("composerId", row.composerId);
+      const res = await fetch(`/api/pieces/search?${params.toString()}`);
+      if (!res.ok) throw new Error("Failed to fetch pieces");
+      return res.json();
+    },
+    enabled: !!row.composerId || pieceQuery.length > 0,
+  });
+
+  const { data: movements = [], isLoading: movementsLoading } = useQuery<Movement[]>({
+    queryKey: ["/api/pieces", row.pieceId, "movements"],
+    queryFn: async () => {
+      const res = await fetch(`/api/pieces/${row.pieceId}/movements`);
+      if (!res.ok) throw new Error("Failed to fetch movements");
+      return res.json();
+    },
+    enabled: !!row.pieceId,
+  });
+
+  useEffect(() => {
+    if (row.composerId) {
+      onUpdate("pieceId", "");
+      onUpdate("movementId", "");
+    }
+  }, [row.composerId]);
+
+  useEffect(() => {
+    if (row.pieceId) {
+      onUpdate("movementId", "");
+    }
+  }, [row.pieceId]);
+
+  const composerOptions = composers.map(c => ({ value: c.id.toString(), label: c.name }));
+  const pieceOptions = pieces.map(p => ({ value: p.id.toString(), label: p.title }));
+  const movementOptions = movements.map(m => ({ value: m.id.toString(), label: m.name }));
+
+  return (
+    <TableRow>
+      <TableCell>
+        <SearchableCombobox
+          options={composerOptions}
+          value={row.composerId}
+          onValueChange={(val) => onUpdate("composerId", val)}
+          onSearch={setComposerQuery}
+          placeholder="Select composer..."
+          searchPlaceholder="Search..."
+          emptyMessage="No composers found."
+          isLoading={composersLoading}
+        />
+      </TableCell>
+      <TableCell>
+        <SearchableCombobox
+          options={pieceOptions}
+          value={row.pieceId}
+          onValueChange={(val) => onUpdate("pieceId", val)}
+          onSearch={setPieceQuery}
+          placeholder="Select piece..."
+          searchPlaceholder="Search..."
+          emptyMessage={row.composerId ? "No pieces found." : "Select composer first."}
+          isLoading={piecesLoading}
+          disabled={!row.composerId}
+        />
+      </TableCell>
+      <TableCell>
+        <SearchableCombobox
+          options={movementOptions}
+          value={row.movementId}
+          onValueChange={(val) => onUpdate("movementId", val)}
+          onSearch={() => {}}
+          placeholder={movements.length === 0 ? "N/A" : "Select..."}
+          searchPlaceholder="Search..."
+          emptyMessage="No movements."
+          isLoading={movementsLoading}
+          disabled={!row.pieceId || movements.length === 0}
+        />
+      </TableCell>
+      <TableCell>
+        <Select 
+          value={row.status} 
+          onValueChange={(val) => onUpdate("status", val)}
+        >
+          <SelectTrigger className="h-10 bg-background">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Wishlist">Wishlist</SelectItem>
+            <SelectItem value="In Progress">In Progress</SelectItem>
+            <SelectItem value="Learned">Learned</SelectItem>
+            <SelectItem value="Performance-ready">Performance-ready</SelectItem>
+            <SelectItem value="Re-learning">Re-learning</SelectItem>
+            <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell>
+        <Input 
+          type="date" 
+          disabled={row.status === "Wishlist"}
+          value={row.dateStarted}
+          onChange={(e) => onUpdate("dateStarted", e.target.value)}
+          className="h-10 bg-background disabled:opacity-30"
+        />
+      </TableCell>
+      <TableCell>
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          onClick={onRemove}
+          disabled={!canRemove}
+          className="text-destructive hover:text-destructive hover:bg-destructive/10 disabled:opacity-30"
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
 }
 
 export default function ProfileSetup() {
@@ -26,11 +191,11 @@ export default function ProfileSetup() {
   const totalSteps = 3;
 
   const [repertoire, setRepertoire] = useState<RepertoireRow[]>([
-    { id: "1", composer: "", piece: "", movement: "", status: "In Progress", dateStarted: "" }
+    { id: "1", composerId: "", pieceId: "", movementId: "", status: "In Progress", dateStarted: "" }
   ]);
 
   const addRow = () => {
-    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composer: "", piece: "", movement: "", status: "In Progress", dateStarted: "" }]);
+    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementId: "", status: "In Progress", dateStarted: "" }]);
   };
 
   const removeRow = (id: string) => {
@@ -151,77 +316,21 @@ export default function ProfileSetup() {
                       <TableRow>
                         <TableHead className="w-[200px]">Composer</TableHead>
                         <TableHead className="w-[200px]">Piece</TableHead>
-                        <TableHead className="w-[150px]">Movement</TableHead>
+                        <TableHead className="w-[150px]">Movement(s)</TableHead>
                         <TableHead className="w-[180px]">Status</TableHead>
-                        <TableHead className="w-[150px]">Date Started</TableHead>
+                        <TableHead className="w-[150px]">Started</TableHead>
                         <TableHead className="w-[50px]"></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {repertoire.map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell>
-                            <Input 
-                              placeholder="e.g. Brahms" 
-                              value={row.composer}
-                              onChange={(e) => updateRow(row.id, "composer", e.target.value)}
-                              className="h-10 bg-background"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input 
-                              placeholder="e.g. Sonata No. 3" 
-                              value={row.piece}
-                              onChange={(e) => updateRow(row.id, "piece", e.target.value)}
-                              className="h-10 bg-background"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input 
-                              placeholder="e.g. I. Allegro" 
-                              value={row.movement}
-                              onChange={(e) => updateRow(row.id, "movement", e.target.value)}
-                              className="h-10 bg-background"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Select 
-                              value={row.status} 
-                              onValueChange={(val) => updateRow(row.id, "status", val)}
-                            >
-                              <SelectTrigger className="h-10 bg-background">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Wishlist">Wishlist</SelectItem>
-                                <SelectItem value="In Progress">In Progress</SelectItem>
-                                <SelectItem value="Learned">Learned</SelectItem>
-                                <SelectItem value="Performance-ready">Performance-ready</SelectItem>
-                                <SelectItem value="Re-learning">Re-learning</SelectItem>
-                                <SelectItem value="Stopped learning">Stopped learning</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Input 
-                              type="date" 
-                              disabled={row.status === "Wishlist"}
-                              value={row.dateStarted}
-                              onChange={(e) => updateRow(row.id, "dateStarted", e.target.value)}
-                              className="h-10 bg-background disabled:opacity-30"
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              onClick={() => removeRow(row.id)}
-                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
+                        <RepertoireSetupRow
+                          key={row.id}
+                          row={row}
+                          onUpdate={(field, value) => updateRow(row.id, field, value)}
+                          onRemove={() => removeRow(row.id)}
+                          canRemove={repertoire.length > 1}
+                        />
                       ))}
                     </TableBody>
                   </Table>
