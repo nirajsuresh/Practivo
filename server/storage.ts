@@ -4,10 +4,14 @@ import {
   type Piece, type InsertPiece,
   type Movement, type InsertMovement,
   type RepertoireEntry, type InsertRepertoireEntry,
-  users, composers, pieces, movements, repertoireEntries
+  type Post, type InsertPost,
+  type Challenge, type InsertChallenge,
+  type UserProfile, type InsertUserProfile,
+  type Follow, type InsertFollow,
+  users, composers, pieces, movements, repertoireEntries, posts, challenges, userProfiles, follows
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and } from "drizzle-orm";
+import { eq, ilike, and, desc, inArray } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -35,6 +39,13 @@ export interface IStorage {
   createRepertoireEntry(entry: InsertRepertoireEntry): Promise<RepertoireEntry>;
   updateRepertoireEntry(id: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry | undefined>;
   deleteRepertoireEntry(id: number): Promise<boolean>;
+  
+  getFeedPosts(userId: string, limit?: number): Promise<any[]>;
+  getActiveChallenges(): Promise<Challenge[]>;
+  getRecordingPosts(limit?: number): Promise<any[]>;
+  getUserProfile(userId: string): Promise<UserProfile | undefined>;
+  getFollowing(userId: string): Promise<string[]>;
+  getSuggestedUsers(userId: string, limit?: number): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -160,6 +171,93 @@ export class DatabaseStorage implements IStorage {
   async deleteRepertoireEntry(id: number): Promise<boolean> {
     const result = await db.delete(repertoireEntries).where(eq(repertoireEntries.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getFeedPosts(userId: string, limit: number = 20): Promise<any[]> {
+    const followingIds = await this.getFollowing(userId);
+    const allUserIds = [userId, ...followingIds];
+    
+    const results = await db
+      .select({
+        id: posts.id,
+        userId: posts.userId,
+        type: posts.type,
+        content: posts.content,
+        pieceId: posts.pieceId,
+        recordingUrl: posts.recordingUrl,
+        practiceHours: posts.practiceHours,
+        createdAt: posts.createdAt,
+        displayName: userProfiles.displayName,
+        avatarUrl: userProfiles.avatarUrl,
+        pieceTitle: pieces.title,
+        composerName: composers.name,
+      })
+      .from(posts)
+      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
+      .leftJoin(pieces, eq(posts.pieceId, pieces.id))
+      .leftJoin(composers, eq(pieces.composerId, composers.id))
+      .where(inArray(posts.userId, allUserIds))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit);
+    
+    return results;
+  }
+
+  async getActiveChallenges(): Promise<Challenge[]> {
+    return db.select().from(challenges).where(eq(challenges.isActive, true)).orderBy(desc(challenges.createdAt));
+  }
+
+  async getRecordingPosts(limit: number = 10): Promise<any[]> {
+    const results = await db
+      .select({
+        id: posts.id,
+        userId: posts.userId,
+        content: posts.content,
+        pieceId: posts.pieceId,
+        recordingUrl: posts.recordingUrl,
+        createdAt: posts.createdAt,
+        displayName: userProfiles.displayName,
+        avatarUrl: userProfiles.avatarUrl,
+        pieceTitle: pieces.title,
+        composerName: composers.name,
+      })
+      .from(posts)
+      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
+      .leftJoin(pieces, eq(posts.pieceId, pieces.id))
+      .leftJoin(composers, eq(pieces.composerId, composers.id))
+      .where(eq(posts.type, "recording"))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit);
+    
+    return results;
+  }
+
+  async getUserProfile(userId: string): Promise<UserProfile | undefined> {
+    const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
+    return profile;
+  }
+
+  async getFollowing(userId: string): Promise<string[]> {
+    const result = await db.select({ followingId: follows.followingId }).from(follows).where(eq(follows.followerId, userId));
+    return result.map(r => r.followingId);
+  }
+
+  async getSuggestedUsers(userId: string, limit: number = 5): Promise<any[]> {
+    const followingIds = await this.getFollowing(userId);
+    const excludeIds = [userId, ...followingIds];
+    
+    const results = await db
+      .select({
+        userId: userProfiles.userId,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+      })
+      .from(userProfiles)
+      .limit(limit + excludeIds.length);
+    
+    return results.filter(r => !excludeIds.includes(r.userId)).slice(0, limit);
   }
 }
 

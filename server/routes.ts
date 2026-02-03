@@ -112,5 +112,59 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/feed/:userId", async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const posts = await storage.getFeedPosts(userId, limit);
+      res.json(posts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get feed posts" });
+    }
+  });
+
+  app.get("/api/challenges", async (req, res) => {
+    try {
+      const challenges = await storage.getActiveChallenges();
+      res.json(challenges);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get challenges" });
+    }
+  });
+
+  app.get("/api/recordings", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      const recordings = await storage.getRecordingPosts(limit);
+      res.json(recordings);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get recordings" });
+    }
+  });
+
+  app.get("/api/users/:userId/profile", async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const profile = await storage.getUserProfile(userId);
+      if (!profile) {
+        return res.status(404).json({ error: "User profile not found" });
+      }
+      res.json(profile);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get user profile" });
+    }
+  });
+
+  app.get("/api/users/:userId/suggested", async (req, res) => {
+    try {
+      const userId = req.params.userId;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 5;
+      const suggested = await storage.getSuggestedUsers(userId, limit);
+      res.json(suggested);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get suggested users" });
+    }
+  });
+
   return httpServer;
 }
