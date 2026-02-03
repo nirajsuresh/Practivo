@@ -1,21 +1,12 @@
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp, ArrowUpDown } from "lucide-react";
+import { MapPin, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp, ArrowUpDown, Trash2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogTrigger 
-} from "@/components/ui/dialog";
+import { AddPieceDialog } from "@/components/add-piece-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,9 +18,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
@@ -168,56 +156,7 @@ export default function ProfilePage() {
                       <TabsTrigger value="performance">Ready</TabsTrigger>
                     </TabsList>
                     
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button size="sm" variant="outline" className="gap-2">
-                          <Plus className="w-4 h-4" /> Add Piece
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-[425px]">
-                        <DialogHeader>
-                          <DialogTitle className="font-serif text-2xl">Add New Piece</DialogTitle>
-                          <DialogDescription>
-                            Add a new work to your repertoire tracking.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="grid gap-4 py-4">
-                          <div className="grid gap-2">
-                            <Label htmlFor="composer">Composer</Label>
-                            <Input id="composer" placeholder="e.g. Sergei Rachmaninoff" />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="piece">Piece</Label>
-                            <Input id="piece" placeholder="e.g. Piano Concerto No. 3" />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="movement">Movement(s)</Label>
-                            <Input id="movement" placeholder="e.g. I. Allegro, II. Adagio" />
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="status">Status</Label>
-                            <Select defaultValue="In Progress">
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select status" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Wishlist">Wishlist</SelectItem>
-                                <SelectItem value="In Progress">In Progress</SelectItem>
-                                <SelectItem value="Learned">Learned</SelectItem>
-                                <SelectItem value="Performance-ready">Performance-ready</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="grid gap-2">
-                            <Label htmlFor="date">Started</Label>
-                            <Input id="date" type="date" />
-                          </div>
-                        </div>
-                        <DialogFooter>
-                          <Button type="submit">Add to Repertoire</Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
+                    <AddPieceDialog />
                   </div>
                 </div>
 
