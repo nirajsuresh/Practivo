@@ -5,16 +5,29 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Music2, Calendar, Clock, Link as LinkIcon, Plus, ChevronDown, ChevronUp, ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
+import { cn } from "@/lib/utils";
 
 export default function PieceDetailPage() {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [status, setStatus] = useState("Performance-ready");
   const [notes, setNotes] = useState([
     { id: 1, date: "2024-02-01", time: "1.5", content: "Focused on the intonation in the opening G string passage. Needs more vibrato variety.", media: "https://vimeo.com/..." },
     { id: 2, date: "2024-01-28", time: "2.0", content: "Worked on the double stops in the development section. Metronome at 60bpm.", media: "" }
   ]);
+
+  const getStatusColor = (s: string) => {
+    switch(s) {
+      case "Performance-ready": return "bg-green-100 text-green-700 border-green-200";
+      case "In Progress": return "bg-blue-100 text-blue-700 border-blue-200";
+      case "Learned": return "bg-amber-100 text-amber-700 border-amber-200";
+      case "Wishlist": return "bg-slate-100 text-slate-600 border-slate-200";
+      default: return "bg-muted text-muted-foreground";
+    }
+  };
 
   return (
     <Layout>
@@ -27,13 +40,32 @@ export default function PieceDetailPage() {
             </Button>
           </Link>
 
-          <div className="mb-8 flex items-center gap-4">
-            <div className="p-3 bg-primary/10 rounded-lg">
-              <Music2 className="w-8 h-8 text-primary" />
+          <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-primary/10 rounded-lg">
+                <Music2 className="w-8 h-8 text-primary" />
+              </div>
+              <div>
+                <h1 className="font-serif text-4xl font-bold">Violin Sonata No. 3 in D minor</h1>
+                <p className="text-xl text-muted-foreground font-serif italic">Johannes Brahms, Op. 108</p>
+              </div>
             </div>
-            <div>
-              <h1 className="font-serif text-4xl font-bold">Violin Sonata No. 3 in D minor</h1>
-              <p className="text-xl text-muted-foreground font-serif italic">Johannes Brahms, Op. 108</p>
+            
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Status</span>
+              <Select value={status} onValueChange={setStatus}>
+                <SelectTrigger className={cn("h-10 w-[200px] font-medium transition-colors", getStatusColor(status))}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Wishlist">Wishlist</SelectItem>
+                  <SelectItem value="In Progress">In Progress</SelectItem>
+                  <SelectItem value="Learned">Learned</SelectItem>
+                  <SelectItem value="Performance-ready">Performance-ready</SelectItem>
+                  <SelectItem value="Re-learning">Re-learning</SelectItem>
+                  <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

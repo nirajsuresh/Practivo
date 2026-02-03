@@ -4,11 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles } from "lucide-react";
+import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { useState } from "react";
 
 const genreData = [
   { genre: "Baroque", value: 40 },
@@ -24,6 +26,12 @@ const lengthData = [
   { name: "10-20m", count: 12 },
   { name: "20-30m", count: 5 },
   { name: "30m+", count: 2 },
+];
+
+const activityLog = [
+  { id: 1, type: "start", piece: "Sibelius Violin Concerto", date: "2 days ago" },
+  { id: 2, type: "ready", piece: "Brahms Violin Sonata No. 3", date: "1 week ago" },
+  { id: 3, type: "performance", piece: "Bach Partita No. 2", location: "Mozarthaus Vienna", date: "2 weeks ago" },
 ];
 
 export default function ProfilePage() {
@@ -140,6 +148,32 @@ export default function ProfilePage() {
                   </Table>
                 </Card>
 
+                {/* Activity Log */}
+                <div className="space-y-6 mb-12">
+                  <div className="flex items-center gap-4">
+                    <Activity className="w-6 h-6 text-primary" />
+                    <h2 className="font-serif text-2xl font-bold">Activity Log</h2>
+                  </div>
+                  <Card className="border-none shadow-sm divide-y">
+                    {activityLog.map((log) => (
+                      <div key={log.id} className="p-4 flex items-center justify-between hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className={cn(
+                            "w-2 h-2 rounded-full",
+                            log.type === "start" ? "bg-blue-500" : log.type === "ready" ? "bg-green-500" : "bg-accent-foreground"
+                          )} />
+                          <p className="text-sm">
+                            {log.type === "start" && <>You started <span className="font-serif italic font-bold">{log.piece}</span>!</>}
+                            {log.type === "ready" && <>You are performance-ready with <span className="font-serif italic font-bold">{log.piece}</span></>}
+                            {log.type === "performance" && <>You added a performance on <span className="font-serif italic font-bold">{log.piece}</span> at {log.location}</>}
+                          </p>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{log.date}</span>
+                      </div>
+                    ))}
+                  </Card>
+                </div>
+
                 {/* Integrated Insights */}
                 <div className="space-y-8 pt-8 border-t">
                   <div className="flex items-center gap-4">
@@ -222,17 +256,21 @@ export default function ProfilePage() {
   );
 }
 
-function RepertoireRow({ composer, piece, movement, status, date, id }: { composer: string, piece: string, movement: string, status: string, date: string, id: string }) {
+function RepertoireRow({ composer, piece, movement, status: initialStatus, date, id }: { composer: string, piece: string, movement: string, status: string, date: string, id: string }) {
+  const [status, setStatus] = useState(initialStatus);
+
   const getStatusColor = (s: string) => {
     switch(s) {
       case "Performance-ready": return "bg-green-100 text-green-700 border-green-200";
       case "In Progress": return "bg-blue-100 text-blue-700 border-blue-200";
+      case "Learned": return "bg-amber-100 text-amber-700 border-amber-200";
+      case "Wishlist": return "bg-slate-100 text-slate-600 border-slate-200";
       default: return "bg-muted text-muted-foreground";
     }
   };
 
   return (
-    <TableRow className="group hover:bg-muted/20 transition-colors cursor-pointer">
+    <TableRow className="group hover:bg-muted/20 transition-colors">
       <TableCell className="font-semibold text-primary">
         <Link href={`/piece/${id}`}>{composer}</Link>
       </TableCell>
@@ -240,10 +278,20 @@ function RepertoireRow({ composer, piece, movement, status, date, id }: { compos
         <Link href={`/piece/${id}`}>{piece}</Link>
       </TableCell>
       <TableCell className="text-muted-foreground">{movement}</TableCell>
-      <TableCell>
-        <Badge variant="outline" className={cn("font-medium", getStatusColor(status))}>
-          {status}
-        </Badge>
+      <TableCell onClick={(e) => e.stopPropagation()}>
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className={cn("h-8 w-[180px] font-medium border-none shadow-none focus:ring-0", getStatusColor(status))}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Wishlist">Wishlist</SelectItem>
+            <SelectItem value="In Progress">In Progress</SelectItem>
+            <SelectItem value="Learned">Learned</SelectItem>
+            <SelectItem value="Performance-ready">Performance-ready</SelectItem>
+            <SelectItem value="Re-learning">Re-learning</SelectItem>
+            <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+          </SelectContent>
+        </Select>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">{date}</TableCell>
     </TableRow>
