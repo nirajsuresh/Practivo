@@ -187,15 +187,15 @@ export default function ProfilePage() {
                             <Input id="composer" placeholder="e.g. Sergei Rachmaninoff" />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="piece">Piece Title</Label>
+                            <Label htmlFor="piece">Piece</Label>
                             <Input id="piece" placeholder="e.g. Piano Concerto No. 3" />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="opus">Opus / Number</Label>
-                            <Input id="opus" placeholder="e.g. Op. 30" />
+                            <Label htmlFor="movement">Opus/No.</Label>
+                            <Input id="movement" placeholder="e.g. Op. 30" />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="status">Initial Status</Label>
+                            <Label htmlFor="status">Status</Label>
                             <Select defaultValue="In Progress">
                               <SelectTrigger>
                                 <SelectValue placeholder="Select status" />
@@ -207,6 +207,10 @@ export default function ProfilePage() {
                                 <SelectItem value="Performance-ready">Performance-ready</SelectItem>
                               </SelectContent>
                             </Select>
+                          </div>
+                          <div className="grid gap-2">
+                            <Label htmlFor="date">Started</Label>
+                            <Input id="date" type="date" />
                           </div>
                         </div>
                         <DialogFooter>
