@@ -58,14 +58,14 @@ const activityLog = [
 ];
 
 const mockRepertoire = [
-  { id: "chopin-ballade-4", composer: "Frédéric Chopin", piece: "Ballade No. 4 in F minor", movement: "Op. 52", status: "In Progress", date: "2024-02-01" },
+  { id: "chopin-ballade-4", composer: "Frédéric Chopin", piece: "Ballade No. 4 in F minor", movement: "", status: "In Progress", date: "2024-02-01" },
   { id: "rach-concerto-2", composer: "Sergei Rachmaninoff", piece: "Piano Concerto No. 2", movement: "I. Moderato", status: "Performance-ready", date: "2023-11-15" },
   { id: "ravel-gaspard", composer: "Maurice Ravel", piece: "Gaspard de la nuit", movement: "I. Ondine", status: "Polishing", date: "2024-01-10" },
   { id: "beethoven-appassionata", composer: "Ludwig van Beethoven", piece: "Sonata No. 23 'Appassionata'", movement: "Full", status: "Learned", date: "2023-08-20" },
   { id: "liszt-sonata-bminor", composer: "Franz Liszt", piece: "Sonata in B minor", movement: "S.178", status: "Learned", date: "2023-05-12" },
   { id: "bach-wTC1-cminor", composer: "J.S. Bach", piece: "WTC Book 1: Prelude & Fugue", movement: "No. 2 in C minor", status: "Performance-ready", date: "2023-12-01" },
   { id: "debussy-reflets", composer: "Claude Debussy", piece: "Images, Book I", movement: "Reflets dans l'eau", status: "In Progress", date: "2024-01-25" },
-  { id: "scriabin-sonata-5", composer: "Alexander Scriabin", piece: "Sonata No. 5", movement: "Op. 53", status: "Wishlist", date: "—" },
+  { id: "scriabin-sonata-5", composer: "Alexander Scriabin", piece: "Sonata No. 5", movement: "", status: "Wishlist", date: "—" },
 ];
 
 export default function ProfilePage() {
