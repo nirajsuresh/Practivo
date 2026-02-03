@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity } from "lucide-react";
+import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -34,7 +34,21 @@ const activityLog = [
   { id: 3, type: "performance", piece: "Bach Partita No. 2", location: "Mozarthaus Vienna", date: "2 weeks ago" },
 ];
 
+const mockRepertoire = [
+  { id: "brahms-sonata-3", composer: "Johannes Brahms", piece: "Violin Sonata No. 3 in D minor", movement: "I. Allegro", status: "Performance-ready", date: "2023-09-15" },
+  { id: "bach-partita-2", composer: "J.S. Bach", piece: "Partita No. 2 in D minor", movement: "V. Chaconne", status: "In Progress", date: "2024-01-10" },
+  { id: "ysaye-sonata-3", composer: "Eugène Ysaÿe", piece: "Sonata No. 3 'Ballade'", movement: "Full", status: "Learned", date: "2023-11-20" },
+  { id: "sibelius-concerto", composer: "Jean Sibelius", piece: "Violin Concerto", movement: "I. Allegro", status: "Wishlist", date: "—" },
+  { id: "mozart-concerto-5", composer: "W.A. Mozart", piece: "Violin Concerto No. 5", movement: "III. Rondeau", status: "Learned", date: "2023-05-12" },
+  { id: "beethoven-sonata-9", composer: "Ludwig van Beethoven", piece: "Sonata No. 9 'Kreutzer'", movement: "I. Adagio sostenuto", status: "Wishlist", date: "—" },
+  { id: "mendelssohn-concerto", composer: "Felix Mendelssohn", piece: "Violin Concerto in E minor", movement: "I. Allegro molto appassionato", status: "Learned", date: "2022-11-30" },
+  { id: "paganini-caprice-24", composer: "Niccolò Paganini", piece: "24 Caprices", movement: "No. 24", status: "In Progress", date: "2024-02-01" },
+];
+
 export default function ProfilePage() {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const visibleRepertoire = isExpanded ? mockRepertoire : mockRepertoire.slice(0, 3);
+
   return (
     <Layout>
       <div className="min-h-screen bg-background pb-20">
@@ -116,37 +130,48 @@ export default function ProfilePage() {
                   </TabsList>
                 </div>
 
-                <Card className="border-none shadow-sm overflow-hidden mb-12">
-                  <Table>
-                    <TableHeader className="bg-muted/30">
-                      <TableRow>
-                        <TableHead>Composer</TableHead>
-                        <TableHead>Piece</TableHead>
-                        <TableHead>Movement</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Started</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <RepertoireRow 
-                        composer="Johannes Brahms"
-                        piece="Violin Sonata No. 3 in D minor"
-                        movement="I. Allegro"
-                        status="Performance-ready"
-                        date="2023-09-15"
-                        id="brahms-sonata-3"
-                      />
-                      <RepertoireRow 
-                        composer="J.S. Bach"
-                        piece="Partita No. 2 in D minor"
-                        movement="V. Chaconne"
-                        status="In Progress"
-                        date="2024-01-10"
-                        id="bach-partita-2"
-                      />
-                    </TableBody>
-                  </Table>
-                </Card>
+                <div className="space-y-4 mb-12">
+                  <Card className="border-none shadow-sm overflow-hidden">
+                    <Table>
+                      <TableHeader className="bg-muted/30">
+                        <TableRow>
+                          <TableHead>Composer</TableHead>
+                          <TableHead>Piece</TableHead>
+                          <TableHead>Movement</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Started</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {visibleRepertoire.map((item) => (
+                          <RepertoireRow 
+                            key={item.id}
+                            id={item.id}
+                            composer={item.composer}
+                            piece={item.piece}
+                            movement={item.movement}
+                            status={item.status}
+                            date={item.date}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Card>
+                  
+                  <div className="flex justify-center">
+                    <Button 
+                      variant="ghost" 
+                      onClick={() => setIsExpanded(!isExpanded)}
+                      className="text-primary hover:bg-primary/5 gap-2"
+                    >
+                      {isExpanded ? (
+                        <>Show Less <ChevronUp className="w-4 h-4" /></>
+                      ) : (
+                        <>View Full Repertoire <ChevronDown className="w-4 h-4" /></>
+                      )}
+                    </Button>
+                  </div>
+                </div>
 
                 {/* Activity Log */}
                 <div className="space-y-6 mb-12">
