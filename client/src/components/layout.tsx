@@ -29,7 +29,7 @@ export function Navbar() {
             src="/src/assets/images/logo.png" 
             alt="Réperto Logo" 
             className="h-12 w-auto transition-all group-hover:opacity-80"
-            style={{ filter: isLanding ? 'invert(1) brightness(2)' : 'none' }}
+            style={{ filter: isLanding ? 'brightness(0) invert(1)' : 'none' }}
           />
         </div>
       </Link>
