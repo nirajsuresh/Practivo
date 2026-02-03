@@ -81,9 +81,9 @@
   --muted: 35 10% 88%;
   --muted-foreground: 240 4% 46%;
 
-  /* Accent - Antique Copper/Gold */
-  --accent: 30 40% 92%;
-  --accent-foreground: 240 5% 20%;
+  /* Accent - Brand Copper (Matching Logo) */
+  --accent: 19 33% 66%;
+  --accent-foreground: 240 5% 15%;
 
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
