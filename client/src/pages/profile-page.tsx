@@ -191,10 +191,6 @@ export default function ProfilePage() {
                             <Input id="piece" placeholder="e.g. Piano Concerto No. 3" />
                           </div>
                           <div className="grid gap-2">
-                            <Label htmlFor="movement">Opus/No.</Label>
-                            <Input id="movement" placeholder="e.g. Op. 30" />
-                          </div>
-                          <div className="grid gap-2">
                             <Label htmlFor="status">Status</Label>
                             <Select defaultValue="In Progress">
                               <SelectTrigger>
