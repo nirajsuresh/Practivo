@@ -119,7 +119,6 @@ export default function ProfilePage() {
               <Button variant="outline" className="bg-background/50 backdrop-blur-sm">
                 <Edit2 className="w-4 h-4 mr-2" /> Edit Profile
               </Button>
-              <Button>Connect</Button>
             </div>
           </div>
 

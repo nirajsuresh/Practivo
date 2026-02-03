@@ -1,12 +1,15 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search } from "lucide-react";
 import { useState, useEffect } from "react";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
   const isLanding = location === "/";
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
@@ -18,20 +21,41 @@ export function Navbar() {
     setLocation("/");
   };
 
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      setLocation(`/search?q=${encodeURIComponent(searchQuery)}`);
+    }
+  };
+
   return (
     <nav className={cn(
       "w-full py-6 px-4 md:px-8 flex justify-between items-center z-50 transition-all duration-300",
       isLanding ? "absolute top-0 left-0 bg-transparent text-white" : "bg-background/80 backdrop-blur-md border-b sticky top-0"
     )}>
-      <Link href="/">
-        <div className="flex items-center cursor-pointer group">
-          <img 
-            src="/src/assets/images/logo.png" 
-            alt="Réperto Logo" 
-            className="h-12 w-auto transition-all group-hover:opacity-80"
-          />
-        </div>
-      </Link>
+      <div className="flex items-center gap-8 flex-1">
+        <Link href="/">
+          <div className="flex items-center cursor-pointer group">
+            <img 
+              src="/src/assets/images/logo.png" 
+              alt="Réperto Logo" 
+              className="h-12 w-auto transition-all group-hover:opacity-80"
+            />
+          </div>
+        </Link>
+
+        {isLoggedIn && !isLanding && (
+          <form onSubmit={handleSearch} className="hidden md:flex relative max-w-sm w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input 
+              placeholder="Search musicians..." 
+              className="pl-10 bg-muted/50 border-none focus-visible:ring-1 focus-visible:ring-accent"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </form>
+        )}
+      </div>
 
       <div className="flex items-center gap-6">
         {isLoggedIn ? (
