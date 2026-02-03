@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp } from "lucide-react";
+import { MapPin, Calendar, Plus, MoreHorizontal, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp, ArrowUpDown } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
@@ -70,7 +70,25 @@ const mockRepertoire = [
 
 export default function ProfilePage() {
   const [isExpanded, setIsExpanded] = useState(false);
-  const visibleRepertoire = isExpanded ? mockRepertoire : mockRepertoire.slice(0, 3);
+  const [sortConfig, setSortConfig] = useState<{ key: keyof typeof mockRepertoire[0], direction: 'asc' | 'desc' } | null>(null);
+
+  const handleSort = (key: keyof typeof mockRepertoire[0]) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const sortedRepertoire = [...mockRepertoire].sort((a, b) => {
+    if (!sortConfig) return 0;
+    const { key, direction } = sortConfig;
+    if (a[key] < b[key]) return direction === 'asc' ? -1 : 1;
+    if (a[key] > b[key]) return direction === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const visibleRepertoire = isExpanded ? sortedRepertoire : sortedRepertoire.slice(0, 3);
 
   return (
     <Layout>
@@ -207,11 +225,21 @@ export default function ProfilePage() {
                     <Table>
                       <TableHeader className="bg-muted/30">
                         <TableRow>
-                          <TableHead>Composer</TableHead>
-                          <TableHead>Piece</TableHead>
-                          <TableHead>Opus/No.</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Started</TableHead>
+                          <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('composer')}>
+                            <div className="flex items-center gap-2">Composer <ArrowUpDown className="w-3 h-3" /></div>
+                          </TableHead>
+                          <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('piece')}>
+                            <div className="flex items-center gap-2">Piece <ArrowUpDown className="w-3 h-3" /></div>
+                          </TableHead>
+                          <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('movement')}>
+                            <div className="flex items-center gap-2">Opus/No. <ArrowUpDown className="w-3 h-3" /></div>
+                          </TableHead>
+                          <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('status')}>
+                            <div className="flex items-center gap-2">Status <ArrowUpDown className="w-3 h-3" /></div>
+                          </TableHead>
+                          <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('date')}>
+                            <div className="flex items-center gap-2">Started <ArrowUpDown className="w-3 h-3" /></div>
+                          </TableHead>
                           <TableHead className="w-[50px]"></TableHead>
                         </TableRow>
                       </TableHeader>
