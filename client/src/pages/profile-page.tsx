@@ -84,16 +84,16 @@ export default function ProfilePage() {
         <div className="container mx-auto px-4 -mt-32 relative z-10">
           <div className="flex flex-col md:flex-row items-end gap-6 mb-8">
             <Avatar className="w-40 h-40 border-4 border-background shadow-2xl">
-              <AvatarImage src="https://images.unsplash.com/photo-1511367461989-f85a21fda167?q=80&w=2531&auto=format&fit=crop" />
-              <AvatarFallback className="text-4xl font-serif">MM</AvatarFallback>
+              <AvatarImage src="/src/assets/images/niraj.png" />
+              <AvatarFallback className="text-4xl font-serif">NS</AvatarFallback>
             </Avatar>
             
             <div className="flex-1 pb-4 text-center md:text-left">
-              <h1 className="font-serif text-4xl font-bold text-primary mb-2">Marcello Moretti</h1>
+              <h1 className="font-serif text-4xl font-bold text-primary mb-2">Niraj Suresh</h1>
               <div className="flex flex-col md:flex-row items-center gap-4 text-muted-foreground mb-4">
-                <span className="flex items-center gap-1 font-medium"><span className="text-accent-foreground">Piano</span> • Concert Pianist</span>
+                <span className="flex items-center gap-1 font-medium"><span className="text-accent-foreground">Piano</span> • Serious Amateur</span>
                 <span className="hidden md:inline">•</span>
-                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> Milan, Italy</span>
+                <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> Boston, USA</span>
               </div>
             </div>
 
