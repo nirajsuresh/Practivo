@@ -195,27 +195,50 @@ export default function ProfilePage() {
                 </div>
 
                 <div className="space-y-4 mb-12">
+                  {sortConfig && (
+                    <div className="flex justify-end mb-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSortConfig(null)}
+                        className="text-xs text-muted-foreground hover:text-foreground gap-1.5"
+                        data-testid="button-custom-order"
+                      >
+                        <GripVertical className="w-3 h-3" /> Custom order
+                      </Button>
+                    </div>
+                  )}
                   <Card className="border-none shadow-sm overflow-hidden">
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                       <Table>
                         <TableHeader className="bg-muted/30">
                           <TableRow>
                             <TableHead className="w-[40px]"></TableHead>
-                            <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('composer')}>
-                              <div className="flex items-center gap-2">Composer <ArrowUpDown className="w-3 h-3" /></div>
-                            </TableHead>
-                            <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('piece')}>
-                              <div className="flex items-center gap-2">Piece <ArrowUpDown className="w-3 h-3" /></div>
-                            </TableHead>
-                            <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('movements')}>
-                              <div className="flex items-center gap-2">Movement(s) <ArrowUpDown className="w-3 h-3" /></div>
-                            </TableHead>
-                            <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('status')}>
-                              <div className="flex items-center gap-2">Status <ArrowUpDown className="w-3 h-3" /></div>
-                            </TableHead>
-                            <TableHead className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => handleSort('date')}>
-                              <div className="flex items-center gap-2">Started <ArrowUpDown className="w-3 h-3" /></div>
-                            </TableHead>
+                            {([
+                              ["composer", "Composer"],
+                              ["piece", "Piece"],
+                              ["movements", "Movement(s)"],
+                              ["status", "Status"],
+                              ["date", "Started"],
+                            ] as [keyof RepertoireItem, string][]).map(([key, label]) => {
+                              const isActive = sortConfig?.key === key;
+                              return (
+                                <TableHead
+                                  key={key}
+                                  className="cursor-pointer hover:bg-muted/50 transition-colors"
+                                  onClick={() => handleSort(key)}
+                                >
+                                  <div className={cn("flex items-center gap-2", isActive && "text-foreground font-semibold")}>
+                                    {label}
+                                    {isActive ? (
+                                      sortConfig.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                                    ) : (
+                                      <ArrowUpDown className="w-3 h-3" />
+                                    )}
+                                  </div>
+                                </TableHead>
+                              );
+                            })}
                             <TableHead className="w-[50px]"></TableHead>
                           </TableRow>
                         </TableHeader>
