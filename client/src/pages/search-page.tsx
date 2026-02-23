@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Layout } from "@/components/layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,9 +19,32 @@ interface PieceResult {
   composerName: string;
 }
 
+function useSearchQuery() {
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') || "");
+
+  useEffect(() => {
+    const handleChange = () => {
+      setQuery(new URLSearchParams(window.location.search).get('q') || "");
+    };
+    window.addEventListener('popstate', handleChange);
+    window.addEventListener('pushstate', handleChange);
+    const origPush = history.pushState.bind(history);
+    history.pushState = (...args: Parameters<typeof history.pushState>) => {
+      origPush(...args);
+      handleChange();
+    };
+    return () => {
+      window.removeEventListener('popstate', handleChange);
+      window.removeEventListener('pushstate', handleChange);
+      history.pushState = origPush;
+    };
+  }, []);
+
+  return query;
+}
+
 export default function SearchPage() {
-  const params = new URLSearchParams(window.location.search);
-  const query = params.get('q') || "";
+  const query = useSearchQuery();
 
   const filteredUsers = mockUsers.filter(u => 
     u.name.toLowerCase().includes(query.toLowerCase()) || 

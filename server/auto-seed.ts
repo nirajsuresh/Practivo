@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { users, userProfiles, posts, challenges, follows, pieces, composers, movements, pieceRatings, pieceComments, repertoireEntries } from "@shared/schema";
 import pianoLibrary from "./piano-library.json";
 
@@ -8,6 +9,7 @@ interface LibraryComposer {
 }
 
 export async function autoSeedIfEmpty() {
+  await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
   const existingComposers = await db.select().from(composers).limit(1);
 
   if (existingComposers.length > 0) {

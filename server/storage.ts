@@ -90,25 +90,36 @@ export class DatabaseStorage implements IStorage {
   }
 
   async searchPieces(query: string, composerId?: number): Promise<(Piece & { composerName: string })[]> {
-    const baseQuery = db
-      .select({
-        id: pieces.id,
-        title: pieces.title,
-        composerId: pieces.composerId,
-        composerName: composers.name,
-      })
-      .from(pieces)
-      .innerJoin(composers, eq(pieces.composerId, composers.id))
-      .limit(20);
+    const selectFields = {
+      id: pieces.id,
+      title: pieces.title,
+      composerId: pieces.composerId,
+      composerName: composers.name,
+    };
 
     if (composerId && query.trim()) {
-      return baseQuery.where(and(eq(pieces.composerId, composerId), ilike(pieces.title, `%${query}%`)));
+      return db.select(selectFields).from(pieces)
+        .innerJoin(composers, eq(pieces.composerId, composers.id))
+        .where(and(eq(pieces.composerId, composerId), ilike(pieces.title, `%${query}%`)))
+        .limit(20);
     } else if (composerId) {
-      return baseQuery.where(eq(pieces.composerId, composerId));
+      return db.select(selectFields).from(pieces)
+        .innerJoin(composers, eq(pieces.composerId, composers.id))
+        .where(eq(pieces.composerId, composerId))
+        .limit(20);
     } else if (query.trim()) {
-      return baseQuery.where(ilike(pieces.title, `%${query}%`));
+      const combined = sql`(${pieces.title} || ' ' || ${composers.name})`;
+      return db.select(selectFields).from(pieces)
+        .innerJoin(composers, eq(pieces.composerId, composers.id))
+        .where(
+          sql`${ilike(pieces.title, `%${query}%`)} OR ${ilike(composers.name, `%${query}%`)} OR similarity(${combined}, ${query}) > 0.1`
+        )
+        .orderBy(sql`similarity(${combined}, ${query}) DESC`)
+        .limit(20);
     }
-    return baseQuery;
+    return db.select(selectFields).from(pieces)
+      .innerJoin(composers, eq(pieces.composerId, composers.id))
+      .limit(20);
   }
 
   async getPieceById(id: number): Promise<Piece | undefined> {
