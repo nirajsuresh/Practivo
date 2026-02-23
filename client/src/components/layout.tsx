@@ -69,7 +69,7 @@ export function Navbar() {
                 )}
                 data-testid="link-home"
               >
-                Home
+                Feed
               </Button>
             </Link>
             <Link href="/profile">

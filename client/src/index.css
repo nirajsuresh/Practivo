@@ -81,16 +81,16 @@
   --muted: 35 10% 88%;
   --muted-foreground: 240 4% 46%;
 
-  /* Accent - Brand Copper (Matching Logo) */
-  --accent: 19 33% 66%;
-  --accent-foreground: 240 5% 15%;
+  /* Accent - Warm Copper Tint (Matching Logo #d4967c) */
+  --accent: 15 50% 93%;
+  --accent-foreground: 15 40% 35%;
 
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
 
   --border: 35 10% 85%;
   --input: 35 10% 85%;
-  --ring: 240 5% 20%;
+  --ring: 15 47% 66%;
 
   --radius: 0.25rem; /* Sharp, refined corners */
 
