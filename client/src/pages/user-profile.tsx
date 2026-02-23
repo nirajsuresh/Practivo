@@ -11,7 +11,7 @@ import { Link, useParams } from "wouter";
 
 const mockRepertoires = {
   marcello: [
-    { id: "chopin-ballade-4", composer: "Frédéric Chopin", piece: "Ballade No. 4 in F minor", movement: "Op. 52", status: "In Progress", date: "2024-02-01" },
+    { id: "chopin-ballade-4", composer: "Frédéric Chopin", piece: "Ballade No. 4 in F minor", movement: "Op. 52", status: "Learning", date: "2024-02-01" },
     { id: "rach-concerto-2", composer: "Sergei Rachmaninoff", piece: "Piano Concerto No. 2", movement: "I. Moderato", status: "Performance-ready", date: "2023-11-15" },
     { id: "ravel-gaspard", composer: "Maurice Ravel", piece: "Gaspard de la nuit", movement: "I. Ondine", status: "Polishing", date: "2024-01-10" },
   ],

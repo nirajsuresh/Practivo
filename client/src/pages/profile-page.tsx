@@ -46,14 +46,14 @@ const activityLog = [
 ];
 
 const mockRepertoire = [
-  { id: "1260", composer: "Frédéric Chopin", piece: "Ballade no. 4 in F minor Op. 52", movement: "", status: "In Progress", date: "2024-02-01" },
+  { id: "1260", composer: "Frédéric Chopin", piece: "Ballade no. 4 in F minor Op. 52", movement: "", status: "Learning", date: "2024-02-01" },
   { id: "2219", composer: "Sergei Rachmaninoff", piece: "Préludes Op. 23", movement: "No. 5 in G minor", status: "Performance-ready", date: "2023-11-15" },
   { id: "2055", composer: "Maurice Ravel", piece: "Gaspard de la nuit", movement: "I. Ondine", status: "Polishing", date: "2024-01-10" },
-  { id: "1997", composer: "Ludwig van Beethoven", piece: "Sonata no. 23 in F minor Op. 57 (Appassionata)", movement: "Full", status: "Learned", date: "2023-08-20" },
-  { id: "1103", composer: "Franz Liszt", piece: "Sonata in B minor S. 178", movement: "", status: "Learned", date: "2023-05-12" },
-  { id: "1791", composer: "Johann Sebastian Bach", piece: "The Well-Tempered Clavier, Book 1 BWV 846–869", movement: "Prelude & Fugue No. 2 in C minor", status: "Performance-ready", date: "2023-12-01" },
-  { id: "262", composer: "Claude Debussy", piece: "Images, Série 1", movement: "Reflets dans l'eau", status: "In Progress", date: "2024-01-25" },
-  { id: "220", composer: "Alexander Scriabin", piece: "Sonata no. 5 Op. 53", movement: "", status: "Wishlist", date: "—" },
+  { id: "1997", composer: "Ludwig van Beethoven", piece: "Sonata no. 23 in F minor Op. 57 (Appassionata)", movement: "Full", status: "Performance-ready", date: "2023-08-20" },
+  { id: "1103", composer: "Franz Liszt", piece: "Sonata in B minor S. 178", movement: "", status: "Shelved", date: "2023-05-12" },
+  { id: "1791", composer: "Johann Sebastian Bach", piece: "The Well-Tempered Clavier, Book 1 BWV 846–869", movement: "Prelude & Fugue No. 2 in C minor", status: "Polishing", date: "2023-12-01" },
+  { id: "262", composer: "Claude Debussy", piece: "Images, Série 1", movement: "Reflets dans l'eau", status: "Learning", date: "2024-01-25" },
+  { id: "220", composer: "Alexander Scriabin", piece: "Sonata no. 5 Op. 53", movement: "", status: "Want to learn", date: "—" },
 ];
 
 export default function ProfilePage() {
@@ -322,12 +322,11 @@ function RepertoireRow({ composer, piece, movement, status: initialStatus, date,
 
   const getStatusColor = (s: string) => {
     switch(s) {
+      case "Want to learn": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
+      case "Learning": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
+      case "Polishing": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
       case "Performance-ready": return "bg-[#e8ddd0] text-[#6b5230] border-[#d4c8b0]";
-      case "In Progress": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
-      case "Learned": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
-      case "Wishlist": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
-      case "Re-learning": return "bg-[#f0d8cc] text-[#8b4030] border-[#e4c0ae]";
-      case "Stopped learning": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
+      case "Shelved": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
       default: return "bg-muted text-muted-foreground";
     }
   };
@@ -347,12 +346,11 @@ function RepertoireRow({ composer, piece, movement, status: initialStatus, date,
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="Wishlist">Wishlist</SelectItem>
-            <SelectItem value="In Progress">In Progress</SelectItem>
-            <SelectItem value="Learned">Learned</SelectItem>
+            <SelectItem value="Want to learn">Want to learn</SelectItem>
+            <SelectItem value="Learning">Learning</SelectItem>
+            <SelectItem value="Polishing">Polishing</SelectItem>
             <SelectItem value="Performance-ready">Performance-ready</SelectItem>
-            <SelectItem value="Re-learning">Re-learning</SelectItem>
-            <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+            <SelectItem value="Shelved">Shelved</SelectItem>
           </SelectContent>
         </Select>
       </TableCell>

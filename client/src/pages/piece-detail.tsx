@@ -59,7 +59,7 @@ export default function PieceDetailPage() {
     enabled: !!pieceData?.composerId,
   });
 
-  const [status, setStatus] = useState("In Progress");
+  const [status, setStatus] = useState("Learning");
   const [scoreFile, setScoreFile] = useState<{ name: string; path: string } | null>(null);
   const [notes, setNotes] = useState([
     { id: 1, date: "2025-02-05", time: "2.5", type: "Practice" as const, content: "Mastering the polyrhythms in the C section. Focus on left-hand clarity in the descending runs.", media: "https://vimeo.com/..." },
@@ -70,20 +70,19 @@ export default function PieceDetailPage() {
   ]);
 
   const statusHistory = [
-    { date: "Mar '24", status: "Wishlist" },
-    { date: "Jun '24", status: "In Progress" },
-    { date: "Nov '24", status: "Learned" },
+    { date: "Mar '24", status: "Want to learn" },
+    { date: "Jun '24", status: "Learning" },
+    { date: "Nov '24", status: "Polishing" },
     { date: "Mar '25", status: "Performance-ready" },
-    { date: "Dec '25", status: "Re-learning" },
+    { date: "Dec '25", status: "Shelved" },
   ];
 
   const statusToNumber: Record<string, number> = {
-    "Wishlist": 1,
-    "In Progress": 2,
-    "Learned": 3,
+    "Want to learn": 1,
+    "Learning": 2,
+    "Polishing": 3,
     "Performance-ready": 4,
-    "Re-learning": 2.5,
-    "Stopped learning": 0,
+    "Shelved": 0,
   };
 
   const progressData = statusHistory.map(h => ({
@@ -121,14 +120,13 @@ export default function PieceDetailPage() {
     },
   });
 
-  const allStatuses = ["Wishlist", "In Progress", "Learned", "Performance-ready", "Re-learning", "Stopped learning"];
+  const allStatuses = ["Want to learn", "Learning", "Polishing", "Performance-ready", "Shelved"];
   const boostedCounts: Record<string, number> = {
-    "Wishlist": 89,
-    "In Progress": 147,
-    "Learned": 68,
+    "Want to learn": 89,
+    "Learning": 147,
+    "Polishing": 68,
     "Performance-ready": 34,
-    "Re-learning": 23,
-    "Stopped learning": 12,
+    "Shelved": 23,
   };
   const distributionData = allStatuses.map(s => {
     return { status: s, count: boostedCounts[s] ?? 0 };
@@ -136,12 +134,11 @@ export default function PieceDetailPage() {
 
   const getStatusColor = (s: string) => {
     switch(s) {
+      case "Want to learn": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
+      case "Learning": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
+      case "Polishing": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
       case "Performance-ready": return "bg-[#e8ddd0] text-[#6b5230] border-[#d4c8b0]";
-      case "In Progress": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
-      case "Learned": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
-      case "Wishlist": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
-      case "Re-learning": return "bg-[#f0d8cc] text-[#8b4030] border-[#e4c0ae]";
-      case "Stopped learning": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
+      case "Shelved": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
       default: return "bg-muted text-muted-foreground";
     }
   };
@@ -153,12 +150,11 @@ export default function PieceDetailPage() {
   };
 
   const statusColorMap: Record<string, string> = {
-    "Wishlist": "#b0a090",
-    "In Progress": "#c47a5a",
-    "Learned": "#a08040",
+    "Want to learn": "#b0a090",
+    "Learning": "#c47a5a",
+    "Polishing": "#a08040",
     "Performance-ready": "#8b7040",
-    "Re-learning": "#b06040",
-    "Stopped learning": "#8a7e6e",
+    "Shelved": "#8a7e6e",
   };
 
   return (
@@ -199,12 +195,11 @@ export default function PieceDetailPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Wishlist">Wishlist</SelectItem>
-                  <SelectItem value="In Progress">In Progress</SelectItem>
-                  <SelectItem value="Learned">Learned</SelectItem>
+                  <SelectItem value="Want to learn">Want to learn</SelectItem>
+                  <SelectItem value="Learning">Learning</SelectItem>
+                  <SelectItem value="Polishing">Polishing</SelectItem>
                   <SelectItem value="Performance-ready">Performance-ready</SelectItem>
-                  <SelectItem value="Re-learning">Re-learning</SelectItem>
-                  <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+                  <SelectItem value="Shelved">Shelved</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -504,7 +499,7 @@ export default function PieceDetailPage() {
                             domain={[0, 4]}
                             ticks={[0, 1, 2, 3, 4]}
                             tickFormatter={(v: number) => {
-                              const labels: Record<number, string> = { 0: "Stopped", 1: "Wishlist", 2: "Learning", 3: "Learned", 4: "Perf. Ready" };
+                              const labels: Record<number, string> = { 0: "Shelved", 1: "Want to learn", 2: "Learning", 3: "Polishing", 4: "Perf. Ready" };
                               return labels[v] ?? "";
                             }}
                             tick={{ fontSize: 10 }}

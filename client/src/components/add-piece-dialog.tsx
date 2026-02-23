@@ -42,7 +42,7 @@ export function AddPieceDialog() {
   const [selectedComposerId, setSelectedComposerId] = useState("");
   const [selectedPieceId, setSelectedPieceId] = useState("");
   const [selectedMovementIds, setSelectedMovementIds] = useState<string[]>([]);
-  const [status, setStatus] = useState("In Progress");
+  const [status, setStatus] = useState("Learning");
   const [startedDate, setStartedDate] = useState("");
 
   const { data: composers = [], isLoading: composersLoading } = useQuery<Composer[]>({
@@ -94,7 +94,7 @@ export function AddPieceDialog() {
     setSelectedComposerId("");
     setSelectedPieceId("");
     setSelectedMovementIds([]);
-    setStatus("In Progress");
+    setStatus("Learning");
     setStartedDate("");
     setComposerQuery("");
     setPieceQuery("");
@@ -182,10 +182,11 @@ export function AddPieceDialog() {
                 <SelectValue placeholder="Select status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="Wishlist">Wishlist</SelectItem>
-                <SelectItem value="In Progress">In Progress</SelectItem>
-                <SelectItem value="Learned">Learned</SelectItem>
+                <SelectItem value="Want to learn">Want to learn</SelectItem>
+                <SelectItem value="Learning">Learning</SelectItem>
+                <SelectItem value="Polishing">Polishing</SelectItem>
                 <SelectItem value="Performance-ready">Performance-ready</SelectItem>
+                <SelectItem value="Shelved">Shelved</SelectItem>
               </SelectContent>
             </Select>
           </div>

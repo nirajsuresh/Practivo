@@ -153,19 +153,18 @@ function RepertoireSetupRow({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="Wishlist">Wishlist</SelectItem>
-            <SelectItem value="In Progress">In Progress</SelectItem>
-            <SelectItem value="Learned">Learned</SelectItem>
+            <SelectItem value="Want to learn">Want to learn</SelectItem>
+            <SelectItem value="Learning">Learning</SelectItem>
+            <SelectItem value="Polishing">Polishing</SelectItem>
             <SelectItem value="Performance-ready">Performance-ready</SelectItem>
-            <SelectItem value="Re-learning">Re-learning</SelectItem>
-            <SelectItem value="Stopped learning">Stopped learning</SelectItem>
+            <SelectItem value="Shelved">Shelved</SelectItem>
           </SelectContent>
         </Select>
       </TableCell>
       <TableCell className="overflow-hidden">
         <Input 
           type="date" 
-          disabled={row.status === "Wishlist"}
+          disabled={row.status === "Want to learn"}
           value={row.dateStarted}
           onChange={(e) => onUpdate("dateStarted", e.target.value)}
           className="h-10 bg-background disabled:opacity-30"
@@ -193,11 +192,11 @@ export default function ProfileSetup() {
   const totalSteps = 3;
 
   const [repertoire, setRepertoire] = useState<RepertoireRow[]>([
-    { id: "1", composerId: "", pieceId: "", movementIds: "", status: "In Progress", dateStarted: "" }
+    { id: "1", composerId: "", pieceId: "", movementIds: "", status: "Learning", dateStarted: "" }
   ]);
 
   const addRow = () => {
-    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementIds: "", status: "In Progress", dateStarted: "" }]);
+    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementIds: "", status: "Learning", dateStarted: "" }]);
   };
 
   const removeRow = (id: string) => {
