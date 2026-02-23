@@ -39,7 +39,7 @@ export function Navbar() {
             <img 
               src="/images/logo.png" 
               alt="Réperto Logo" 
-              className="h-12 w-auto transition-all group-hover:opacity-80"
+              className="h-[4.5rem] w-auto transition-all group-hover:opacity-80"
             />
           </div>
         </Link>

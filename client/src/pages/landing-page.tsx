@@ -28,7 +28,7 @@ export default function LandingPage() {
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="font-serif text-5xl md:text-7xl lg:text-8xl font-bold mb-6 leading-tight tracking-tight text-white"
           >
-            Plan. Practice. Remember.
+            Own your musical journey.
           </motion.h1>
           
           <motion.p 
@@ -37,7 +37,7 @@ export default function LandingPage() {
             transition={{ duration: 0.8, delay: 0.2, ease: "easeOut" }}
             className="text-lg md:text-xl text-white/90 mb-10 max-w-2xl mx-auto font-light leading-relaxed"
           >
-            Build your repertoire and grow with other classical musicians.
+            Manage your repertoire, record your progress, and grow alongside other serious musicians.
           </motion.p>
           
           <motion.div
