@@ -142,8 +142,8 @@ export default function PieceDetailPage() {
 
   const getTypeColor = (t: string) => {
     return t === "Performance"
-      ? "bg-[#d4967c]/20 text-[#b06840]"
-      : "bg-[#f5e4d8] text-[#a06840]";
+      ? "bg-[#c88264]/20 text-[#7a4530]"
+      : "bg-[#8fa79a]/20 text-[#3d5a4e]";
   };
 
   return (
@@ -530,8 +530,9 @@ export default function PieceDetailPage() {
                           <Line
                             type="stepAfter"
                             dataKey="value"
-                            stroke="#d4967c"
-                            strokeWidth={2.5}
+                            stroke="#000000"
+                            strokeWidth={2}
+                            strokeDasharray="6 3"
                             dot={(props: any) => {
                               const { cx, cy, payload } = props;
                               return (
