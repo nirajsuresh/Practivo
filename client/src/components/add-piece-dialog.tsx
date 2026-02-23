@@ -12,7 +12,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
 import { Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -41,7 +41,7 @@ export function AddPieceDialog() {
   
   const [selectedComposerId, setSelectedComposerId] = useState("");
   const [selectedPieceId, setSelectedPieceId] = useState("");
-  const [selectedMovementId, setSelectedMovementId] = useState("");
+  const [selectedMovementIds, setSelectedMovementIds] = useState<string[]>([]);
   const [status, setStatus] = useState("In Progress");
   const [startedDate, setStartedDate] = useState("");
 
@@ -80,20 +80,20 @@ export function AddPieceDialog() {
   useEffect(() => {
     if (selectedComposerId) {
       setSelectedPieceId("");
-      setSelectedMovementId("");
+      setSelectedMovementIds([]);
     }
   }, [selectedComposerId]);
 
   useEffect(() => {
     if (selectedPieceId) {
-      setSelectedMovementId("");
+      setSelectedMovementIds([]);
     }
   }, [selectedPieceId]);
 
   const handleReset = () => {
     setSelectedComposerId("");
     setSelectedPieceId("");
-    setSelectedMovementId("");
+    setSelectedMovementIds([]);
     setStatus("In Progress");
     setStartedDate("");
     setComposerQuery("");
@@ -104,7 +104,7 @@ export function AddPieceDialog() {
     console.log({
       composerId: selectedComposerId,
       pieceId: selectedPieceId,
-      movementId: selectedMovementId || null,
+      movementIds: selectedMovementIds.length > 0 ? selectedMovementIds : null,
       status,
       startedDate: startedDate || null,
     });
@@ -163,12 +163,12 @@ export function AddPieceDialog() {
           </div>
           <div className="grid gap-2">
             <Label>Movement(s)</Label>
-            <SearchableCombobox
+            <MultiSelectCombobox
               options={movementOptions}
-              value={selectedMovementId}
-              onValueChange={setSelectedMovementId}
+              values={selectedMovementIds}
+              onValuesChange={setSelectedMovementIds}
               onSearch={() => {}}
-              placeholder={movements.length === 0 ? "No movements available" : "Select movement (optional)..."}
+              placeholder={movements.length === 0 ? "No movements available" : "Select movements (optional)..."}
               searchPlaceholder="Search movements..."
               emptyMessage="No movements for this piece."
               isLoading={movementsLoading}

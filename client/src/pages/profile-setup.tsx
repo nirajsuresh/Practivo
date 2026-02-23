@@ -10,7 +10,7 @@ import { useLocation } from "wouter";
 import { Check, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { SearchableCombobox } from "@/components/searchable-combobox";
+import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
 import { useQuery } from "@tanstack/react-query";
 
 interface Composer {
@@ -35,7 +35,7 @@ interface RepertoireRow {
   id: string;
   composerId: string;
   pieceId: string;
-  movementId: string;
+  movementIds: string;
   status: string;
   dateStarted: string;
 }
@@ -89,13 +89,13 @@ function RepertoireSetupRow({
   useEffect(() => {
     if (row.composerId) {
       onUpdate("pieceId", "");
-      onUpdate("movementId", "");
+      onUpdate("movementIds", "");
     }
   }, [row.composerId]);
 
   useEffect(() => {
     if (row.pieceId) {
-      onUpdate("movementId", "");
+      onUpdate("movementIds", "");
     }
   }, [row.pieceId]);
 
@@ -131,10 +131,10 @@ function RepertoireSetupRow({
         />
       </TableCell>
       <TableCell>
-        <SearchableCombobox
+        <MultiSelectCombobox
           options={movementOptions}
-          value={row.movementId}
-          onValueChange={(val) => onUpdate("movementId", val)}
+          values={row.movementIds ? row.movementIds.split(",") : []}
+          onValuesChange={(vals) => onUpdate("movementIds", vals.join(","))}
           onSearch={() => {}}
           placeholder={movements.length === 0 ? "N/A" : "Select..."}
           searchPlaceholder="Search..."
@@ -191,11 +191,11 @@ export default function ProfileSetup() {
   const totalSteps = 3;
 
   const [repertoire, setRepertoire] = useState<RepertoireRow[]>([
-    { id: "1", composerId: "", pieceId: "", movementId: "", status: "In Progress", dateStarted: "" }
+    { id: "1", composerId: "", pieceId: "", movementIds: "", status: "In Progress", dateStarted: "" }
   ]);
 
   const addRow = () => {
-    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementId: "", status: "In Progress", dateStarted: "" }]);
+    setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementIds: "", status: "In Progress", dateStarted: "" }]);
   };
 
   const removeRow = (id: string) => {

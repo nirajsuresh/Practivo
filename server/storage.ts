@@ -72,10 +72,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async searchComposers(query: string): Promise<Composer[]> {
+    const lastNameOrder = sql`split_part(${composers.name}, ' ', array_length(string_to_array(${composers.name}, ' '), 1))`;
     if (!query.trim()) {
-      return db.select().from(composers).limit(20);
+      return db.select().from(composers).orderBy(lastNameOrder).limit(20);
     }
-    return db.select().from(composers).where(ilike(composers.name, `%${query}%`)).limit(20);
+    return db.select().from(composers).where(ilike(composers.name, `%${query}%`)).orderBy(lastNameOrder).limit(20);
   }
 
   async getComposerById(id: number): Promise<Composer | undefined> {
