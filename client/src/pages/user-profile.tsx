@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import { Link, useParams } from "wouter";
+import { getStatusColor } from "@/lib/status-colors";
 
 const mockRepertoires = {
   marcello: [
@@ -90,7 +91,7 @@ export default function UserProfilePage() {
                         <TableCell className="font-serif italic">{item.piece}</TableCell>
                         <TableCell className="text-muted-foreground font-mono text-xs">{item.movement}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="font-medium bg-muted/50 border-none shadow-none">
+                          <Badge variant="outline" className={`font-medium border shadow-none ${getStatusColor(item.status)}`}>
                             {item.status}
                           </Badge>
                         </TableCell>

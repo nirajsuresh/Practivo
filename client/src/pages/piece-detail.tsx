@@ -10,9 +10,10 @@ import { Music2, Calendar, Clock, Link as LinkIcon, Plus, ChevronDown, ChevronUp
 import { useState, useRef } from "react";
 import { Link, useParams } from "wouter";
 import { cn } from "@/lib/utils";
+import { getStatusColor, getStatusDotColor } from "@/lib/status-colors";
 import { ObjectUploader } from "@/components/ObjectUploader";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 
 function StarRating({ rating, size = "md" }: { rating: number; size?: "sm" | "md" }) {
   const iconSize = size === "sm" ? "w-4 h-4" : "w-5 h-5";
@@ -139,29 +140,10 @@ export default function PieceDetailPage() {
     return { status: s, count: boostedCounts[s] ?? 0 };
   });
 
-  const getStatusColor = (s: string) => {
-    switch(s) {
-      case "Want to learn": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
-      case "Learning": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
-      case "Polishing": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
-      case "Performance-ready": return "bg-[#e8ddd0] text-[#6b5230] border-[#d4c8b0]";
-      case "Shelved": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
-      default: return "bg-muted text-muted-foreground";
-    }
-  };
-
   const getTypeColor = (t: string) => {
     return t === "Performance"
-      ? "bg-[#e8ddd0] text-[#6b5230]"
-      : "bg-[#f5e0d4] text-[#8b4a2a]";
-  };
-
-  const statusColorMap: Record<string, string> = {
-    "Want to learn": "#b0a090",
-    "Learning": "#c47a5a",
-    "Polishing": "#a08040",
-    "Performance-ready": "#8b7040",
-    "Shelved": "#8a7e6e",
+      ? "bg-[#d4967c]/20 text-[#b06840]"
+      : "bg-[#f5e4d8] text-[#a06840]";
   };
 
   return (
@@ -345,8 +327,11 @@ export default function PieceDetailPage() {
                           <Bar
                             dataKey="count"
                             radius={[0, 4, 4, 0]}
-                            fill="#d4967c"
-                          />
+                          >
+                            {distributionData.map((entry, index) => (
+                              <Cell key={index} fill={getStatusDotColor(entry.status)} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
@@ -547,7 +532,19 @@ export default function PieceDetailPage() {
                             dataKey="value"
                             stroke="#d4967c"
                             strokeWidth={2.5}
-                            dot={{ fill: "#d4967c", r: 4 }}
+                            dot={(props: any) => {
+                              const { cx, cy, payload } = props;
+                              return (
+                                <circle
+                                  cx={cx}
+                                  cy={cy}
+                                  r={4}
+                                  fill={getStatusDotColor(payload.label)}
+                                  stroke={getStatusDotColor(payload.label)}
+                                  strokeWidth={1}
+                                />
+                              );
+                            }}
                             activeDot={{ r: 6 }}
                           />
                         </LineChart>
@@ -562,7 +559,7 @@ export default function PieceDetailPage() {
                         <div key={i} className="flex items-center gap-3" data-testid={`timeline-entry-${i}`}>
                           <div
                             className="w-3 h-3 rounded-full shrink-0"
-                            style={{ backgroundColor: statusColorMap[entry.status] ?? "#94a3b8" }}
+                            style={{ backgroundColor: getStatusDotColor(entry.status) }}
                           />
                           <span className="text-xs text-muted-foreground w-14">{entry.date}</span>
                           <Badge variant="secondary" className="text-xs">

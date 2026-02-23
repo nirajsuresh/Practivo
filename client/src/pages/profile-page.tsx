@@ -19,6 +19,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { getStatusColor } from "@/lib/status-colors";
 import { Link } from "wouter";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { useState } from "react";
@@ -320,16 +321,6 @@ export default function ProfilePage() {
 function RepertoireRow({ composer, piece, movement, status: initialStatus, date, id }: { composer: string, piece: string, movement: string, status: string, date: string, id: string }) {
   const [status, setStatus] = useState(initialStatus);
 
-  const getStatusColor = (s: string) => {
-    switch(s) {
-      case "Want to learn": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
-      case "Learning": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
-      case "Polishing": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
-      case "Performance-ready": return "bg-[#e8ddd0] text-[#6b5230] border-[#d4c8b0]";
-      case "Shelved": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
-      default: return "bg-muted text-muted-foreground";
-    }
-  };
 
   return (
     <TableRow className="group hover:bg-muted/20 transition-colors">
