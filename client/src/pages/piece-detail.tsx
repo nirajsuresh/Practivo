@@ -36,6 +36,34 @@ function StarRating({ rating, size = "md" }: { rating: number; size?: "sm" | "md
   );
 }
 
+function InteractiveStarRating({ rating, onRate, size = "md" }: { rating: number; onRate: (val: number) => void; size?: "sm" | "md" }) {
+  const [hovered, setHovered] = useState(0);
+  const iconSize = size === "sm" ? "w-4 h-4" : "w-5 h-5";
+  const display = hovered || rating;
+  return (
+    <div
+      className="flex items-center gap-0.5"
+      data-testid="interactive-star-rating"
+      onMouseLeave={() => setHovered(0)}
+    >
+      {[1, 2, 3, 4, 5].map((star) => (
+        <Star
+          key={star}
+          className={cn(
+            iconSize,
+            "cursor-pointer transition-colors",
+            star <= display
+              ? "fill-amber-400 text-amber-400"
+              : "text-muted-foreground/30 hover:text-amber-300"
+          )}
+          onMouseEnter={() => setHovered(star)}
+          onClick={() => onRate(star)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function PieceDetailPage() {
   const params = useParams<{ id: string }>();
   const pieceId = params.id ? parseInt(params.id) : 1260;
@@ -62,6 +90,7 @@ export default function PieceDetailPage() {
 
   const [status, setStatus] = useState("Learning");
   const [scoreFile, setScoreFile] = useState<{ name: string; path: string } | null>(null);
+  const [userRating, setUserRating] = useState(0);
   const [showNewSession, setShowNewSession] = useState(false);
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split("T")[0]);
   const [sessionType, setSessionType] = useState("Practice");
@@ -172,6 +201,12 @@ export default function PieceDetailPage() {
                   </span>
                   <span className="text-sm text-muted-foreground" data-testid="text-rating-count">
                     ({ratingSummary?.totalRatings ? ratingSummary.totalRatings * 57 : 0} ratings)
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mt-1">
+                  <InteractiveStarRating rating={userRating} onRate={setUserRating} />
+                  <span className="text-sm text-muted-foreground" data-testid="text-your-rating">
+                    {userRating > 0 ? `Your rating: ${userRating}/5` : "Rate this piece"}
                   </span>
                 </div>
               </div>

@@ -48,7 +48,7 @@ export function Navbar() {
           <form onSubmit={handleSearch} className="hidden md:flex relative max-w-sm w-full">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
-              placeholder="Search musicians..." 
+              placeholder="Search musicians or pieces..." 
               className="pl-10 bg-muted/50 border-none focus-visible:ring-1 focus-visible:ring-accent"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
