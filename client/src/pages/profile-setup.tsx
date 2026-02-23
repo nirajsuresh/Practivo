@@ -11,6 +11,7 @@ import { Check, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
+import { AvatarPicker } from "@/components/piano-avatars";
 import { useQuery } from "@tanstack/react-query";
 
 interface Composer {
@@ -188,6 +189,7 @@ function RepertoireSetupRow({
 export default function ProfileSetup() {
   const [, setLocation] = useLocation();
   const [step, setStep] = useState(1);
+  const [avatarId, setAvatarId] = useState("avatar-1");
   const totalSteps = 3;
 
   const [repertoire, setRepertoire] = useState<RepertoireRow[]>([
@@ -253,6 +255,10 @@ export default function ProfileSetup() {
             <CardContent className="px-8 pb-8 space-y-6">
               {step === 1 && (
                 <div className="space-y-6">
+                  <div className="space-y-3">
+                    <Label className="text-sm font-medium tracking-wide uppercase opacity-60">Choose Your Pianist</Label>
+                    <AvatarPicker selectedId={avatarId} onSelect={setAvatarId} />
+                  </div>
                   <div className="space-y-3">
                     <Label htmlFor="display-name">Display Name</Label>
                     <Input id="display-name" placeholder="e.g. Elena Corvin" className="h-12 bg-background" />

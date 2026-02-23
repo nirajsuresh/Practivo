@@ -1,0 +1,388 @@
+import React from "react";
+import { cn } from "@/lib/utils";
+
+interface AvatarData {
+  id: string;
+  svg: React.ReactElement;
+}
+
+const avatars: AvatarData[] = [
+  {
+    id: "avatar-1",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#e8e0d5"/>
+        <ellipse cx="50" cy="102" rx="32" ry="20" fill="#c8b89a"/>
+        <rect x="44" y="72" width="12" height="16" rx="5" fill="#e8c9a8"/>
+        <ellipse cx="50" cy="58" rx="22" ry="24" fill="#e8c9a8"/>
+        <ellipse cx="50" cy="42" rx="22" ry="10" fill="#2c1a0e"/>
+        <ellipse cx="50" cy="40" rx="18" ry="8" fill="#2c1a0e"/>
+        <circle cx="50" cy="34" r="9" fill="#2c1a0e"/>
+        <rect x="38" y="34" width="24" height="8" rx="1.5" fill="#f5f0e8"/>
+        <rect x="38" y="34" width="24" height="8" rx="1.5" fill="none" stroke="#2c1a0e" strokeWidth="0.5"/>
+        <rect x="39" y="34.5" width="3" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="43" y="34.5" width="3" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="47" y="34.5" width="3" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="51" y="34.5" width="3" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="55" y="34.5" width="3" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="59" y="34.5" width="2.5" height="7" rx="0.5" fill="#fffef8"/>
+        <rect x="41" y="34.5" width="2" height="4.5" rx="0.5" fill="#1a1410"/>
+        <rect x="45" y="34.5" width="2" height="4.5" rx="0.5" fill="#1a1410"/>
+        <rect x="53" y="34.5" width="2" height="4.5" rx="0.5" fill="#1a1410"/>
+        <rect x="57" y="34.5" width="2" height="4.5" rx="0.5" fill="#1a1410"/>
+        <ellipse cx="43" cy="57" rx="2.5" ry="2.5" fill="#1a0a00"/>
+        <ellipse cx="57" cy="57" rx="2.5" ry="2.5" fill="#1a0a00"/>
+        <circle cx="44" cy="56" r="0.8" fill="#fff" opacity="0.7"/>
+        <circle cx="58" cy="56" r="0.8" fill="#fff" opacity="0.7"/>
+        <path d="M39 52 Q43 50 47 52" stroke="#2c1a0e" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+        <path d="M53 52 Q57 50 61 52" stroke="#2c1a0e" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+        <path d="M49 60 Q48 63 50 64 Q52 63 51 60" stroke="#c8a080" strokeWidth="0.8" fill="none"/>
+        <path d="M45 67 Q50 70 55 67" stroke="#c47a5a" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-2",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#d4cfc8"/>
+        <ellipse cx="50" cy="104" rx="34" ry="22" fill="#1a1a1a"/>
+        <path d="M43 82 Q50 76 57 82 L58 100 H42Z" fill="#f0ede8"/>
+        <rect x="47" y="82" width="6" height="20" rx="1" fill="#f5f0e8"/>
+        <rect x="47.5" y="84" width="5" height="1.5" rx="0.3" fill="#1a1410"/>
+        <rect x="47.5" y="87.5" width="5" height="1.5" rx="0.3" fill="#1a1410"/>
+        <rect x="47.5" y="91" width="5" height="1.5" rx="0.3" fill="#1a1410"/>
+        <rect x="47.5" y="94.5" width="5" height="1.5" rx="0.3" fill="#1a1410"/>
+        <rect x="44" y="72" width="12" height="14" rx="5" fill="#4a2e1a"/>
+        <ellipse cx="50" cy="57" rx="21" ry="23" fill="#4a2e1a"/>
+        <ellipse cx="50" cy="40" rx="21" ry="10" fill="#1a0800"/>
+        <ellipse cx="43" cy="56" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <ellipse cx="57" cy="56" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <circle cx="44" cy="55" r="0.9" fill="#fff" opacity="0.6"/>
+        <circle cx="58" cy="55" r="0.9" fill="#fff" opacity="0.6"/>
+        <path d="M39 51 Q43 48.5 47 50" stroke="#1a0800" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M53 50 Q57 48.5 61 51" stroke="#1a0800" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <ellipse cx="50" cy="61" rx="3" ry="2" fill="#3a2010" opacity="0.5"/>
+        <path d="M44 66 Q50 70 56 66" stroke="#3a2010" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+        <path d="M45 67 Q50 70 55 67" fill="#fff" opacity="0.15"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-3",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#ece5d8"/>
+        <ellipse cx="50" cy="104" rx="30" ry="18" fill="#8b4a6a"/>
+        <rect x="44" y="72" width="12" height="16" rx="5" fill="#d4a878"/>
+        <ellipse cx="50" cy="57" rx="21" ry="23" fill="#d4a878"/>
+        <ellipse cx="50" cy="42" rx="22" ry="12" fill="#1a0800"/>
+        <circle cx="35" cy="48" r="7" fill="#1a0800"/>
+        <circle cx="65" cy="48" r="7" fill="#1a0800"/>
+        <circle cx="42" cy="39" r="7" fill="#200e00"/>
+        <circle cx="58" cy="39" r="7" fill="#1a0800"/>
+        <circle cx="50" cy="37" r="8" fill="#200e00"/>
+        <text x="28" y="65" fontSize="9" fill="#c8a030" fontFamily="serif">𝄞</text>
+        <ellipse cx="43" cy="57" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <ellipse cx="57" cy="57" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <circle cx="44" cy="56" r="0.9" fill="#fff" opacity="0.7"/>
+        <circle cx="58" cy="56" r="0.9" fill="#fff" opacity="0.7"/>
+        <path d="M38.5 51 Q43 48.5 47.5 50.5" stroke="#1a0800" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <path d="M52.5 50.5 Q57 48.5 61.5 51" stroke="#1a0800" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <path d="M48 60 Q47 64 50 65 Q53 64 52 60" stroke="#b08050" strokeWidth="0.9" fill="none"/>
+        <path d="M44 68 Q50 73 56 68" stroke="#a07040" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-4",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#e4ddd2"/>
+        <ellipse cx="50" cy="104" rx="32" ry="20" fill="#7a6040"/>
+        <path d="M36 84 Q50 78 64 84 L66 100 H34Z" fill="#d4c8b0"/>
+        <line x1="34" y1="86" x2="66" y2="86" stroke="#9a8060" strokeWidth="0.5" opacity="0.6"/>
+        <line x1="34" y1="89" x2="66" y2="89" stroke="#9a8060" strokeWidth="0.5" opacity="0.6"/>
+        <line x1="34" y1="92" x2="66" y2="92" stroke="#9a8060" strokeWidth="0.5" opacity="0.6"/>
+        <line x1="34" y1="95" x2="66" y2="95" stroke="#9a8060" strokeWidth="0.5" opacity="0.6"/>
+        <circle cx="40" cy="87" r="1.5" fill="#6a5030"/>
+        <line x1="41.5" y1="87" x2="41.5" y2="83" stroke="#6a5030" strokeWidth="0.8"/>
+        <circle cx="50" cy="91" r="1.5" fill="#6a5030"/>
+        <line x1="51.5" y1="91" x2="51.5" y2="87" stroke="#6a5030" strokeWidth="0.8"/>
+        <circle cx="59" cy="88" r="1.5" fill="#6a5030"/>
+        <line x1="60.5" y1="88" x2="60.5" y2="84" stroke="#6a5030" strokeWidth="0.8"/>
+        <rect x="44" y="72" width="12" height="14" rx="5" fill="#8b5e3c"/>
+        <ellipse cx="50" cy="57" rx="21" ry="23" fill="#8b5e3c"/>
+        <ellipse cx="50" cy="42" rx="21" ry="9" fill="#b0b0b0"/>
+        <circle cx="50" cy="36" r="8" fill="#c0c0c0"/>
+        <circle cx="50" cy="36" r="5" fill="#d0d0d0"/>
+        <path d="M29 50 Q28 58 30 66" stroke="#b0b0b0" strokeWidth="4" fill="none" strokeLinecap="round"/>
+        <path d="M71 50 Q72 58 70 66" stroke="#b0b0b0" strokeWidth="4" fill="none" strokeLinecap="round"/>
+        <ellipse cx="43" cy="57" rx="2.3" ry="2.5" fill="#1a0a00"/>
+        <ellipse cx="57" cy="57" rx="2.3" ry="2.5" fill="#1a0a00"/>
+        <circle cx="44" cy="56" r="0.8" fill="#fff" opacity="0.6"/>
+        <circle cx="58" cy="56" r="0.8" fill="#fff" opacity="0.6"/>
+        <path d="M39 51 Q43 49 47 51" stroke="#7a7a7a" strokeWidth="1.3" fill="none" strokeLinecap="round"/>
+        <path d="M53 51 Q57 49 61 51" stroke="#7a7a7a" strokeWidth="1.3" fill="none" strokeLinecap="round"/>
+        <path d="M36 62 Q35 66 36.5 68" stroke="#7a4e2c" strokeWidth="0.7" fill="none" opacity="0.5"/>
+        <path d="M64 62 Q65 66 63.5 68" stroke="#7a4e2c" strokeWidth="0.7" fill="none" opacity="0.5"/>
+        <path d="M49 60 Q48 63 50 64 Q52 63 51 60" stroke="#6a4020" strokeWidth="0.9" fill="none"/>
+        <path d="M44 67 Q50 72 56 67" stroke="#6a4020" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-5",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#ddd8ce"/>
+        <ellipse cx="50" cy="104" rx="30" ry="18" fill="#2a3a4a"/>
+        <rect x="44" y="72" width="12" height="14" rx="5" fill="#c8986a"/>
+        <ellipse cx="50" cy="57" rx="20" ry="22" fill="#c8986a"/>
+        <path d="M30 52 Q30 38 50 35 Q70 38 70 52" fill="#0f0500"/>
+        <path d="M30 52 Q28 42 50 38 Q55 37 68 44" stroke="#0f0500" strokeWidth="5" strokeLinecap="round" fill="none"/>
+        <rect x="37" y="53" width="11" height="8" rx="3" fill="none" stroke="#2a2010" strokeWidth="1.5"/>
+        <rect x="52" y="53" width="11" height="8" rx="3" fill="none" stroke="#2a2010" strokeWidth="1.5"/>
+        <line x1="48" y1="57" x2="52" y2="57" stroke="#2a2010" strokeWidth="1.5"/>
+        <line x1="37" y1="57" x2="33" y2="56" stroke="#2a2010" strokeWidth="1.5"/>
+        <line x1="63" y1="57" x2="67" y2="56" stroke="#2a2010" strokeWidth="1.5"/>
+        <rect x="38" y="54" width="9" height="6" rx="1.5" fill="#f0ede8" opacity="0.7"/>
+        <rect x="38.5" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="40.3" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="42.1" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="43.9" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="45.7" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="39.4" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <rect x="41.2" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <rect x="44.8" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <rect x="53" y="54" width="9" height="6" rx="1.5" fill="#f0ede8" opacity="0.7"/>
+        <rect x="53.5" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="55.3" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="57.1" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="58.9" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="60.7" y="54.2" width="1.4" height="4" rx="0.3" fill="#fffef8"/>
+        <rect x="54.4" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <rect x="56.2" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <rect x="59.8" y="54.2" width="0.9" height="2.5" rx="0.2" fill="#1a1410"/>
+        <path d="M37 51 Q42 48.5 47 50" stroke="#0f0500" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M53 50 Q58 48.5 63 51" stroke="#0f0500" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M49 63 Q48 66 50 67 Q52 66 51 63" stroke="#a07040" strokeWidth="0.9" fill="none"/>
+        <path d="M45 70 Q50 73 55 70" stroke="#a07040" strokeWidth="1.3" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-6",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#e0d8cc"/>
+        <ellipse cx="50" cy="105" rx="32" ry="20" fill="#6030a0"/>
+        <rect x="44" y="74" width="12" height="14" rx="5" fill="#5a3018"/>
+        <ellipse cx="50" cy="60" rx="20" ry="21" fill="#5a3018"/>
+        <circle cx="50" cy="45" r="26" fill="#1a0800"/>
+        <circle cx="50" cy="45" r="24" fill="#200e00"/>
+        <circle cx="33" cy="50" r="8" fill="#1a0800"/>
+        <circle cx="67" cy="50" r="8" fill="#1a0800"/>
+        <circle cx="40" cy="36" r="9" fill="#200e00"/>
+        <circle cx="60" cy="36" r="9" fill="#1a0800"/>
+        <circle cx="50" cy="32" r="9" fill="#200e00"/>
+        <rect x="31" y="42" width="38" height="9" rx="2" fill="#f5f0e8"/>
+        <rect x="31" y="42" width="38" height="9" rx="2" fill="none" stroke="#2c1a0e" strokeWidth="0.5"/>
+        <rect x="32" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="37.3" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="42.6" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="47.9" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="53.2" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="58.5" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="63.8" y="42.5" width="4.5" height="8" rx="0.5" fill="#fffef8"/>
+        <rect x="35" y="42.5" width="2.8" height="5" rx="0.5" fill="#1a1410"/>
+        <rect x="40.3" y="42.5" width="2.8" height="5" rx="0.5" fill="#1a1410"/>
+        <rect x="50.9" y="42.5" width="2.8" height="5" rx="0.5" fill="#1a1410"/>
+        <rect x="56.2" y="42.5" width="2.8" height="5" rx="0.5" fill="#1a1410"/>
+        <rect x="61.5" y="42.5" width="2.8" height="5" rx="0.5" fill="#1a1410"/>
+        <ellipse cx="43" cy="59" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <ellipse cx="57" cy="59" rx="2.5" ry="2.8" fill="#0a0400"/>
+        <circle cx="44" cy="58" r="1" fill="#fff" opacity="0.65"/>
+        <circle cx="58" cy="58" r="1" fill="#fff" opacity="0.65"/>
+        <path d="M38 53 Q43 50.5 48 52.5" stroke="#1a0800" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+        <path d="M52 52.5 Q57 50.5 62 53" stroke="#1a0800" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+        <ellipse cx="50" cy="64" rx="3.5" ry="2" fill="#3a2010" opacity="0.5"/>
+        <path d="M43 69 Q50 74 57 69" stroke="#3a2010" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+        <path d="M44 70 Q50 74 56 70" fill="#fff" opacity="0.2"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-7",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#dbd5cc"/>
+        <ellipse cx="50" cy="105" rx="34" ry="22" fill="#1c2030"/>
+        <path d="M43 82 Q50 75 57 82 L59 100 H41Z" fill="#f0ede8"/>
+        <rect x="45" y="84" width="10" height="10" rx="1" fill="#f5f0e8"/>
+        <rect x="45.3" y="84.3" width="1.8" height="9.4" rx="0.3" fill="#fffef8"/>
+        <rect x="47.4" y="84.3" width="1.8" height="9.4" rx="0.3" fill="#fffef8"/>
+        <rect x="49.5" y="84.3" width="1.8" height="9.4" rx="0.3" fill="#fffef8"/>
+        <rect x="51.6" y="84.3" width="1.8" height="9.4" rx="0.3" fill="#fffef8"/>
+        <rect x="53.7" y="84.3" width="1.3" height="9.4" rx="0.3" fill="#fffef8"/>
+        <rect x="46.3" y="84.3" width="1" height="5.5" rx="0.3" fill="#1a1410"/>
+        <rect x="48.4" y="84.3" width="1" height="5.5" rx="0.3" fill="#1a1410"/>
+        <rect x="52.6" y="84.3" width="1" height="5.5" rx="0.3" fill="#1a1410"/>
+        <rect x="44" y="72" width="12" height="13" rx="5" fill="#d8c0a8"/>
+        <ellipse cx="50" cy="57" rx="21" ry="23" fill="#d8c0a8"/>
+        <path d="M29 52 Q29 38 50 34 Q71 38 71 52" fill="#e0e0e0"/>
+        <ellipse cx="50" cy="44" rx="13" ry="6" fill="#d0cec8"/>
+        <path d="M33 68 Q31 80 36 87 Q44 93 50 92 Q56 93 64 87 Q69 80 67 68" fill="#e8e8e4"/>
+        <path d="M36 68 Q34 78 38 86 Q46 91 50 90 Q54 91 62 86 Q66 78 64 68" fill="#f0f0ec"/>
+        <path d="M42 68 Q46 70 50 68 Q54 70 58 68" fill="#d8d8d4"/>
+        <ellipse cx="43" cy="56" rx="2.3" ry="2.5" fill="#1a1400"/>
+        <ellipse cx="57" cy="56" rx="2.3" ry="2.5" fill="#1a1400"/>
+        <circle cx="44" cy="55" r="0.8" fill="#fff" opacity="0.6"/>
+        <circle cx="58" cy="55" r="0.8" fill="#fff" opacity="0.6"/>
+        <path d="M38 50 Q43 47 48 49" stroke="#c0c0bc" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
+        <path d="M52 49 Q57 47 62 50" stroke="#c0c0bc" strokeWidth="2.5" fill="none" strokeLinecap="round"/>
+        <path d="M48 60 Q47 63 50 64 Q53 63 52 60" stroke="#b09080" strokeWidth="1" fill="none"/>
+        <path d="M44 73 Q50 76 56 73" stroke="#a08070" strokeWidth="1.2" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-8",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#e8e0d4"/>
+        <ellipse cx="50" cy="105" rx="30" ry="18" fill="#c86030"/>
+        <rect x="44" y="72" width="12" height="16" rx="5" fill="#c09060"/>
+        <ellipse cx="50" cy="57" rx="20" ry="22" fill="#c09060"/>
+        <ellipse cx="50" cy="43" rx="21" ry="10" fill="#100500"/>
+        <path d="M50 44 L50 57" stroke="#100500" strokeWidth="1.5"/>
+        <path d="M30 50 Q28 64 30 80 Q31 90 32 100" stroke="#100500" strokeWidth="9" strokeLinecap="round" fill="none"/>
+        <path d="M70 50 Q72 64 70 80 Q69 90 68 100" stroke="#100500" strokeWidth="9" strokeLinecap="round" fill="none"/>
+        <rect x="46" y="47" width="8" height="4" rx="1" fill="#f5f0e8"/>
+        <rect x="46.3" y="47.2" width="1.3" height="3.5" rx="0.2" fill="#fffef8"/>
+        <rect x="47.9" y="47.2" width="1.3" height="3.5" rx="0.2" fill="#fffef8"/>
+        <rect x="49.5" y="47.2" width="1.3" height="3.5" rx="0.2" fill="#fffef8"/>
+        <rect x="51.1" y="47.2" width="1.3" height="3.5" rx="0.2" fill="#fffef8"/>
+        <rect x="52.7" y="47.2" width="1" height="3.5" rx="0.2" fill="#fffef8"/>
+        <rect x="47.2" y="47.2" width="0.7" height="2" rx="0.2" fill="#1a1410"/>
+        <rect x="49.8" y="47.2" width="0.7" height="2" rx="0.2" fill="#1a1410"/>
+        <rect x="51.4" y="47.2" width="0.7" height="2" rx="0.2" fill="#1a1410"/>
+        <ellipse cx="43" cy="57" rx="2.5" ry="2.8" fill="#100500"/>
+        <ellipse cx="57" cy="57" rx="2.5" ry="2.8" fill="#100500"/>
+        <circle cx="44" cy="56" r="0.9" fill="#fff" opacity="0.7"/>
+        <circle cx="58" cy="56" r="0.9" fill="#fff" opacity="0.7"/>
+        <path d="M40 55.5 Q43 54 46 55.5" stroke="#100500" strokeWidth="1" fill="none"/>
+        <path d="M54 55.5 Q57 54 60 55.5" stroke="#100500" strokeWidth="1" fill="none"/>
+        <path d="M39 52 Q43 49.5 47 51" stroke="#100500" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M53 51 Q57 49.5 61 52" stroke="#100500" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M48 60 Q47 64 50 65 Q53 64 52 60" stroke="#9a7040" strokeWidth="0.9" fill="none"/>
+        <path d="M44 68 Q50 73 56 68" stroke="#9a7040" strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-9",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#ddd7cc"/>
+        <ellipse cx="50" cy="105" rx="32" ry="20" fill="#2a4020"/>
+        <path d="M38 84 Q50 77 62 84" fill="none" stroke="#f5f0e8" strokeWidth="7" strokeLinecap="round"/>
+        <path d="M38 84 Q50 77 62 84" fill="none" stroke="#fffef8" strokeWidth="4" strokeLinecap="butt" strokeDasharray="3.5,1.2"/>
+        <rect x="44" y="72" width="12" height="14" rx="5" fill="#c49060"/>
+        <ellipse cx="50" cy="57" rx="20" ry="22" fill="#c49060"/>
+        <circle cx="50" cy="43" r="22" fill="#180a00"/>
+        <circle cx="50" cy="43" r="20" fill="#200e00"/>
+        <circle cx="36" cy="47" r="7" fill="#180a00"/>
+        <circle cx="64" cy="47" r="7" fill="#200e00"/>
+        <circle cx="43" cy="36" r="8" fill="#200e00"/>
+        <circle cx="57" cy="36" r="8" fill="#180a00"/>
+        <circle cx="50" cy="34" r="8" fill="#200e00"/>
+        <ellipse cx="43" cy="57" rx="2.8" ry="3" fill="#0a0400"/>
+        <ellipse cx="57" cy="57" rx="2.8" ry="3" fill="#0a0400"/>
+        <circle cx="44.3" cy="56" r="1" fill="#fff" opacity="0.65"/>
+        <circle cx="58.3" cy="56" r="1" fill="#fff" opacity="0.65"/>
+        <path d="M38 51 Q43 48.5 48 50.5" stroke="#180a00" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <path d="M52 50.5 Q57 48.5 62 51" stroke="#180a00" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        <ellipse cx="50" cy="63" rx="3.5" ry="2" fill="#9a6830" opacity="0.5"/>
+        <path d="M43 68 Q50 74 57 68" stroke="#9a6830" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+        <path d="M44.5 69.5 Q50 74 55.5 69.5" fill="#fff" opacity="0.3"/>
+        <ellipse cx="50" cy="72" rx="10" ry="4" fill="#9a6830" opacity="0.1"/>
+      </svg>
+    ),
+  },
+  {
+    id: "avatar-10",
+    svg: (
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" fill="#e8e4de"/>
+        <ellipse cx="50" cy="105" rx="30" ry="18" fill="#0a0a0a"/>
+        <rect x="44" y="72" width="12" height="16" rx="5" fill="#e8d0c0"/>
+        <rect x="44" y="75" width="12" height="6" rx="1" fill="none" stroke="#c0a8a0" strokeWidth="0.8"/>
+        <line x1="46.4" y1="75" x2="46.4" y2="81" stroke="#c0a8a0" strokeWidth="0.8"/>
+        <line x1="48.8" y1="75" x2="48.8" y2="81" stroke="#c0a8a0" strokeWidth="0.8"/>
+        <line x1="51.2" y1="75" x2="51.2" y2="81" stroke="#c0a8a0" strokeWidth="0.8"/>
+        <line x1="53.6" y1="75" x2="53.6" y2="81" stroke="#c0a8a0" strokeWidth="0.8"/>
+        <rect x="45.4" y="75" width="1.5" height="3.5" rx="0.3" fill="#c0a8a0" opacity="0.5"/>
+        <rect x="47.8" y="75" width="1.5" height="3.5" rx="0.3" fill="#c0a8a0" opacity="0.5"/>
+        <rect x="52.2" y="75" width="1.5" height="3.5" rx="0.3" fill="#c0a8a0" opacity="0.5"/>
+        <ellipse cx="50" cy="57" rx="20" ry="22" fill="#e8d0c0"/>
+        <rect x="30" y="46" width="8" height="18" rx="0" fill="#1a0a00"/>
+        <rect x="62" y="46" width="8" height="18" rx="0" fill="#1a0a00"/>
+        <path d="M30 47 Q50 32 70 47 Q65 38 50 35 Q35 38 30 47Z" fill="#e8e8e4"/>
+        <path d="M32 46 Q50 32 68 46" stroke="#d8d8d4" strokeWidth="3" strokeLinecap="round" fill="none"/>
+        <ellipse cx="43" cy="57" rx="2.5" ry="2.8" fill="#1a1400"/>
+        <ellipse cx="57" cy="57" rx="2.5" ry="2.8" fill="#1a1400"/>
+        <circle cx="44.5" cy="56" r="1" fill="#fff" opacity="0.8"/>
+        <circle cx="58.5" cy="56" r="1" fill="#fff" opacity="0.8"/>
+        <line x1="38" y1="51" x2="48" y2="49.5" stroke="#1a0a00" strokeWidth="1.8" strokeLinecap="round"/>
+        <line x1="52" y1="49.5" x2="62" y2="51" stroke="#1a0a00" strokeWidth="1.8" strokeLinecap="round"/>
+        <path d="M49 60 Q48 63 50 64 Q52 63 51 60" stroke="#c09080" strokeWidth="0.9" fill="none"/>
+        <path d="M44 68 Q47 66 50 68 Q53 66 56 68 Q52 71 50 71 Q48 71 44 68Z" fill="#6a2030"/>
+        <path d="M44 68 Q50 72 56 68" stroke="#8a3040" strokeWidth="0.5" fill="none"/>
+        <circle cx="30" cy="63" r="1.8" fill="#c8a020"/>
+      </svg>
+    ),
+  },
+];
+
+export function getAvatarById(id: string): AvatarData | undefined {
+  return avatars.find(a => a.id === id);
+}
+
+export function PianoAvatar({ avatarId, size = 100, className }: { avatarId: string; size?: number; className?: string }) {
+  const avatar = getAvatarById(avatarId);
+  if (!avatar) return null;
+  return (
+    <div
+      className={cn("rounded-full overflow-hidden", className)}
+      style={{ width: size, height: size }}
+      data-testid={`avatar-display-${avatarId}`}
+    >
+      {avatar.svg}
+    </div>
+  );
+}
+
+export function AvatarPicker({ selectedId, onSelect }: { selectedId: string; onSelect: (id: string) => void }) {
+  return (
+    <div className="grid grid-cols-5 gap-4" data-testid="avatar-picker">
+      {avatars.map((avatar) => (
+        <button
+          key={avatar.id}
+          type="button"
+          onClick={() => onSelect(avatar.id)}
+          className={cn(
+            "rounded-full overflow-hidden w-[72px] h-[72px] transition-all duration-200 cursor-pointer",
+            "hover:-translate-y-1 hover:shadow-lg",
+            selectedId === avatar.id
+              ? "ring-[2.5px] ring-primary shadow-lg -translate-y-0.5"
+              : "shadow-md"
+          )}
+          data-testid={`avatar-option-${avatar.id}`}
+        >
+          {avatar.svg}
+        </button>
+      ))}
+    </div>
+  );
+}

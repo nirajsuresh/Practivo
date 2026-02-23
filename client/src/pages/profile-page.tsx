@@ -2,7 +2,7 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { PianoAvatar } from "@/components/piano-avatars";
 import { MapPin, Edit2, Music2, TrendingUp, Sparkles, Activity, ChevronDown, ChevronUp, ArrowUpDown, Trash2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -82,15 +82,12 @@ export default function ProfilePage() {
     <Layout>
       <div className="min-h-screen bg-background pb-20">
         {/* Banner */}
-        <div className="h-64 md:h-80 bg-[#d4967c] relative overflow-hidden">
+        <div className="h-32 md:h-40 bg-[#d4967c] relative overflow-hidden">
         </div>
 
-        <div className="container mx-auto px-4 -mt-32 relative z-10">
+        <div className="container mx-auto px-4 -mt-16 relative z-10">
           <div className="flex flex-col md:flex-row items-end gap-6 mb-8">
-            <Avatar className="w-40 h-40 border-4 border-background shadow-2xl">
-              <AvatarImage src="/images/niraj.png" />
-              <AvatarFallback className="text-4xl font-serif">NS</AvatarFallback>
-            </Avatar>
+            <PianoAvatar avatarId="avatar-8" size={140} className="border-4 border-background shadow-2xl shrink-0" />
             
             <div className="flex-1 pb-4 text-center md:text-left">
               <h1 className="font-serif text-4xl font-bold text-primary mb-2">Niraj Suresh</h1>
