@@ -75,9 +75,9 @@ function PostCard({ post }: { post: FeedPost }) {
     <Card className="bg-white/80 backdrop-blur-sm border-border/50 hover:shadow-md transition-shadow" data-testid={`post-card-${post.id}`}>
       <CardContent className="p-5">
         <div className="flex items-start gap-4">
-          <Avatar className="h-12 w-12 border-2 border-accent/20">
+          <Avatar className="h-12 w-12 border-2 border-[#d4967c]/20">
             <AvatarImage src={post.avatarUrl || undefined} alt={post.displayName || "User"} />
-            <AvatarFallback className="bg-accent/10 text-accent font-semibold">
+            <AvatarFallback className="bg-[#d4967c]/10 text-[#d4967c] font-semibold">
               {getInitials(post.displayName)}
             </AvatarFallback>
           </Avatar>
@@ -102,7 +102,7 @@ function PostCard({ post }: { post: FeedPost }) {
             {post.pieceTitle && post.composerName && (
               <Link href={`/piece/${post.pieceId}`}>
                 <div className="inline-flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg hover:bg-muted transition-colors cursor-pointer" data-testid={`post-piece-${post.id}`}>
-                  <Music className="w-4 h-4 text-accent" />
+                  <Music className="w-4 h-4 text-[#d4967c]" />
                   <span className="text-sm">
                     <span className="font-medium">{post.pieceTitle}</span>
                     <span className="text-muted-foreground"> by {post.composerName}</span>
@@ -112,10 +112,10 @@ function PostCard({ post }: { post: FeedPost }) {
             )}
             
             {post.recordingUrl && (
-              <div className="mt-3 p-4 bg-accent/5 rounded-lg border border-accent/20" data-testid={`post-recording-${post.id}`}>
+              <div className="mt-3 p-4 bg-[#d4967c]/5 rounded-lg border border-[#d4967c]/20" data-testid={`post-recording-${post.id}`}>
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center">
-                    <Play className="w-5 h-5 text-accent-foreground" />
+                  <div className="w-12 h-12 rounded-full bg-[#d4967c] flex items-center justify-center">
+                    <Play className="w-5 h-5 text-white" />
                   </div>
                   <div>
                     <p className="text-sm font-medium">Recording Available</p>
@@ -126,7 +126,7 @@ function PostCard({ post }: { post: FeedPost }) {
             )}
             
             {post.practiceHours && post.type === "milestone" && (
-              <div className="mt-3 flex items-center gap-2 text-accent" data-testid={`post-milestone-${post.id}`}>
+              <div className="mt-3 flex items-center gap-2 text-[#d4967c]" data-testid={`post-milestone-${post.id}`}>
                 <Trophy className="w-5 h-5" />
                 <span className="font-semibold">{post.practiceHours} hours</span>
               </div>
@@ -144,11 +144,11 @@ function ChallengeCard({ challenge }: { challenge: Challenge }) {
     : null;
   
   return (
-    <Card className="bg-gradient-to-br from-accent/10 to-accent/5 border-accent/30 hover:border-accent/50 transition-colors" data-testid={`challenge-card-${challenge.id}`}>
+    <Card className="bg-gradient-to-br from-[#d4967c]/10 to-[#d4967c]/5 border-[#d4967c]/30 hover:border-[#d4967c]/50 transition-colors" data-testid={`challenge-card-${challenge.id}`}>
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
-            <Target className="w-5 h-5 text-accent" />
+          <div className="w-10 h-10 rounded-lg bg-[#d4967c]/20 flex items-center justify-center shrink-0">
+            <Target className="w-5 h-5 text-[#d4967c]" />
           </div>
           <div className="flex-1 min-w-0">
             <h4 className="font-semibold text-foreground mb-1 truncate" data-testid={`challenge-title-${challenge.id}`}>
@@ -158,7 +158,7 @@ function ChallengeCard({ challenge }: { challenge: Challenge }) {
               {challenge.description}
             </p>
             {daysRemaining !== null && daysRemaining > 0 && (
-              <div className="flex items-center gap-1 text-xs text-accent">
+              <div className="flex items-center gap-1 text-xs text-[#d4967c]">
                 <Calendar className="w-3 h-3" />
                 <span>{daysRemaining} days left</span>
               </div>
@@ -175,7 +175,7 @@ function SuggestedUserCard({ user }: { user: SuggestedUser }) {
     <div className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`suggested-user-${user.userId}`}>
       <Avatar className="h-10 w-10">
         <AvatarImage src={user.avatarUrl || undefined} alt={user.displayName} />
-        <AvatarFallback className="bg-accent/10 text-accent text-sm font-semibold">
+        <AvatarFallback className="bg-[#d4967c]/10 text-[#d4967c] text-sm font-semibold">
           {getInitials(user.displayName)}
         </AvatarFallback>
       </Avatar>
@@ -302,7 +302,7 @@ export default function FeedPage() {
               <Card className="bg-white/80 backdrop-blur-sm border-border/50">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
-                    <Target className="w-5 h-5 text-accent" />
+                    <Target className="w-5 h-5 text-[#d4967c]" />
                     Community Challenges
                   </CardTitle>
                 </CardHeader>
@@ -322,7 +322,7 @@ export default function FeedPage() {
                   )}
                   
                   {challenges && challenges.length > 3 && (
-                    <Button variant="ghost" className="w-full text-sm text-accent hover:text-accent" data-testid="button-view-all-challenges">
+                    <Button variant="ghost" className="w-full text-sm text-[#d4967c] hover:text-[#d4967c]" data-testid="button-view-all-challenges">
                       View All Challenges
                       <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
@@ -333,7 +333,7 @@ export default function FeedPage() {
               <Card className="bg-white/80 backdrop-blur-sm border-border/50">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
-                    <UserPlus className="w-5 h-5 text-accent" />
+                    <UserPlus className="w-5 h-5 text-[#d4967c]" />
                     Musicians to Follow
                   </CardTitle>
                 </CardHeader>
@@ -353,7 +353,7 @@ export default function FeedPage() {
               <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
                 <CardContent className="p-5">
                   <h4 className="font-semibold mb-2 flex items-center gap-2">
-                    <Play className="w-4 h-4 text-accent" />
+                    <Play className="w-4 h-4 text-[#d4967c]" />
                     Latest Recordings
                   </h4>
                   <p className="text-sm text-muted-foreground mb-3">
