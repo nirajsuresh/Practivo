@@ -322,10 +322,12 @@ function RepertoireRow({ composer, piece, movement, status: initialStatus, date,
 
   const getStatusColor = (s: string) => {
     switch(s) {
-      case "Performance-ready": return "bg-green-100 text-green-700 border-green-200";
-      case "In Progress": return "bg-blue-100 text-blue-700 border-blue-200";
-      case "Learned": return "bg-amber-100 text-amber-700 border-amber-200";
-      case "Wishlist": return "bg-slate-100 text-slate-600 border-slate-200";
+      case "Performance-ready": return "bg-[#e8ddd0] text-[#6b5230] border-[#d4c8b0]";
+      case "In Progress": return "bg-[#f5e0d4] text-[#8b4a2a] border-[#e8c4ae]";
+      case "Learned": return "bg-[#ede4d4] text-[#7a5c30] border-[#ddd0b8]";
+      case "Wishlist": return "bg-[#ede8e0] text-[#8a7e6e] border-[#ddd6cc]";
+      case "Re-learning": return "bg-[#f0d8cc] text-[#8b4030] border-[#e4c0ae]";
+      case "Stopped learning": return "bg-[#e8e0d8] text-[#7a6e60] border-[#d8cec4]";
       default: return "bg-muted text-muted-foreground";
     }
   };
