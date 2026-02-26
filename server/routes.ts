@@ -137,7 +137,12 @@ export async function registerRoutes(
           ],
           max_completion_tokens: 4096,
         });
-        analysis = completion.choices[0]?.message?.content || "Analysis not available.";
+        console.log("OpenAI completion:", JSON.stringify({
+          finish_reason: completion.choices[0]?.finish_reason,
+          content_length: completion.choices[0]?.message?.content?.length ?? 0,
+          model: completion.model,
+        }));
+        analysis = completion.choices[0]?.message?.content?.trim() || "Analysis not available.";
       } catch (aiError) {
         console.error("OpenAI API error:", aiError);
         return res.status(502).json({ error: "AI service temporarily unavailable. Please try again later." });
