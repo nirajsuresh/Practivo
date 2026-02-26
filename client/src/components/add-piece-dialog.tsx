@@ -52,6 +52,7 @@ interface AddPieceDialogProps {
 
 export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   const [open, setOpen] = useState(false);
+  const [dialogContainer, setDialogContainer] = useState<HTMLDivElement | null>(null);
   const [composerQuery, setComposerQuery] = useState("");
   const [pieceQuery, setPieceQuery] = useState("");
   
@@ -163,7 +164,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
           <Plus className="w-4 h-4" /> Add Piece
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent ref={setDialogContainer} className="sm:max-w-[425px] overflow-visible">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Add New Piece</DialogTitle>
           <DialogDescription>
@@ -182,6 +183,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               searchPlaceholder="Search composers..."
               emptyMessage="No composers found."
               isLoading={composersLoading}
+              portalContainer={dialogContainer}
             />
           </div>
           <div className="grid gap-2">
@@ -196,6 +198,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               emptyMessage={selectedComposerId ? "No pieces found for this composer." : "Select a composer first."}
               isLoading={piecesLoading}
               disabled={!selectedComposerId}
+              portalContainer={dialogContainer}
             />
           </div>
           <div className="grid gap-2">
@@ -210,6 +213,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               emptyMessage="No movements for this piece."
               isLoading={movementsLoading}
               disabled={!selectedPieceId || movements.length === 0}
+              portalContainer={dialogContainer}
             />
           </div>
           <div className="grid gap-2">

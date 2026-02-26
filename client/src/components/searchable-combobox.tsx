@@ -31,6 +31,7 @@ interface SearchableComboboxProps {
   emptyMessage?: string;
   isLoading?: boolean;
   disabled?: boolean;
+  portalContainer?: HTMLElement | null;
 }
 
 export function SearchableCombobox({
@@ -43,6 +44,7 @@ export function SearchableCombobox({
   emptyMessage = "No results found.",
   isLoading = false,
   disabled = false,
+  portalContainer,
 }: SearchableComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -71,7 +73,7 @@ export function SearchableCombobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start" container={portalContainer}>
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={searchPlaceholder}
@@ -127,6 +129,7 @@ interface MultiSelectComboboxProps {
   emptyMessage?: string;
   isLoading?: boolean;
   disabled?: boolean;
+  portalContainer?: HTMLElement | null;
 }
 
 export function MultiSelectCombobox({
@@ -139,6 +142,7 @@ export function MultiSelectCombobox({
   emptyMessage = "No results found.",
   isLoading = false,
   disabled = false,
+  portalContainer,
 }: MultiSelectComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -178,7 +182,7 @@ export function MultiSelectCombobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start" container={portalContainer}>
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={searchPlaceholder}
