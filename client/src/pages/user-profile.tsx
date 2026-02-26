@@ -75,6 +75,7 @@ export default function UserProfilePage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/connections/status/${id}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections/sent"] });
       toast({ title: "Connection request sent" });
     },
     onError: () => {
