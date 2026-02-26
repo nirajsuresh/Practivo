@@ -105,6 +105,7 @@ export default function ProfilePage() {
   const { data: rawRepertoire, isLoading: repertoireLoading } = useQuery<any[]>({
     queryKey: [`/api/repertoire/${userId}`],
     enabled: !!userId,
+    staleTime: 0,
   });
 
   const [repertoire, setRepertoire] = useState<RepertoireItem[]>([]);
