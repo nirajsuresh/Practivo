@@ -277,6 +277,133 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/users/search", async (req, res) => {
+    try {
+      const query = (req.query.q as string) || "";
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const users = await storage.searchUsers(query, currentUserId);
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to search users" });
+    }
+  });
+
+  app.post("/api/connections", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const { recipientId } = req.body;
+      if (!recipientId) {
+        return res.status(400).json({ error: "recipientId is required" });
+      }
+      if (currentUserId === recipientId) {
+        return res.status(400).json({ error: "Cannot connect with yourself" });
+      }
+      const connection = await storage.sendConnectionRequest(currentUserId, recipientId);
+      res.status(201).json(connection);
+    } catch (error: any) {
+      if (error.message?.includes("already exists")) {
+        return res.status(409).json({ error: error.message });
+      }
+      res.status(500).json({ error: "Failed to send connection request" });
+    }
+  });
+
+  app.get("/api/connections/received", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const requests = await storage.getPendingRequestsReceived(currentUserId);
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get received requests" });
+    }
+  });
+
+  app.get("/api/connections/sent", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const requests = await storage.getPendingRequestsSent(currentUserId);
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get sent requests" });
+    }
+  });
+
+  app.get("/api/connections", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const connections = await storage.getAcceptedConnections(currentUserId);
+      res.json(connections);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get connections" });
+    }
+  });
+
+  app.patch("/api/connections/:id", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const connectionId = parseInt(req.params.id);
+      const { status } = req.body;
+      if (!status || !["accepted", "denied"].includes(status)) {
+        return res.status(400).json({ error: "Status must be 'accepted' or 'denied'" });
+      }
+      const conn = await storage.getConnectionById(connectionId);
+      if (!conn) {
+        return res.status(404).json({ error: "Connection not found" });
+      }
+      if (conn.recipientId !== currentUserId) {
+        return res.status(403).json({ error: "Only the recipient can accept or deny a request" });
+      }
+      const updated = await storage.updateConnectionStatus(connectionId, status);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update connection" });
+    }
+  });
+
+  app.get("/api/connections/status/:userId", async (req, res) => {
+    try {
+      const currentUserId = req.headers["x-user-id"] as string;
+      if (!currentUserId) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const targetUserId = req.params.userId;
+      const connection = await storage.getConnectionBetween(currentUserId, targetUserId);
+      if (!connection) {
+        return res.json({ status: "none" });
+      }
+      if (connection.status === "accepted") {
+        return res.json({ status: "accepted", connectionId: connection.id });
+      }
+      if (connection.status === "denied") {
+        return res.json({ status: "denied", connectionId: connection.id });
+      }
+      if (connection.requesterId === currentUserId) {
+        return res.json({ status: "pending_sent", connectionId: connection.id });
+      }
+      return res.json({ status: "pending_received", connectionId: connection.id });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get connection status" });
+    }
+  });
+
   app.post("/api/users/:userId/profile", async (req, res) => {
     try {
       const userId = req.params.userId;

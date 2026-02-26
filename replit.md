@@ -68,6 +68,14 @@ Preferred communication style: Simple, everyday language.
 - **Error Handling**: Separate error paths for missing AI config (503), AI failures (502), and general errors (500)
 - **Token Budget**: `max_completion_tokens: 4096` required because gpt-5-nano uses internal reasoning tokens; lower values cause empty responses
 
+### Connections System
+- **Two-way connection requests**: Users can search for other musicians, send connection requests, accept/deny received requests
+- **Connection gating**: User profiles show limited preview (name, instrument, level) until connected; full profile + repertoire visible after connection accepted
+- **`connections` table**: `id`, `requesterId`, `recipientId`, `status` (pending/accepted/denied), `createdAt`, `updatedAt`
+- **API endpoints**: `GET /api/users/search`, `POST /api/connections`, `GET /api/connections/received|sent`, `GET /api/connections`, `PATCH /api/connections/:id`, `GET /api/connections/status/:userId`
+- **Auth header**: All connection/search endpoints use `x-user-id` header (set automatically by `apiRequest` and `getQueryFn` from localStorage)
+- **Frontend pages**: `/connections` (manage requests), `/user/:id` (public profile with connection gating), `/search` (real user search)
+
 ### Authentication (Partial Implementation)
 - **Passport.js**: Authentication framework (dependencies present)
 - **passport-local**: Username/password strategy

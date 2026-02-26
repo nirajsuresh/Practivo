@@ -11,11 +11,12 @@ import {
   type PieceRating, type InsertPieceRating,
   type PieceComment, type InsertPieceComment,
   type PieceAnalysis, type InsertPieceAnalysis,
+  type Connection, type InsertConnection,
   users, composers, pieces, movements, repertoireEntries, posts, challenges, userProfiles, follows,
-  pieceRatings, pieceComments, pieceAnalyses
+  pieceRatings, pieceComments, pieceAnalyses, connections
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, inArray, sql, count, avg } from "drizzle-orm";
+import { eq, ilike, and, desc, inArray, sql, count, avg, or, ne } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -59,6 +60,15 @@ export interface IStorage {
   
   getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined>;
   savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis>;
+
+  searchUsers(query: string, currentUserId: string): Promise<any[]>;
+  sendConnectionRequest(requesterId: string, recipientId: string): Promise<Connection>;
+  getConnectionBetween(userA: string, userB: string): Promise<Connection | undefined>;
+  getConnectionById(id: number): Promise<Connection | undefined>;
+  getPendingRequestsReceived(userId: string): Promise<any[]>;
+  getPendingRequestsSent(userId: string): Promise<any[]>;
+  updateConnectionStatus(connectionId: number, status: "accepted" | "denied"): Promise<Connection>;
+  getAcceptedConnections(userId: string): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -372,6 +382,128 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return analysis;
+  }
+
+  async searchUsers(query: string, currentUserId: string): Promise<any[]> {
+    if (!query.trim()) return [];
+    return db
+      .select({
+        userId: userProfiles.userId,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+        location: userProfiles.location,
+      })
+      .from(userProfiles)
+      .where(and(
+        ilike(userProfiles.displayName, `%${query}%`),
+        ne(userProfiles.userId, currentUserId)
+      ))
+      .limit(20);
+  }
+
+  async sendConnectionRequest(requesterId: string, recipientId: string): Promise<Connection> {
+    const existing = await this.getConnectionBetween(requesterId, recipientId);
+    if (existing) {
+      throw new Error("Connection already exists between these users");
+    }
+    const [conn] = await db.insert(connections).values({
+      requesterId,
+      recipientId,
+      status: "pending",
+    }).returning();
+    return conn;
+  }
+
+  async getConnectionById(id: number): Promise<Connection | undefined> {
+    const [conn] = await db.select().from(connections).where(eq(connections.id, id));
+    return conn;
+  }
+
+  async getConnectionBetween(userA: string, userB: string): Promise<Connection | undefined> {
+    const [conn] = await db.select().from(connections).where(
+      or(
+        and(eq(connections.requesterId, userA), eq(connections.recipientId, userB)),
+        and(eq(connections.requesterId, userB), eq(connections.recipientId, userA))
+      )
+    );
+    return conn;
+  }
+
+  async getPendingRequestsReceived(userId: string): Promise<any[]> {
+    return db
+      .select({
+        id: connections.id,
+        requesterId: connections.requesterId,
+        status: connections.status,
+        createdAt: connections.createdAt,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+      })
+      .from(connections)
+      .leftJoin(userProfiles, eq(connections.requesterId, userProfiles.userId))
+      .where(and(eq(connections.recipientId, userId), eq(connections.status, "pending")));
+  }
+
+  async getPendingRequestsSent(userId: string): Promise<any[]> {
+    return db
+      .select({
+        id: connections.id,
+        recipientId: connections.recipientId,
+        status: connections.status,
+        createdAt: connections.createdAt,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+      })
+      .from(connections)
+      .leftJoin(userProfiles, eq(connections.recipientId, userProfiles.userId))
+      .where(and(eq(connections.requesterId, userId), eq(connections.status, "pending")));
+  }
+
+  async updateConnectionStatus(connectionId: number, status: "accepted" | "denied"): Promise<Connection> {
+    const [conn] = await db
+      .update(connections)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(connections.id, connectionId))
+      .returning();
+    return conn;
+  }
+
+  async getAcceptedConnections(userId: string): Promise<any[]> {
+    const sent = await db
+      .select({
+        connectionId: connections.id,
+        userId: userProfiles.userId,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+        location: userProfiles.location,
+      })
+      .from(connections)
+      .leftJoin(userProfiles, eq(connections.recipientId, userProfiles.userId))
+      .where(and(eq(connections.requesterId, userId), eq(connections.status, "accepted")));
+
+    const received = await db
+      .select({
+        connectionId: connections.id,
+        userId: userProfiles.userId,
+        displayName: userProfiles.displayName,
+        instrument: userProfiles.instrument,
+        level: userProfiles.level,
+        avatarUrl: userProfiles.avatarUrl,
+        location: userProfiles.location,
+      })
+      .from(connections)
+      .leftJoin(userProfiles, eq(connections.requesterId, userProfiles.userId))
+      .where(and(eq(connections.recipientId, userId), eq(connections.status, "accepted")));
+
+    return [...sent, ...received];
   }
 }
 

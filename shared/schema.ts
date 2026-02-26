@@ -151,6 +151,19 @@ export const insertPieceAnalysisSchema = createInsertSchema(pieceAnalyses).omit(
 export type InsertPieceAnalysis = z.infer<typeof insertPieceAnalysisSchema>;
 export type PieceAnalysis = typeof pieceAnalyses.$inferSelect;
 
+export const connections = pgTable("connections", {
+  id: serial("id").primaryKey(),
+  requesterId: varchar("requester_id").notNull().references(() => users.id),
+  recipientId: varchar("recipient_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertConnectionSchema = createInsertSchema(connections).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertConnection = z.infer<typeof insertConnectionSchema>;
+export type Connection = typeof connections.$inferSelect;
+
 export const userProfiles = pgTable("user_profiles", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().references(() => users.id).unique(),

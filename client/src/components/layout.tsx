@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
@@ -14,6 +15,12 @@ export function Navbar() {
   useEffect(() => {
     setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
   }, [location]);
+
+  const { data: pendingReceived = [] } = useQuery<any[]>({
+    queryKey: ["/api/connections/received"],
+    enabled: isLoggedIn,
+    refetchInterval: 30000,
+  });
 
   const handleLogout = () => {
     localStorage.removeItem("isLoggedIn");
@@ -70,6 +77,23 @@ export function Navbar() {
                 data-testid="link-home"
               >
                 Feed
+              </Button>
+            </Link>
+            <Link href="/connections">
+              <Button 
+                variant="ghost" 
+                className={cn(
+                  "text-base font-medium hover:bg-white/10 relative",
+                  isLanding ? "text-white hover:text-white" : "text-foreground hover:bg-black/5"
+                )}
+                data-testid="link-connections"
+              >
+                Connections
+                {pendingReceived.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-[#d4967c] text-white text-xs w-5 h-5 rounded-full flex items-center justify-center" data-testid="badge-pending-count">
+                    {pendingReceived.length}
+                  </span>
+                )}
               </Button>
             </Link>
             <Link href="/profile">
