@@ -79,7 +79,7 @@ export function SearchableCombobox({
             onValueChange={handleSearch}
             data-testid="combobox-search"
           />
-          <CommandList>
+          <CommandList className="max-h-[300px]">
             {isLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -186,7 +186,7 @@ export function MultiSelectCombobox({
             onValueChange={handleSearch}
             data-testid="combobox-multi-search"
           />
-          <CommandList>
+          <CommandList className="max-h-[300px]">
             {isLoading ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin" />

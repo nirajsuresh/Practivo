@@ -76,9 +76,9 @@ export class DatabaseStorage implements IStorage {
   async searchComposers(query: string): Promise<Composer[]> {
     const lastNameOrder = sql`split_part(${composers.name}, ' ', array_length(string_to_array(${composers.name}, ' '), 1))`;
     if (!query.trim()) {
-      return db.select().from(composers).orderBy(lastNameOrder).limit(20);
+      return db.select().from(composers).orderBy(lastNameOrder);
     }
-    return db.select().from(composers).where(ilike(composers.name, `%${query}%`)).orderBy(lastNameOrder).limit(20);
+    return db.select().from(composers).where(ilike(composers.name, `%${query}%`)).orderBy(lastNameOrder);
   }
 
   async getComposerById(id: number): Promise<Composer | undefined> {
@@ -102,13 +102,11 @@ export class DatabaseStorage implements IStorage {
     if (composerId && query.trim()) {
       return db.select(selectFields).from(pieces)
         .innerJoin(composers, eq(pieces.composerId, composers.id))
-        .where(and(eq(pieces.composerId, composerId), ilike(pieces.title, `%${query}%`)))
-        .limit(20);
+        .where(and(eq(pieces.composerId, composerId), ilike(pieces.title, `%${query}%`)));
     } else if (composerId) {
       return db.select(selectFields).from(pieces)
         .innerJoin(composers, eq(pieces.composerId, composers.id))
-        .where(eq(pieces.composerId, composerId))
-        .limit(20);
+        .where(eq(pieces.composerId, composerId));
     } else if (query.trim()) {
       const combined = sql`(${pieces.title} || ' ' || ${composers.name})`;
       return db.select(selectFields).from(pieces)
@@ -117,11 +115,11 @@ export class DatabaseStorage implements IStorage {
           sql`${ilike(pieces.title, `%${query}%`)} OR ${ilike(composers.name, `%${query}%`)} OR similarity(${combined}, ${query}) > 0.1`
         )
         .orderBy(sql`similarity(${combined}, ${query}) DESC`)
-        .limit(20);
+        .limit(50);
     }
     return db.select(selectFields).from(pieces)
       .innerJoin(composers, eq(pieces.composerId, composers.id))
-      .limit(20);
+      .limit(50);
   }
 
   async getPieceById(id: number): Promise<Piece | undefined> {
