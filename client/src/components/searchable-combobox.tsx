@@ -61,7 +61,7 @@ export function SearchableCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between font-normal min-w-0"
+          className={cn("w-full justify-between font-normal min-w-0", disabled && "opacity-50 cursor-not-allowed")}
           disabled={disabled}
           data-testid="combobox-trigger"
         >
@@ -168,7 +168,7 @@ export function MultiSelectCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between font-normal min-w-0"
+          className={cn("w-full justify-between font-normal min-w-0", disabled && "opacity-50 cursor-not-allowed")}
           disabled={disabled}
           data-testid="combobox-multi-trigger"
         >
