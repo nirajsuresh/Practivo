@@ -62,10 +62,11 @@ Preferred communication style: Simple, everyday language.
 - **Uppy**: File upload handling with dashboard UI
 
 ### AI-Powered Piece Analysis
-- **Wikipedia + OpenAI Pipeline**: `GET /api/pieces/:pieceId/analysis` searches Wikipedia for the piece, fetches the article extract, and uses OpenAI `gpt-5-nano` to generate a musical analysis summary
+- **Wikipedia + OpenAI Pipeline**: `GET /api/pieces/:pieceId/analysis` searches Wikipedia for the piece, fetches the article extract (up to 1500 chars), and uses OpenAI `gpt-5-nano` to generate a single short paragraph encyclopedia-style description
 - **DB Caching**: Results are cached in the `piece_analyses` table (unique on `pieceId`); subsequent requests return instantly from cache
 - **Upsert Safety**: Uses `onConflictDoUpdate` to handle concurrent first-visit requests without unique constraint errors
 - **Error Handling**: Separate error paths for missing AI config (503), AI failures (502), and general errors (500)
+- **Token Budget**: `max_completion_tokens: 4096` required because gpt-5-nano uses internal reasoning tokens; lower values cause empty responses
 
 ### Authentication (Partial Implementation)
 - **Passport.js**: Authentication framework (dependencies present)

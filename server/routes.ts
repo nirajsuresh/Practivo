@@ -107,7 +107,7 @@ export async function registerRoutes(
           const pages = extractData?.query?.pages;
           if (pages) {
             const page = Object.values(pages)[0] as any;
-            wikiExtract = (page?.extract ?? "").substring(0, 3000);
+            wikiExtract = (page?.extract ?? "").substring(0, 1500);
           }
         }
       } catch (wikiError) {
@@ -135,9 +135,9 @@ export async function registerRoutes(
             { role: "system", content: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry." },
             { role: "user", content: prompt },
           ],
-          max_completion_tokens: 300,
+          max_completion_tokens: 4096,
         });
-        analysis = completion.choices[0]?.message?.content ?? "Analysis not available.";
+        analysis = completion.choices[0]?.message?.content || "Analysis not available.";
       } catch (aiError) {
         console.error("OpenAI API error:", aiError);
         return res.status(502).json({ error: "AI service temporarily unavailable. Please try again later." });
