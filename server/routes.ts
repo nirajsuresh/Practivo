@@ -122,7 +122,9 @@ export async function registerRoutes(
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
       });
+      res.flushHeaders();
 
       res.write(`event: meta\ndata: ${JSON.stringify({ wikiUrl })}\n\n`);
 
