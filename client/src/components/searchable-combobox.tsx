@@ -20,6 +20,7 @@ import {
 interface Option {
   value: string;
   label: string;
+  sortKey?: string;
 }
 
 interface SearchableComboboxProps {
@@ -51,7 +52,7 @@ export function SearchableCombobox({
   const [searchQuery, setSearchQuery] = React.useState("");
 
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+    () => [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
     [options]
   );
 
@@ -154,7 +155,7 @@ export function MultiSelectCombobox({
   const [searchQuery, setSearchQuery] = React.useState("");
 
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+    () => [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
     [options]
   );
 

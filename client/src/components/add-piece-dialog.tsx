@@ -148,7 +148,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
     setOpen(false);
   };
 
-  const composerOptions = composers.map(c => ({ value: c.id.toString(), label: c.name }));
+  const composerOptions = composers.map(c => ({ value: c.id.toString(), label: c.name, sortKey: c.name.split(" ").pop() || c.name }));
   const pieceOptions = pieces.map(p => ({ value: p.id.toString(), label: p.title }));
   const movementOptions = movements.map(m => ({ value: m.id.toString(), label: m.name }));
 
