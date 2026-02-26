@@ -267,7 +267,7 @@ export default function PieceDetailPage() {
             <Card className="border-none shadow-sm overflow-hidden">
               <CardHeader className="bg-muted/30 pb-4">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Musical Analysis & Technique</CardTitle>
+                  <CardTitle className="text-lg">Summary & Analysis</CardTitle>
                   {analysisData?.wikiUrl && (
                     <a
                       href={analysisData.wikiUrl}
@@ -288,6 +288,7 @@ export default function PieceDetailPage() {
                     <div className="h-4 bg-muted/60 rounded animate-pulse w-full" />
                     <div className="h-4 bg-muted/60 rounded animate-pulse w-[90%]" />
                     <div className="h-4 bg-muted/60 rounded animate-pulse w-[95%]" />
+                    <p className="text-xs text-muted-foreground italic pt-1">Generating summary...</p>
                   </div>
                 ) : analysisError ? (
                   <p className="text-muted-foreground italic" data-testid="text-analysis-error">
