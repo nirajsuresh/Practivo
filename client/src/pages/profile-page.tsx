@@ -27,7 +27,8 @@ import { useState, useEffect } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const genreData = [
@@ -148,8 +149,39 @@ export default function ProfilePage() {
 
   const visibleRepertoire = isExpanded ? sortedRepertoire : sortedRepertoire.slice(0, 3);
 
-  const handleAddPiece = (piece: NewPieceData) => {
-    setRepertoire(prev => [piece, ...prev]);
+  const queryClient = useQueryClient();
+
+  const handleAddPiece = async (piece: NewPieceData) => {
+    const startedDate = piece.date === "—" ? null : piece.date;
+
+    try {
+      if (piece.movementIds.length > 0) {
+        await Promise.all(
+          piece.movementIds.map((movementId) =>
+            apiRequest("POST", "/api/repertoire", {
+              userId,
+              composerId: piece.composerId,
+              pieceId: piece.pieceId,
+              movementId,
+              status: piece.status,
+              startedDate,
+            })
+          )
+        );
+      } else {
+        await apiRequest("POST", "/api/repertoire", {
+          userId,
+          composerId: piece.composerId,
+          pieceId: piece.pieceId,
+          status: piece.status,
+          startedDate,
+        });
+      }
+
+      queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
+    } catch (error) {
+      console.error("Failed to add piece to repertoire:", error);
+    }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {

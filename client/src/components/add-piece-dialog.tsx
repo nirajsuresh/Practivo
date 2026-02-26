@@ -41,6 +41,9 @@ export interface NewPieceData {
   movements: string[];
   status: string;
   date: string;
+  composerId: number;
+  pieceId: number;
+  movementIds: number[];
 }
 
 interface AddPieceDialogProps {
@@ -134,6 +137,9 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
       movements: movementNames,
       status,
       date: status === "Want to learn" ? "—" : (startedDate || new Date().toISOString().split("T")[0]),
+      composerId: Number(selectedComposerId),
+      pieceId: Number(selectedPieceId),
+      movementIds: selectedMovementIds.map(Number),
     };
 
     onAdd?.(newPiece);
