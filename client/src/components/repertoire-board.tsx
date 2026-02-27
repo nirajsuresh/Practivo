@@ -49,12 +49,10 @@ function DroppableColumn({
   status,
   children,
   count,
-  compact,
 }: {
   status: string;
   children: React.ReactNode;
   count: number;
-  compact?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   const dotColor = getStatusDotColor(status);
@@ -223,16 +221,14 @@ function ColumnWithCards({
   status,
   items,
   onProgressChange,
-  compact,
 }: {
   status: string;
   items: BoardItem[];
   onProgressChange: (id: string, progress: number) => void;
-  compact?: boolean;
 }) {
   const colItems = items.filter((i) => i.status === status);
   return (
-    <DroppableColumn status={status} count={colItems.length} compact={compact}>
+    <DroppableColumn status={status} count={colItems.length}>
       <SortableContext
         items={colItems.map((i) => i.id)}
         strategy={verticalListSortingStrategy}
@@ -353,27 +349,27 @@ export function RepertoireBoard({ items, onStatusChange }: RepertoireBoardProps)
           />
         ))}
 
-        <div className="flex flex-col gap-2 flex-1 min-w-0 h-full">
-          {STACKED_A.map((status) => (
-            <ColumnWithCards
-              key={status}
-              status={status}
-              items={boardItems}
-              onProgressChange={handleProgressChange}
-              compact
-            />
+        <div className="flex flex-col flex-1 min-w-0 h-full">
+          {STACKED_A.map((status, idx) => (
+            <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
+              <ColumnWithCards
+                status={status}
+                items={boardItems}
+                onProgressChange={handleProgressChange}
+              />
+            </div>
           ))}
         </div>
 
-        <div className="flex flex-col gap-2 flex-1 min-w-0 h-full">
-          {STACKED_B.map((status) => (
-            <ColumnWithCards
-              key={status}
-              status={status}
-              items={boardItems}
-              onProgressChange={handleProgressChange}
-              compact
-            />
+        <div className="flex flex-col flex-1 min-w-0 h-full">
+          {STACKED_B.map((status, idx) => (
+            <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
+              <ColumnWithCards
+                status={status}
+                items={boardItems}
+                onProgressChange={handleProgressChange}
+              />
+            </div>
           ))}
         </div>
       </div>
