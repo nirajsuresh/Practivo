@@ -75,7 +75,7 @@ export default function UserProfilePage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/connections/status/${id}`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections/sent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections/sent", localStorage.getItem("userId") || ""] });
       toast({ title: "Connection request sent" });
     },
     onError: () => {
@@ -89,8 +89,8 @@ export default function UserProfilePage() {
     },
     onSuccess: (_, status) => {
       queryClient.invalidateQueries({ queryKey: [`/api/connections/status/${id}`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections/received"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections/received", localStorage.getItem("userId") || ""] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections", localStorage.getItem("userId") || ""] });
       toast({ title: status === "accepted" ? "Connection accepted" : "Request declined" });
     },
     onError: () => {

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
@@ -16,15 +16,26 @@ export function Navbar() {
     setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
   }, [location]);
 
+  const currentUserId = localStorage.getItem("userId") || "";
+
   const { data: pendingReceived = [] } = useQuery<any[]>({
-    queryKey: ["/api/connections/received"],
-    enabled: isLoggedIn,
+    queryKey: ["/api/connections/received", currentUserId],
+    queryFn: async () => {
+      const res = await fetch("/api/connections/received", { headers: { "x-user-id": currentUserId } });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: isLoggedIn && !!currentUserId,
     refetchInterval: 30000,
   });
 
+  const qc = useQueryClient();
+
   const handleLogout = () => {
     localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("userId");
     setIsLoggedIn(false);
+    qc.clear();
     setLocation("/");
   };
 

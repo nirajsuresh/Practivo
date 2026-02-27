@@ -34,17 +34,36 @@ interface AcceptedConnection {
 export default function ConnectionsPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const currentUserId = localStorage.getItem("userId") || "";
 
   const { data: received = [] } = useQuery<ConnectionRequest[]>({
-    queryKey: ["/api/connections/received"],
+    queryKey: ["/api/connections/received", currentUserId],
+    queryFn: async () => {
+      const res = await fetch("/api/connections/received", { headers: { "x-user-id": currentUserId } });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: !!currentUserId,
   });
 
   const { data: sent = [] } = useQuery<ConnectionRequest[]>({
-    queryKey: ["/api/connections/sent"],
+    queryKey: ["/api/connections/sent", currentUserId],
+    queryFn: async () => {
+      const res = await fetch("/api/connections/sent", { headers: { "x-user-id": currentUserId } });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: !!currentUserId,
   });
 
   const { data: accepted = [] } = useQuery<AcceptedConnection[]>({
-    queryKey: ["/api/connections"],
+    queryKey: ["/api/connections", currentUserId],
+    queryFn: async () => {
+      const res = await fetch("/api/connections", { headers: { "x-user-id": currentUserId } });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+    enabled: !!currentUserId,
   });
 
   const respondMutation = useMutation({
@@ -52,8 +71,8 @@ export default function ConnectionsPage() {
       await apiRequest("PATCH", `/api/connections/${id}`, { status });
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/connections/received"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections/received", currentUserId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections", currentUserId] });
       toast({
         title: variables.status === "accepted" ? "Connection accepted" : "Request declined",
       });

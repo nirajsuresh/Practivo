@@ -63,7 +63,7 @@ function ConnectionButton({ userId }: { userId: string }) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/connections/status/${userId}`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections/sent"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections/sent", localStorage.getItem("userId") || ""] });
       toast({ title: "Connection request sent" });
     },
     onError: () => {
