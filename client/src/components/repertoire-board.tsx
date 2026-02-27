@@ -277,7 +277,6 @@ export function RepertoireBoard({ items, onStatusChange }: RepertoireBoardProps)
     async (pieceId: string, newStatus: string) => {
       try {
         const body: Record<string, any> = { status: newStatus };
-        if (newStatus !== "Learning") body.progress = 0;
 
         await apiRequest("PATCH", `/api/repertoire/piece/${pieceId}`, body);
         onStatusChange();
@@ -331,7 +330,7 @@ export function RepertoireBoard({ items, onStatusChange }: RepertoireBoardProps)
     setBoardItems((prev) =>
       prev.map((i) =>
         i.id === draggedId
-          ? { ...i, status: targetStatus, progress: targetStatus === "Learning" ? i.progress : 0 }
+          ? { ...i, status: targetStatus }
           : i
       )
     );
