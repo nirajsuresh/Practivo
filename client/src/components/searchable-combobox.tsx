@@ -211,6 +211,21 @@ export function MultiSelectCombobox({
               <CommandEmpty>{emptyMessage}</CommandEmpty>
             ) : (
               <CommandGroup>
+                <CommandItem
+                  value="__toggle_all__"
+                  onSelect={() => {
+                    if (values.length === options.length) {
+                      onValuesChange([]);
+                    } else {
+                      onValuesChange(options.map(o => o.value));
+                    }
+                  }}
+                  className="text-xs text-primary"
+                  data-testid="combobox-multi-toggle-all"
+                >
+                  <Check className="mr-2 h-4 w-4 shrink-0 opacity-0" />
+                  {values.length === options.length ? "Deselect all" : "Select all"}
+                </CommandItem>
                 {sortedOptions.map((option) => (
                   <CommandItem
                     key={option.value}
