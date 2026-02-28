@@ -62,6 +62,16 @@ export interface IStorage {
   getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined>;
   savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis>;
 
+  unifiedSearch(query: string): Promise<{
+    type: "piece" | "movement";
+    composerId: number;
+    composerName: string;
+    pieceId: number;
+    pieceTitle: string;
+    movementId: number | null;
+    movementName: string | null;
+    score: number;
+  }[]>;
   searchUsers(query: string, currentUserId: string): Promise<any[]>;
   sendConnectionRequest(requesterId: string, recipientId: string): Promise<Connection>;
   getConnectionBetween(userA: string, userB: string): Promise<Connection | undefined>;
@@ -396,6 +406,56 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return analysis;
+  }
+
+  async unifiedSearch(query: string): Promise<{
+    type: "piece" | "movement";
+    composerId: number;
+    composerName: string;
+    pieceId: number;
+    pieceTitle: string;
+    movementId: number | null;
+    movementName: string | null;
+    score: number;
+  }[]> {
+    if (!query.trim()) return [];
+
+    const pieceResults = await db.select({
+      composerId: pieces.composerId,
+      composerName: composers.name,
+      pieceId: pieces.id,
+      pieceTitle: pieces.title,
+      score: sql<number>`word_similarity(unaccent(${query}), unaccent(${pieces.title} || ' ' || ${composers.name}))`,
+    })
+      .from(pieces)
+      .innerJoin(composers, eq(pieces.composerId, composers.id))
+      .where(sql`unaccent(${pieces.title} || ' ' || ${composers.name}) ILIKE unaccent(${'%' + query + '%'}) OR word_similarity(unaccent(${query}), unaccent(${pieces.title} || ' ' || ${composers.name})) > 0.3`)
+      .orderBy(sql`word_similarity(unaccent(${query}), unaccent(${pieces.title} || ' ' || ${composers.name})) DESC`)
+      .limit(15);
+
+    const movementResults = await db.select({
+      composerId: pieces.composerId,
+      composerName: composers.name,
+      pieceId: pieces.id,
+      pieceTitle: pieces.title,
+      movementId: movements.id,
+      movementName: movements.name,
+      score: sql<number>`word_similarity(unaccent(${query}), unaccent(${movements.name} || ' ' || ${pieces.title} || ' ' || ${composers.name}))`,
+    })
+      .from(movements)
+      .innerJoin(pieces, eq(movements.pieceId, pieces.id))
+      .innerJoin(composers, eq(pieces.composerId, composers.id))
+      .where(sql`unaccent(${movements.name} || ' ' || ${pieces.title}) ILIKE unaccent(${'%' + query + '%'}) OR word_similarity(unaccent(${query}), unaccent(${movements.name} || ' ' || ${pieces.title} || ' ' || ${composers.name})) > 0.3`)
+      .orderBy(sql`word_similarity(unaccent(${query}), unaccent(${movements.name} || ' ' || ${pieces.title} || ' ' || ${composers.name})) DESC`)
+      .limit(15);
+
+    const combined = [
+      ...pieceResults.map(r => ({ type: "piece" as const, ...r, movementId: null, movementName: null })),
+      ...movementResults.map(r => ({ type: "movement" as const, ...r })),
+    ];
+
+    combined.sort((a, b) => b.score - a.score);
+    return combined.slice(0, 30);
   }
 
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {

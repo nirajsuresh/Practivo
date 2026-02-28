@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,12 +7,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { Check, Plus, Trash2 } from "lucide-react";
+import { Check, Plus, Trash2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
 import { AvatarPicker } from "@/components/piano-avatars";
 import { useQuery } from "@tanstack/react-query";
+
+interface UnifiedResult {
+  type: "piece" | "movement";
+  composerId: number;
+  composerName: string;
+  pieceId: number;
+  pieceTitle: string;
+  movementId: number | null;
+  movementName: string | null;
+  score: number;
+}
 
 interface Composer {
   id: number;
@@ -41,19 +52,77 @@ interface RepertoireRow {
   dateStarted: string;
 }
 
+function QuickSearchFill({ onFill }: { onFill: (result: UnifiedResult) => void }) {
+  const [query, setQuery] = useState("");
+  const { data: results = [], isLoading } = useQuery<UnifiedResult[]>({
+    queryKey: ["/api/search/unified", query],
+    queryFn: async () => {
+      const res = await fetch(`/api/search/unified?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error("Failed to search");
+      return res.json();
+    },
+    enabled: query.length > 1,
+  });
+
+  const options = results.map(r => {
+    const key = r.movementId ? `m-${r.movementId}` : `p-${r.pieceId}`;
+    const label = r.movementName
+      ? `${r.composerName} — ${r.pieceTitle}: ${r.movementName}`
+      : `${r.composerName} — ${r.pieceTitle}`;
+    return { value: key, label };
+  });
+
+  return (
+    <div className="space-y-1.5">
+      <Label className="flex items-center gap-1.5 text-sm">
+        <Search className="w-3.5 h-3.5" />
+        Quick Search
+      </Label>
+      <SearchableCombobox
+        options={options}
+        value=""
+        onValueChange={(value) => {
+          const result = results.find(r => {
+            const key = r.movementId ? `m-${r.movementId}` : `p-${r.pieceId}`;
+            return key === value;
+          });
+          if (result) onFill(result);
+        }}
+        onSearch={setQuery}
+        placeholder="Describe your piece (e.g. Moonlight Sonata)..."
+        searchPlaceholder="Type a piece, movement, or composer..."
+        emptyMessage={query.length > 1 ? "No matches found." : "Start typing to search..."}
+        isLoading={isLoading}
+      />
+    </div>
+  );
+}
+
 function RepertoireSetupRow({ 
   row, 
   onUpdate, 
   onRemove, 
-  canRemove 
+  canRemove,
+  autoFilled,
+  onAutoFillConsumed
 }: { 
   row: RepertoireRow; 
   onUpdate: (field: keyof RepertoireRow, value: string) => void; 
   onRemove: () => void;
   canRemove: boolean;
+  autoFilled?: boolean;
+  onAutoFillConsumed?: () => void;
 }) {
   const [composerQuery, setComposerQuery] = useState("");
   const [pieceQuery, setPieceQuery] = useState("");
+  const autoFillRef = useRef(0);
+
+  useEffect(() => {
+    if (autoFilled) {
+      autoFillRef.current = 2;
+      onAutoFillConsumed?.();
+    }
+  }, [autoFilled]);
 
   const { data: composers = [], isLoading: composersLoading } = useQuery<Composer[]>({
     queryKey: ["/api/composers/search", composerQuery],
@@ -88,6 +157,10 @@ function RepertoireSetupRow({
   });
 
   useEffect(() => {
+    if (autoFillRef.current > 0) {
+      autoFillRef.current--;
+      return;
+    }
     if (row.composerId) {
       onUpdate("pieceId", "");
       onUpdate("movementIds", "");
@@ -95,6 +168,10 @@ function RepertoireSetupRow({
   }, [row.composerId]);
 
   useEffect(() => {
+    if (autoFillRef.current > 0) {
+      autoFillRef.current--;
+      return;
+    }
     if (row.pieceId) {
       onUpdate("movementIds", "");
     }
@@ -202,6 +279,7 @@ export default function ProfileSetup() {
   const [repertoire, setRepertoire] = useState<RepertoireRow[]>([
     { id: "1", composerId: "", pieceId: "", movementIds: "", status: "Learning", dateStarted: "" }
   ]);
+  const [autoFilledRows, setAutoFilledRows] = useState<Set<string>>(new Set());
 
   const addRow = () => {
     setRepertoire([...repertoire, { id: Math.random().toString(36).substr(2, 9), composerId: "", pieceId: "", movementIds: "", status: "Learning", dateStarted: "" }]);
@@ -386,6 +464,18 @@ export default function ProfileSetup() {
 
               {step === 3 && (
                 <div className="space-y-6 overflow-x-auto">
+                  <QuickSearchFill
+                    onFill={(result) => {
+                      const emptyRow = repertoire.find(r => !r.composerId && !r.pieceId);
+                      const targetId = emptyRow?.id ?? Math.random().toString(36).substr(2, 9);
+                      setAutoFilledRows(prev => new Set(prev).add(targetId));
+                      if (!emptyRow) {
+                        setRepertoire(prev => [...prev, { id: targetId, composerId: result.composerId.toString(), pieceId: result.pieceId.toString(), movementIds: result.movementId ? result.movementId.toString() : "", status: "Learning", dateStarted: "" }]);
+                      } else {
+                        setRepertoire(prev => prev.map(r => r.id === targetId ? { ...r, composerId: result.composerId.toString(), pieceId: result.pieceId.toString(), movementIds: result.movementId ? result.movementId.toString() : "" } : r));
+                      }
+                    }}
+                  />
                   <Table className="table-fixed w-full">
                     <colgroup>
                       <col className="w-[22%]" />
@@ -413,6 +503,12 @@ export default function ProfileSetup() {
                           onUpdate={(field, value) => updateRow(row.id, field, value)}
                           onRemove={() => removeRow(row.id)}
                           canRemove={repertoire.length > 1}
+                          autoFilled={autoFilledRows.has(row.id)}
+                          onAutoFillConsumed={() => setAutoFilledRows(prev => {
+                            const next = new Set(prev);
+                            next.delete(row.id);
+                            return next;
+                          })}
                         />
                       ))}
                     </TableBody>

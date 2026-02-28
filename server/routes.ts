@@ -34,6 +34,16 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/search/unified", async (req, res) => {
+    try {
+      const query = (req.query.q as string) || "";
+      const results = await storage.unifiedSearch(query);
+      res.json(results);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to search" });
+    }
+  });
+
   app.get("/api/pieces/search", async (req, res) => {
     try {
       const query = (req.query.q as string) || "";

@@ -68,6 +68,13 @@ Preferred communication style: Simple, everyday language.
 - **Board routing**: Split items use `PATCH /api/repertoire/:entryId` for individual status/progress updates; grouped items use `PATCH /api/repertoire/piece/:pieceId` for batch updates
 - **Grouping logic**: `groupRepertoireData` in profile-page.tsx checks `splitView` per entry; split entries get ids like `entry-{id}`, grouped entries get ids like `{pieceId}`
 
+### Unified Search
+- **Endpoint**: `GET /api/search/unified?q=...` searches across pieces AND movements with full context
+- **Result format**: `{ type: "piece"|"movement", composerId, composerName, pieceId, pieceTitle, movementId, movementName, score }`
+- **Used in**: Add Piece dialog (top "Quick Search" field) and profile setup step 3 (above repertoire table)
+- **Auto-fill logic**: Uses a counter-based `autoFillRef` (set to 2) to suppress cascading clear effects when composerId and pieceId change simultaneously; Add Piece dialog also stores `lastUnifiedResult` to avoid stale query data on submit
+- **Profile setup**: `QuickSearchFill` component fills first empty row or creates a new one; passes `autoFilled` flag to `RepertoireSetupRow` which sets the counter before effects run
+
 ### AI-Powered Piece Analysis
 - **Wikipedia + OpenAI Pipeline**: `GET /api/pieces/:pieceId/analysis` searches Wikipedia for the piece, fetches the article extract (up to 1500 chars), and uses OpenAI `gpt-5-nano` to generate a single short paragraph encyclopedia-style description
 - **DB Caching**: Results are cached in the `piece_analyses` table (unique on `pieceId`); subsequent requests return instantly from cache

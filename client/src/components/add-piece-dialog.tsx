@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { 
   Dialog, 
@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 interface Composer {
@@ -32,6 +32,17 @@ interface Movement {
   id: number;
   name: string;
   pieceId: number;
+}
+
+interface UnifiedResult {
+  type: "piece" | "movement";
+  composerId: number;
+  composerName: string;
+  pieceId: number;
+  pieceTitle: string;
+  movementId: number | null;
+  movementName: string | null;
+  score: number;
 }
 
 export interface NewPieceData {
@@ -55,12 +66,26 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   const [dialogContainer, setDialogContainer] = useState<HTMLDivElement | null>(null);
   const [composerQuery, setComposerQuery] = useState("");
   const [pieceQuery, setPieceQuery] = useState("");
+  const [unifiedQuery, setUnifiedQuery] = useState("");
   
   const [selectedComposerId, setSelectedComposerId] = useState("");
   const [selectedPieceId, setSelectedPieceId] = useState("");
   const [selectedMovementIds, setSelectedMovementIds] = useState<string[]>([]);
   const [status, setStatus] = useState("Learning");
   const [startedDate, setStartedDate] = useState("");
+
+  const autoFillRef = useRef(0);
+  const [lastUnifiedResult, setLastUnifiedResult] = useState<UnifiedResult | null>(null);
+
+  const { data: unifiedResults = [], isLoading: unifiedLoading } = useQuery<UnifiedResult[]>({
+    queryKey: ["/api/search/unified", unifiedQuery],
+    queryFn: async () => {
+      const res = await fetch(`/api/search/unified?q=${encodeURIComponent(unifiedQuery)}`);
+      if (!res.ok) throw new Error("Failed to search");
+      return res.json();
+    },
+    enabled: unifiedQuery.length > 1,
+  });
 
   const { data: composers = [], isLoading: composersLoading } = useQuery<Composer[]>({
     queryKey: ["/api/composers/search", composerQuery],
@@ -95,6 +120,10 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   });
 
   useEffect(() => {
+    if (autoFillRef.current > 0) {
+      autoFillRef.current--;
+      return;
+    }
     if (selectedComposerId) {
       setSelectedPieceId("");
       setSelectedMovementIds([]);
@@ -102,6 +131,10 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   }, [selectedComposerId]);
 
   useEffect(() => {
+    if (autoFillRef.current > 0) {
+      autoFillRef.current--;
+      return;
+    }
     if (selectedPieceId) {
       setSelectedMovementIds([]);
     }
@@ -113,6 +146,25 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
     }
   }, [status]);
 
+  const handleUnifiedSelect = (value: string) => {
+    const result = unifiedResults.find(r => {
+      const key = r.movementId ? `m-${r.movementId}` : `p-${r.pieceId}`;
+      return key === value;
+    });
+    if (!result) return;
+
+    setLastUnifiedResult(result);
+    autoFillRef.current = 2;
+    setSelectedComposerId(result.composerId.toString());
+    setSelectedPieceId(result.pieceId.toString());
+
+    if (result.movementId) {
+      setSelectedMovementIds([result.movementId.toString()]);
+    } else {
+      setSelectedMovementIds([]);
+    }
+  };
+
   const handleReset = () => {
     setSelectedComposerId("");
     setSelectedPieceId("");
@@ -121,14 +173,19 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
     setStartedDate("");
     setComposerQuery("");
     setPieceQuery("");
+    setUnifiedQuery("");
+    setLastUnifiedResult(null);
   };
 
   const handleSubmit = () => {
-    const composerName = composers.find(c => c.id.toString() === selectedComposerId)?.name ?? "";
-    const pieceTitle = pieces.find(p => p.id.toString() === selectedPieceId)?.title ?? "";
+    const composerName = composers.find(c => c.id.toString() === selectedComposerId)?.name ?? 
+      lastUnifiedResult?.composerName ?? "";
+    const pieceTitle = pieces.find(p => p.id.toString() === selectedPieceId)?.title ?? 
+      lastUnifiedResult?.pieceTitle ?? "";
     const movementNames = selectedMovementIds.map(id => {
       const m = movements.find(m => m.id.toString() === id);
-      return m?.name ?? "";
+      if (m) return m.name;
+      return lastUnifiedResult?.movementId?.toString() === id ? lastUnifiedResult.movementName ?? "" : "";
     }).filter(Boolean);
 
     const newPiece: NewPieceData = {
@@ -147,6 +204,14 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
     handleReset();
     setOpen(false);
   };
+
+  const unifiedOptions = unifiedResults.map(r => {
+    const key = r.movementId ? `m-${r.movementId}` : `p-${r.pieceId}`;
+    const label = r.movementName 
+      ? `${r.composerName} — ${r.pieceTitle}: ${r.movementName}`
+      : `${r.composerName} — ${r.pieceTitle}`;
+    return { value: key, label };
+  });
 
   const composerOptions = composers.map(c => ({ value: c.id.toString(), label: c.name, sortKey: c.name.split(" ").pop() || c.name }));
   const pieceOptions = pieces.map(p => ({ value: p.id.toString(), label: p.title }));
@@ -168,10 +233,35 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Add New Piece</DialogTitle>
           <DialogDescription>
-            Add a new work to your repertoire tracking.
+            Search for any piece or movement, or use the fields below to browse.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <Label className="flex items-center gap-1.5">
+              <Search className="w-3.5 h-3.5" />
+              Quick Search
+            </Label>
+            <SearchableCombobox
+              options={unifiedOptions}
+              value=""
+              onValueChange={handleUnifiedSelect}
+              onSearch={setUnifiedQuery}
+              placeholder="Describe your piece (e.g. Moonlight Sonata)..."
+              searchPlaceholder="Type a piece, movement, or composer..."
+              emptyMessage={unifiedQuery.length > 1 ? "No matches found." : "Start typing to search..."}
+              isLoading={unifiedLoading}
+              portalContainer={dialogContainer}
+            />
+          </div>
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">or browse manually</span>
+            </div>
+          </div>
           <div className="grid gap-2">
             <Label>Composer</Label>
             <SearchableCombobox
