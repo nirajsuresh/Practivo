@@ -1,7 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -125,24 +124,34 @@ export async function registerRoutes(
         return res.status(503).json({ error: "AI service not configured" });
       }
 
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash",
-        systemInstruction: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry.",
-      });
-
       const prompt = wikiExtract
         ? `Write a single short paragraph (3-5 sentences) describing "${piece.title}" by ${composerName}. Cover when it was composed, its musical character, and what makes it notable. Write as a factual encyclopedia-style description, not as a response to someone. Do not use headers, bullet points, or address the reader.\n\nReference material:\n${wikiExtract}`
         : `Write a single short paragraph (3-5 sentences) describing "${piece.title}" by ${composerName}. Cover its musical character, style period, and what makes it notable for pianists. Write as a factual encyclopedia-style description, not as a response to someone. Do not use headers, bullet points, or address the reader.`;
 
       let analysis: string;
       try {
-        const result = await model.generateContent(prompt);
-        console.log("Gemini completion:", JSON.stringify({
-          content_length: result.response.text().length,
-          model: "gemini-1.5-flash",
-        }));
-        analysis = result.response.text().trim() || "Analysis not available.";
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry." }],
+              },
+              contents: [{ parts: [{ text: prompt }] }],
+            }),
+          }
+        );
+        if (!geminiRes.ok) {
+          const errBody = await geminiRes.text();
+          console.error("Gemini API error:", geminiRes.status, errBody);
+          return res.status(502).json({ error: "AI service temporarily unavailable. Please try again later." });
+        }
+        const geminiData = await geminiRes.json() as any;
+        const text = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        console.log("Gemini completion: content_length=", text.length);
+        analysis = text.trim() || "Analysis not available.";
       } catch (aiError) {
         console.error("Gemini API error:", aiError);
         return res.status(502).json({ error: "AI service temporarily unavailable. Please try again later." });
