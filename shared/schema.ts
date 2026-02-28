@@ -30,6 +30,7 @@ export const pieces = pgTable("pieces", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
   composerId: integer("composer_id").notNull().references(() => composers.id),
+  instrument: text("instrument").default("Solo Piano"),
 });
 
 export const insertPieceSchema = createInsertSchema(pieces).omit({ id: true });
