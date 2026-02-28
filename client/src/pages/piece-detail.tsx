@@ -6,12 +6,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Music2, Calendar, Clock, Link as LinkIcon, Plus, ChevronDown, ChevronUp, ArrowLeft, FileText, Upload, X, Star, ExternalLink, Users, MessageCircle, TrendingUp } from "lucide-react";
+import { Music2, Calendar, Clock, Link as LinkIcon, Plus, ChevronDown, ChevronUp, ArrowLeft, FileText, X, Star, ExternalLink, Users, MessageCircle, TrendingUp } from "lucide-react";
 import { useState, useRef } from "react";
 import { Link, useParams } from "wouter";
 import { cn } from "@/lib/utils";
 import { getStatusColor, getStatusDotColor } from "@/lib/status-colors";
-import { ObjectUploader } from "@/components/ObjectUploader";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 
@@ -112,7 +111,6 @@ export default function PieceDetailPage() {
   });
 
   const [status, setStatus] = useState("Learning");
-  const [scoreFile, setScoreFile] = useState<{ name: string; path: string } | null>(null);
   const [userRating, setUserRating] = useState(0);
   const [showNewSession, setShowNewSession] = useState(false);
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split("T")[0]);
@@ -319,76 +317,25 @@ export default function PieceDetailPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
-                  {scoreFile ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="w-full aspect-[3/4] bg-muted/50 rounded-lg flex items-center justify-center border-2 border-dashed border-muted-foreground/20">
-                        <div className="text-center p-4">
-                          <FileText className="w-12 h-12 text-primary/60 mx-auto mb-2" />
-                          <p className="text-sm font-medium truncate max-w-[150px]" data-testid="text-score-filename">{scoreFile.name}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 w-full">
-                        <a href={scoreFile.path} target="_blank" rel="noopener noreferrer" className="flex-1">
-                          <Button variant="outline" size="sm" className="w-full" data-testid="button-view-score">View PDF</Button>
-                        </a>
-                        <Button variant="ghost" size="sm" onClick={() => setScoreFile(null)} data-testid="button-remove-score">
-                          <X className="w-4 h-4" />
-                        </Button>
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-full aspect-[3/4] bg-muted/50 rounded-lg flex items-center justify-center border-2 border-dashed border-muted-foreground/20">
+                      <div className="text-center p-4">
+                        <FileText className="w-12 h-12 text-muted-foreground/40 mx-auto mb-2" />
+                        <p className="text-sm text-muted-foreground/60">Score upload coming soon</p>
                       </div>
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-3">
-                      <ObjectUploader
-                        maxNumberOfFiles={1}
-                        maxFileSize={20971520}
-                        onGetUploadParameters={async (file) => {
-                          const res = await fetch("/api/uploads/request-url", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
-                          });
-                          const { uploadURL } = await res.json();
-                          return { method: "PUT", url: uploadURL, headers: { "Content-Type": file.type || "application/pdf" } };
-                        }}
-                        onComplete={(result) => {
-                          if (result.successful?.length) {
-                            const file = result.successful[0];
-                            setScoreFile({ name: file.name || "score.pdf", path: `/objects/uploads/${file.name}` });
-                          }
-                        }}
-                        buttonClassName="w-full p-0 h-auto bg-transparent hover:bg-transparent border-0 shadow-none"
-                      >
-                        <div
-                          className="w-full aspect-[3/4] rounded-lg overflow-hidden border-2 border-dashed border-muted-foreground/20 hover:border-primary/40 transition-colors cursor-pointer relative group"
-                          data-testid="button-upload-score-area"
-                        >
-                          <img
-                            src="/images/score-placeholder.png"
-                            alt="Sheet music preview"
-                            className="w-full h-full object-cover opacity-40 group-hover:opacity-50 transition-opacity"
-                          />
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <div className="text-center p-4 bg-background/70 rounded-lg backdrop-blur-sm">
-                              <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                              <p className="text-sm font-medium text-muted-foreground">Upload your score</p>
-                              <p className="text-xs text-muted-foreground/70 mt-1">Click to upload PDF</p>
-                            </div>
-                          </div>
-                        </div>
-                      </ObjectUploader>
-                      <a
-                        href="https://imslp.org/wiki/Ballade_No.4,_Op.52_(Chopin,_Fr%C3%A9d%C3%A9ric)"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full"
-                      >
-                        <Button variant="outline" size="sm" className="w-full gap-2" data-testid="button-import-imslp">
-                          <ExternalLink className="w-4 h-4" />
-                          Import from IMSLP
-                        </Button>
-                      </a>
-                    </div>
-                  )}
+                    <a
+                      href="https://imslp.org"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full"
+                    >
+                      <Button variant="outline" size="sm" className="w-full gap-2" data-testid="button-import-imslp">
+                        <ExternalLink className="w-4 h-4" />
+                        Find on IMSLP
+                      </Button>
+                    </a>
+                  </div>
                 </CardContent>
               </Card>
             </div>

@@ -1,16 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
   
-  registerObjectStorageRoutes(app);
-
   app.get("/api/composers/search", async (req, res) => {
     try {
       const query = (req.query.q as string) || "";
@@ -124,13 +121,14 @@ export async function registerRoutes(
         console.error("Wikipedia fetch error:", wikiError);
       }
 
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY || !process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+      if (!process.env.GEMINI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
 
-      const openai = new OpenAI({
-        apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-1.5-flash",
+        systemInstruction: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry.",
       });
 
       const prompt = wikiExtract
@@ -139,22 +137,14 @@ export async function registerRoutes(
 
       let analysis: string;
       try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-5-nano",
-          messages: [
-            { role: "system", content: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry." },
-            { role: "user", content: prompt },
-          ],
-          max_completion_tokens: 4096,
-        });
-        console.log("OpenAI completion:", JSON.stringify({
-          finish_reason: completion.choices[0]?.finish_reason,
-          content_length: completion.choices[0]?.message?.content?.length ?? 0,
-          model: completion.model,
+        const result = await model.generateContent(prompt);
+        console.log("Gemini completion:", JSON.stringify({
+          content_length: result.response.text().length,
+          model: "gemini-1.5-flash",
         }));
-        analysis = completion.choices[0]?.message?.content?.trim() || "Analysis not available.";
+        analysis = result.response.text().trim() || "Analysis not available.";
       } catch (aiError) {
-        console.error("OpenAI API error:", aiError);
+        console.error("Gemini API error:", aiError);
         return res.status(502).json({ error: "AI service temporarily unavailable. Please try again later." });
       }
 

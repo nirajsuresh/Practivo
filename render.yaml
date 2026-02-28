@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: reperto
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false   # You will paste this in the Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false   # You will paste this in the Render dashboard
