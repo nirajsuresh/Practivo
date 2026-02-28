@@ -252,6 +252,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               emptyMessage={unifiedQuery.length > 1 ? "No matches found." : "Start typing to search..."}
               isLoading={unifiedLoading}
               portalContainer={dialogContainer}
+              preserveOrder
             />
           </div>
           <div className="relative">
@@ -274,6 +275,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               emptyMessage="No composers found."
               isLoading={composersLoading}
               portalContainer={dialogContainer}
+              preserveOrder
             />
           </div>
           <div className="grid gap-2">
@@ -289,6 +291,7 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
               isLoading={piecesLoading}
               disabled={!selectedComposerId}
               portalContainer={dialogContainer}
+              preserveOrder
             />
           </div>
           <div className="grid gap-2">

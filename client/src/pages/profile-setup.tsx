@@ -81,6 +81,7 @@ function QuickSearchFill({ onFill }: { onFill: (result: UnifiedResult) => void }
       <SearchableCombobox
         options={options}
         value=""
+        preserveOrder
         onValueChange={(value) => {
           const result = results.find(r => {
             const key = r.movementId ? `m-${r.movementId}` : `p-${r.pieceId}`;
@@ -193,6 +194,7 @@ function RepertoireSetupRow({
           searchPlaceholder="Search..."
           emptyMessage="No composers found."
           isLoading={composersLoading}
+          preserveOrder
         />
       </TableCell>
       <TableCell className="overflow-hidden">
@@ -206,6 +208,7 @@ function RepertoireSetupRow({
           emptyMessage={row.composerId ? "No pieces found." : "Select composer first."}
           isLoading={piecesLoading}
           disabled={!row.composerId}
+          preserveOrder
         />
       </TableCell>
       <TableCell className="overflow-hidden">

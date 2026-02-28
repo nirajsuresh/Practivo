@@ -34,6 +34,7 @@ interface SearchableComboboxProps {
   isLoading?: boolean;
   disabled?: boolean;
   portalContainer?: HTMLElement | null;
+  preserveOrder?: boolean;
 }
 
 export function SearchableCombobox({
@@ -47,13 +48,14 @@ export function SearchableCombobox({
   isLoading = false,
   disabled = false,
   portalContainer,
+  preserveOrder = false,
 }: SearchableComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
 
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
-    [options]
+    () => preserveOrder ? options : [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
+    [options, preserveOrder]
   );
 
   const selectedOption = options.find((option) => option.value === value);
@@ -137,6 +139,7 @@ interface MultiSelectComboboxProps {
   isLoading?: boolean;
   disabled?: boolean;
   portalContainer?: HTMLElement | null;
+  preserveOrder?: boolean;
 }
 
 export function MultiSelectCombobox({
@@ -150,6 +153,7 @@ export function MultiSelectCombobox({
   isLoading = false,
   disabled = false,
   portalContainer,
+  preserveOrder = false,
 }: MultiSelectComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -158,8 +162,8 @@ export function MultiSelectCombobox({
     s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
-    [options]
+    () => preserveOrder ? options : [...options].sort((a, b) => (a.sortKey ?? a.label).localeCompare(b.sortKey ?? b.label, undefined, { numeric: true })),
+    [options, preserveOrder]
   );
 
   const filteredOptions = useMemo(() => {
