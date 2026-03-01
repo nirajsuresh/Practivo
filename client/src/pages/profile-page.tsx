@@ -26,7 +26,7 @@ import { getStatusColor } from "@/lib/status-colors";
 import { Link, useLocation } from "wouter";
 import { RepertoireBoard } from "@/components/repertoire-board";
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -163,7 +163,7 @@ export default function ProfilePage() {
   const [sortConfig, setSortConfig] = useState<{ key: keyof RepertoireItem, direction: 'asc' | 'desc' } | null>(null);
   const [activeTab, setActiveTab] = useState("all");
   const [viewMode, setViewMode] = useState<"table" | "board">(() => {
-    return (localStorage.getItem("repertoire-view") as "table" | "board") || "table";
+    return (localStorage.getItem("repertoire-view") as "table" | "board") || "board";
   });
 
   const sensors = useSensors(
@@ -344,6 +344,20 @@ export default function ProfilePage() {
   const bio = profileData?.bio || "";
   const avatarUrl = profileData?.avatarUrl || "avatar-8";
 
+  const stats = useMemo(() => {
+    const uniquePieceIds = new Set(repertoire.map((i) => i.pieceId));
+    const total = uniquePieceIds.size;
+    const activePieces = new Set(
+      repertoire
+        .filter((i) => ["Learning", "Refining", "Maintaining"].includes(i.status))
+        .map((i) => i.pieceId)
+    );
+    const readyPieces = new Set(
+      repertoire.filter((i) => i.status === "Performance Ready").map((i) => i.pieceId)
+    );
+    return { total, active: activePieces.size, ready: readyPieces.size };
+  }, [repertoire]);
+
   if (!userId) return null;
 
   return (
@@ -388,10 +402,38 @@ export default function ProfilePage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 mb-12">
-            <div className="space-y-6 lg:col-span-1">
+            <div className="space-y-4 lg:col-span-1">
+              {/* Stats card */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">About</CardTitle>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Repertoire Stats</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold text-foreground">{stats.total}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Total</div>
+                    </div>
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold text-foreground">{stats.active}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Active</div>
+                    </div>
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold text-foreground">{stats.ready}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Perf. Ready</div>
+                    </div>
+                    <div className="text-center p-2 bg-muted/30 rounded-lg">
+                      <div className="text-2xl font-bold text-muted-foreground/40">—</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-0.5">Hours</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Bio card */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">About</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {profileLoading ? (
@@ -400,28 +442,10 @@ export default function ProfilePage() {
                       <Skeleton className="h-4 w-3/4" />
                     </div>
                   ) : (
-                    <p className="text-muted-foreground leading-relaxed" data-testid="text-bio">
+                    <p className="text-muted-foreground text-sm leading-relaxed" data-testid="text-bio">
                       {bio || "No bio yet."}
                     </p>
                   )}
-                </CardContent>
-              </Card>
-
-               <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Upcoming</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex gap-4 items-start">
-                    <div className="bg-primary/10 text-primary p-2 rounded text-center min-w-[3.5rem]">
-                      <div className="text-xs uppercase font-bold">Apr</div>
-                      <div className="text-xl font-bold">22</div>
-                    </div>
-                    <div>
-                      <h4 className="font-medium">Solo Recital</h4>
-                      <p className="text-sm text-muted-foreground">Teatro alla Scala</p>
-                    </div>
-                  </div>
                 </CardContent>
               </Card>
             </div>

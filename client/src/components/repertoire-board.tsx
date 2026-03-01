@@ -27,7 +27,6 @@ import {
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
-import { Slider } from "@/components/ui/slider";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal, SplitSquareHorizontal, Merge, Pencil, Trash2 } from "lucide-react";
 import {
@@ -41,6 +40,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ShareToFeedPrompt } from "@/components/share-to-feed-prompt";
+import { ProgressRing } from "@/components/progress-ring";
 
 type BoardItem = {
   id: string;
@@ -53,6 +53,7 @@ type BoardItem = {
   progress: number;
   isSplit: boolean;
   movementCount: number;
+  date?: string;
 };
 
 type RepertoireBoardProps = {
@@ -79,6 +80,17 @@ const STACKED_B = ["Performance Ready", "Shelved"] as const;
 
 const ALL_COLUMN_IDS = new Set<string>([...MAIN_COLUMNS, ...STACKED_A, ...STACKED_B]);
 
+/** Formats "YYYY-MM-DD" (or ISO datetime) → "Oct 2023". Returns "—" if falsy. */
+function formatStartDate(date?: string): string {
+  if (!date) return "—";
+  try {
+    const d = new Date(date);
+    return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  } catch {
+    return "—";
+  }
+}
+
 const customCollisionDetection: CollisionDetection = (args) => {
   const rectCollisions = rectIntersection(args);
   const columnCollisions = rectCollisions.filter((c) => ALL_COLUMN_IDS.has(String(c.id)));
@@ -87,6 +99,57 @@ const customCollisionDetection: CollisionDetection = (args) => {
   }
   return closestCenter(args);
 };
+
+/** Horizontal pipeline header showing all stages with piece counts. */
+function PipelineHeader({ items }: { items: BoardItem[] }) {
+  // Count unique pieces (by pieceId) per status
+  const countByStatus = (status: string) => {
+    const seen = new Set<number>();
+    items.forEach((i) => {
+      if (i.status === status) seen.add(i.pieceId);
+    });
+    return seen.size;
+  };
+
+  const stages = [
+    "Want to learn",
+    "Up next",
+    "Learning",
+    "Refining",
+    "Maintaining",
+    "Performance Ready",
+    "Shelved",
+  ];
+
+  return (
+    <div className="flex items-center gap-0 mb-3 overflow-x-auto pb-1 select-none">
+      {stages.map((stage, idx) => {
+        const count = countByStatus(stage);
+        const dot = getStatusDotColor(stage);
+        const isLast = idx === stages.length - 1;
+        return (
+          <div key={stage} className="flex items-center min-w-0 shrink-0">
+            <div className="flex flex-col items-center gap-0.5 px-2">
+              <div className="flex items-center gap-1">
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: dot }}
+                />
+                <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
+                  {stage}
+                </span>
+              </div>
+              <span className="text-xs font-semibold text-foreground">{count}</span>
+            </div>
+            {!isLast && (
+              <div className="w-4 h-px bg-border/60 flex-shrink-0" />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function DroppableColumn({
   status,
@@ -166,13 +229,11 @@ function DroppableColumn({
 
 function DraggableCard({
   item,
-  onProgressChange,
   onToggleSplit,
   onEditMovements,
   onRemove,
 }: {
   item: BoardItem;
-  onProgressChange: (id: string, progress: number) => void;
   onToggleSplit?: (pieceId: number, split: boolean) => void;
   onEditMovements?: (pieceId: number) => void;
   onRemove?: (id: string, pieceId: number, isSplit: boolean) => void;
@@ -192,6 +253,8 @@ function DraggableCard({
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+
+  const showProgress = item.progress > 0;
 
   return (
     <div
@@ -214,58 +277,65 @@ function DraggableCard({
             {item.piece}
           </p>
         </Link>
-        {(onToggleSplit || onEditMovements || onRemove) && (
-          <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-            <DropdownMenu>
-              <DropdownMenuTrigger className="p-0.5 rounded hover:bg-muted/50 -mt-0.5 -mr-1 opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`card-actions-${item.id}`}>
-                <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                {onEditMovements && !item.isSplit && (
-                  <DropdownMenuItem onClick={() => onEditMovements(item.pieceId)} data-testid={`edit-movements-${item.id}`}>
-                    <Pencil className="w-3.5 h-3.5 mr-2" />
-                    Edit movements
-                  </DropdownMenuItem>
-                )}
-                {onToggleSplit && item.movementCount >= 2 && !item.isSplit && (
-                  <DropdownMenuItem onClick={() => onToggleSplit(item.pieceId, true)} data-testid={`split-${item.id}`}>
-                    <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
-                    Split into movements
-                  </DropdownMenuItem>
-                )}
-                {onToggleSplit && item.isSplit && (
-                  <DropdownMenuItem onClick={() => onToggleSplit(item.pieceId, false)} data-testid={`rejoin-${item.id}`}>
-                    <Merge className="w-3.5 h-3.5 mr-2" />
-                    Rejoin movements
-                  </DropdownMenuItem>
-                )}
-                {onRemove && (
-                  <DropdownMenuItem onClick={() => setConfirmDelete(true)} className="text-destructive focus:text-destructive" data-testid={`card-remove-${item.id}`}>
-                    <Trash2 className="w-3.5 h-3.5 mr-2" />
-                    Remove from repertoire
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Remove from repertoire?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will remove {item.isSplit ? `this movement of "${item.piece}"` : `"${item.piece}"`} from your repertoire. This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onRemove(item.id, item.pieceId, item.isSplit)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                    Remove
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        )}
+
+        <div className="flex items-start gap-1 flex-shrink-0">
+          {showProgress && (
+            <ProgressRing progress={item.progress} size={28} strokeWidth={2.5} />
+          )}
+          {(onToggleSplit || onEditMovements || onRemove) && (
+            <div onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+              <DropdownMenu>
+                <DropdownMenuTrigger className="p-0.5 rounded hover:bg-muted/50 -mt-0.5 -mr-1 opacity-0 group-hover:opacity-100 transition-opacity" data-testid={`card-actions-${item.id}`}>
+                  <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {onEditMovements && !item.isSplit && (
+                    <DropdownMenuItem onClick={() => onEditMovements(item.pieceId)} data-testid={`edit-movements-${item.id}`}>
+                      <Pencil className="w-3.5 h-3.5 mr-2" />
+                      Edit movements
+                    </DropdownMenuItem>
+                  )}
+                  {onToggleSplit && item.movementCount >= 2 && !item.isSplit && (
+                    <DropdownMenuItem onClick={() => onToggleSplit(item.pieceId, true)} data-testid={`split-${item.id}`}>
+                      <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
+                      Split into movements
+                    </DropdownMenuItem>
+                  )}
+                  {onToggleSplit && item.isSplit && (
+                    <DropdownMenuItem onClick={() => onToggleSplit(item.pieceId, false)} data-testid={`rejoin-${item.id}`}>
+                      <Merge className="w-3.5 h-3.5 mr-2" />
+                      Rejoin movements
+                    </DropdownMenuItem>
+                  )}
+                  {onRemove && (
+                    <DropdownMenuItem onClick={() => setConfirmDelete(true)} className="text-destructive focus:text-destructive" data-testid={`card-remove-${item.id}`}>
+                      <Trash2 className="w-3.5 h-3.5 mr-2" />
+                      Remove from repertoire
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Remove from repertoire?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will remove {item.isSplit ? `this movement of "${item.piece}"` : `"${item.piece}"`} from your repertoire. This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => onRemove!(item.id, item.pieceId, item.isSplit)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Remove
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          )}
+        </div>
       </div>
+
       {item.isSplit && item.movements.length === 1 && (
         <p className="text-[10px] text-muted-foreground mt-1">
           {item.movements[0]}
@@ -276,38 +346,16 @@ function DraggableCard({
           {item.movements.length} movements
         </p>
       )}
-      {item.status === "Learning" && (
-        <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-muted-foreground">Progress</span>
-            <span className="text-[10px] font-medium">{item.progress}%</span>
-          </div>
-          <div
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onTouchStart={(e) => e.stopPropagation()}
-          >
-            <Slider
-              value={[item.progress]}
-              onValueChange={([val]) => onProgressChange(item.id, val)}
-              max={100}
-              step={5}
-              className="w-full"
-              data-testid={`progress-slider-${item.id}`}
-            />
-          </div>
-        </div>
-      )}
-      {item.status !== "Learning" && item.progress > 0 && item.status !== "Want to learn" && item.status !== "Up next" && (
-        <div className="mt-1.5">
-          <div className="h-1 rounded-full bg-muted/50 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-primary/40"
-              style={{ width: `${item.progress}%` }}
-            />
-          </div>
-        </div>
-      )}
+
+      {/* Bottom row: start date */}
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground">
+          Started {formatStartDate(item.date)}
+        </span>
+        {showProgress && (
+          <span className="text-[10px] text-muted-foreground">{item.progress}%</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -328,14 +376,12 @@ function OverlayCard({ item }: { item: BoardItem }) {
 function ColumnWithCards({
   status,
   items,
-  onProgressChange,
   onToggleSplit,
   onEditMovements,
   onRemove,
 }: {
   status: string;
   items: BoardItem[];
-  onProgressChange: (id: string, progress: number) => void;
   onToggleSplit?: (pieceId: number, split: boolean) => void;
   onEditMovements?: (pieceId: number) => void;
   onRemove?: (id: string, pieceId: number, isSplit: boolean) => void;
@@ -351,7 +397,6 @@ function ColumnWithCards({
           <DraggableCard
             key={item.id}
             item={item}
-            onProgressChange={onProgressChange}
             onToggleSplit={onToggleSplit}
             onEditMovements={onEditMovements}
             onRemove={onRemove}
@@ -416,25 +461,6 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
     [boardItems, onStatusChange, toast, patchItem, userId]
   );
 
-  const handleProgressChange = useCallback(
-    (itemId: string, progress: number) => {
-      setBoardItems((prev) =>
-        prev.map((i) => (i.id === itemId ? { ...i, progress } : i))
-      );
-      const debounceKey = `progress-${itemId}`;
-      if ((window as any)[debounceKey]) clearTimeout((window as any)[debounceKey]);
-      (window as any)[debounceKey] = setTimeout(async () => {
-        try {
-          const item = boardItems.find((i) => i.id === itemId);
-          if (!item) return;
-          await patchItem(item, { progress });
-          onStatusChange();
-        } catch {}
-      }, 500);
-    },
-    [boardItems, onStatusChange, patchItem]
-  );
-
   const handleDragStart = (event: DragStartEvent) => {
     const item = boardItems.find((i) => i.id === String(event.active.id));
     if (item) setActiveItem(item);
@@ -476,75 +502,75 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
   }, [items]);
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={customCollisionDetection}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div
-        className="flex gap-3 pb-4 h-[600px]"
-        data-testid="repertoire-board"
+    <>
+      <PipelineHeader items={boardItems} />
+      <DndContext
+        sensors={sensors}
+        collisionDetection={customCollisionDetection}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
       >
-        {MAIN_COLUMNS.map((status) => (
-          <ColumnWithCards
-            key={status}
-            status={status}
-            items={boardItems}
-            onProgressChange={handleProgressChange}
-            onToggleSplit={onToggleSplit}
-            onEditMovements={onEditMovements}
-            onRemove={onRemove}
+        <div
+          className="flex gap-3 pb-4 h-[600px]"
+          data-testid="repertoire-board"
+        >
+          {MAIN_COLUMNS.map((status) => (
+            <ColumnWithCards
+              key={status}
+              status={status}
+              items={boardItems}
+              onToggleSplit={onToggleSplit}
+              onEditMovements={onEditMovements}
+              onRemove={onRemove}
+            />
+          ))}
+
+          <div className="flex flex-col flex-1 min-w-0 h-full">
+            {STACKED_A.map((status, idx) => (
+              <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
+                <ColumnWithCards
+                  status={status}
+                  items={boardItems}
+                  onToggleSplit={onToggleSplit}
+                  onEditMovements={onEditMovements}
+                  onRemove={onRemove}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col flex-1 min-w-0 h-full">
+            {STACKED_B.map((status, idx) => (
+              <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
+                <ColumnWithCards
+                  status={status}
+                  items={boardItems}
+                  onToggleSplit={onToggleSplit}
+                  onEditMovements={onEditMovements}
+                  onRemove={onRemove}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+        <DragOverlay>
+          {activeItem ? <OverlayCard item={activeItem} /> : null}
+        </DragOverlay>
+
+        {sharePrompt && (
+          <ShareToFeedPrompt
+            open={!!sharePrompt}
+            onClose={() => setSharePrompt(null)}
+            actionText={`Moved to ${sharePrompt.newStatus}`}
+            newStatus={sharePrompt.newStatus}
+            pieceTitle={sharePrompt.pieceTitle}
+            composerName={sharePrompt.composerName}
+            movementName={sharePrompt.movementName}
+            pieceId={sharePrompt.pieceId}
+            postType="status_change"
           />
-        ))}
-
-        <div className="flex flex-col flex-1 min-w-0 h-full">
-          {STACKED_A.map((status, idx) => (
-            <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
-              <ColumnWithCards
-                status={status}
-                items={boardItems}
-                onProgressChange={handleProgressChange}
-                onToggleSplit={onToggleSplit}
-                onEditMovements={onEditMovements}
-                onRemove={onRemove}
-              />
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-col flex-1 min-w-0 h-full">
-          {STACKED_B.map((status, idx) => (
-            <div key={status} className={cn("flex flex-col flex-1 min-h-0", idx > 0 && "border-t border-border/30")}>
-              <ColumnWithCards
-                status={status}
-                items={boardItems}
-                onProgressChange={handleProgressChange}
-                onToggleSplit={onToggleSplit}
-                onEditMovements={onEditMovements}
-                onRemove={onRemove}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
-      <DragOverlay>
-        {activeItem ? <OverlayCard item={activeItem} /> : null}
-      </DragOverlay>
-
-      {sharePrompt && (
-        <ShareToFeedPrompt
-          open={!!sharePrompt}
-          onClose={() => setSharePrompt(null)}
-          actionText={`Moved to ${sharePrompt.newStatus}`}
-          newStatus={sharePrompt.newStatus}
-          pieceTitle={sharePrompt.pieceTitle}
-          composerName={sharePrompt.composerName}
-          movementName={sharePrompt.movementName}
-          pieceId={sharePrompt.pieceId}
-          postType="status_change"
-        />
-      )}
-    </DndContext>
+        )}
+      </DndContext>
+    </>
   );
 }
