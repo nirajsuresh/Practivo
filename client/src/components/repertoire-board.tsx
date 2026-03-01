@@ -40,6 +40,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { ShareToFeedPrompt } from "@/components/share-to-feed-prompt";
 
 type BoardItem = {
   id: string;
@@ -60,7 +61,15 @@ type RepertoireBoardProps = {
   onToggleSplit?: (pieceId: number, split: boolean) => void;
   onEditMovements?: (pieceId: number) => void;
   onRemove?: (id: string, pieceId: number, isSplit: boolean) => void;
+  userId?: string;
 };
+
+type SharePromptState = {
+  pieceTitle: string;
+  composerName: string;
+  pieceId: number;
+  newStatus: string;
+} | null;
 
 const MAIN_COLUMNS = ["Want to learn", "Up next", "Learning"] as const;
 const STACKED_A = ["Refining", "Maintaining"] as const;
@@ -356,9 +365,10 @@ function ColumnWithCards({
   );
 }
 
-export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMovements, onRemove }: RepertoireBoardProps) {
+export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMovements, onRemove, userId }: RepertoireBoardProps) {
   const [boardItems, setBoardItems] = useState<BoardItem[]>(items);
   const [activeItem, setActiveItem] = useState<BoardItem | null>(null);
+  const [sharePrompt, setSharePrompt] = useState<SharePromptState>(null);
   const { toast } = useToast();
 
   const sensors = useSensors(
@@ -384,11 +394,20 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
       try {
         await patchItem(item, { status: newStatus });
         onStatusChange();
+        // Only prompt if the user is logged in and it's a meaningful status move
+        if (userId) {
+          setSharePrompt({
+            pieceTitle: item.piece,
+            composerName: item.composer,
+            pieceId: item.pieceId,
+            newStatus,
+          });
+        }
       } catch {
         toast({ title: "Failed to update status", variant: "destructive" });
       }
     },
-    [boardItems, onStatusChange, toast, patchItem]
+    [boardItems, onStatusChange, toast, patchItem, userId]
   );
 
   const handleProgressChange = useCallback(
@@ -506,6 +525,18 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
       <DragOverlay>
         {activeItem ? <OverlayCard item={activeItem} /> : null}
       </DragOverlay>
+
+      {sharePrompt && (
+        <ShareToFeedPrompt
+          open={!!sharePrompt}
+          onClose={() => setSharePrompt(null)}
+          actionText={`Moved to ${sharePrompt.newStatus}`}
+          pieceTitle={sharePrompt.pieceTitle}
+          composerName={sharePrompt.composerName}
+          pieceId={sharePrompt.pieceId}
+          postType="status_change"
+        />
+      )}
     </DndContext>
   );
 }

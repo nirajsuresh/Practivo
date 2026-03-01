@@ -35,6 +35,7 @@ import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { ShareToFeedPrompt } from "@/components/share-to-feed-prompt";
 
 const genreData = [
   { genre: "Baroque", value: 50 },
@@ -234,6 +235,13 @@ export default function ProfilePage() {
 
       queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
+
+      // Prompt user to share to feed
+      setAddPieceSharePrompt({
+        pieceTitle: piece.piece,
+        composerName: piece.composer,
+        pieceId: piece.pieceId,
+      });
     } catch (error) {
       console.error("Failed to add piece to repertoire:", error);
     }
@@ -278,6 +286,11 @@ export default function ProfilePage() {
   };
 
   const [editMovementsPieceId, setEditMovementsPieceId] = useState<number | null>(null);
+  const [addPieceSharePrompt, setAddPieceSharePrompt] = useState<{
+    pieceTitle: string;
+    composerName: string;
+    pieceId: number;
+  } | null>(null);
 
   const getEntriesForPiece = (pieceId: number) => {
     if (!rawRepertoire) return [];
@@ -470,6 +483,7 @@ export default function ProfilePage() {
                   <div className="mb-12">
                     <RepertoireBoard
                       items={repertoire}
+                      userId={userId}
                       onStatusChange={() => {
                         queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
                         queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
@@ -687,6 +701,18 @@ export default function ProfilePage() {
           onSave={() => {
             queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
           }}
+        />
+      )}
+
+      {addPieceSharePrompt && (
+        <ShareToFeedPrompt
+          open={!!addPieceSharePrompt}
+          onClose={() => setAddPieceSharePrompt(null)}
+          actionText="Added to repertoire"
+          pieceTitle={addPieceSharePrompt.pieceTitle}
+          composerName={addPieceSharePrompt.composerName}
+          pieceId={addPieceSharePrompt.pieceId}
+          postType="added_piece"
         />
       )}
     </Layout>
