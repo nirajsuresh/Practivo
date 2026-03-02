@@ -5,8 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Users, BookOpen, Trophy, ExternalLink, Music2, Youtube, Hash } from "lucide-react";
 import { Link, useParams } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
+
+const currentUserId = () => localStorage.getItem("userId") || "";
 
 function StatCard({ label, value, icon }: { label: string; value: string | number; icon: React.ReactNode }) {
   return (
@@ -36,7 +37,7 @@ function DifficultyBadge({ difficulty }: { difficulty?: string | null }) {
 export default function ComposerPage() {
   const params = useParams<{ id: string }>();
   const composerId = params.id ? parseInt(params.id) : 0;
-  const { user } = useAuth();
+  const userId = currentUserId();
   const queryClient = useQueryClient();
 
   const { data: composer, isLoading: composerLoading } = useQuery({
@@ -71,14 +72,14 @@ export default function ComposerPage() {
   });
 
   const { data: followStatus, isLoading: followLoading } = useQuery({
-    queryKey: ["/api/composers", composerId, "follow-status", user?.id],
+    queryKey: ["/api/composers", composerId, "follow-status", userId],
     queryFn: async () => {
-      if (!user?.id) return { following: false };
-      const res = await fetch(`/api/composers/${composerId}/follow-status?userId=${user.id}`);
+      if (!userId) return { following: false };
+      const res = await fetch(`/api/composers/${composerId}/follow-status?userId=${userId}`);
       if (!res.ok) return { following: false };
       return res.json();
     },
-    enabled: !!composerId && !!user?.id,
+    enabled: !!composerId && !!userId,
   });
 
   const followMutation = useMutation({
@@ -87,7 +88,7 @@ export default function ComposerPage() {
       const res = await fetch(`/api/composers/${composerId}/follow`, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user?.id }),
+        body: JSON.stringify({ userId }),
       });
       if (!res.ok) throw new Error("Failed to update follow");
       return res.json();
@@ -156,7 +157,7 @@ export default function ComposerPage() {
             <div className="flex-1 min-w-0">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-2">
                 <h1 className="font-serif text-4xl font-bold">{composer.name}</h1>
-                {user && (
+                {userId && (
                   <Button
                     variant={isFollowing ? "outline" : "default"}
                     size="sm"
