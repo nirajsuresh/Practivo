@@ -106,6 +106,9 @@ export interface IStorage {
     mostPopularPiece: { id: number; title: string; learnerCount: number } | null;
   }>;
   getComposerPiecesWithCounts(composerId: number): Promise<(Piece & { learnerCount: number })[]>;
+  getPieceActivity(pieceId: number, limit?: number): Promise<any[]>;
+  getPieceLearners(pieceId: number, limit?: number): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; status: string }[]>;
+  getRelatedPieces(pieceId: number, limit?: number): Promise<{ id: number; title: string; composerName: string; coCount: number }[]>;
   getComposerMembers(composerId: number, limit?: number): Promise<{
     userId: string; displayName: string | null; avatarUrl: string | null; instrument: string | null;
   }[]>;
@@ -800,6 +803,64 @@ export class DatabaseStorage implements IStorage {
       activeLearners: Number(learnersRow?.count ?? 0),
       mostPopularPiece: topPiece ? { id: topPiece.id, title: topPiece.title, learnerCount: Number(topPiece.learnerCount) } : null,
     };
+  }
+
+  async getPieceActivity(pieceId: number, limit = 8): Promise<any[]> {
+    return db
+      .select({
+        id: posts.id,
+        userId: posts.userId,
+        content: posts.content,
+        postType: posts.postType,
+        createdAt: posts.createdAt,
+        displayName: userProfiles.displayName,
+        avatarUrl: userProfiles.avatarUrl,
+      })
+      .from(posts)
+      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
+      .where(eq(posts.pieceId, pieceId))
+      .orderBy(desc(posts.createdAt))
+      .limit(limit);
+  }
+
+  async getPieceLearners(pieceId: number, limit = 8): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; status: string }[]> {
+    return db
+      .select({
+        userId: userProfiles.userId,
+        displayName: userProfiles.displayName,
+        avatarUrl: userProfiles.avatarUrl,
+        status: repertoireEntries.status,
+      })
+      .from(repertoireEntries)
+      .innerJoin(userProfiles, eq(repertoireEntries.userId, userProfiles.userId))
+      .where(eq(repertoireEntries.pieceId, pieceId))
+      .limit(limit);
+  }
+
+  async getRelatedPieces(pieceId: number, limit = 5): Promise<{ id: number; title: string; composerName: string; coCount: number }[]> {
+    const usersWithPiece = db
+      .selectDistinct({ userId: repertoireEntries.userId })
+      .from(repertoireEntries)
+      .where(eq(repertoireEntries.pieceId, pieceId));
+
+    const rows = await db
+      .select({
+        id: pieces.id,
+        title: pieces.title,
+        composerName: composers.name,
+        coCount: sql<number>`count(distinct ${repertoireEntries.userId})`,
+      })
+      .from(repertoireEntries)
+      .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
+      .innerJoin(composers, eq(pieces.composerId, composers.id))
+      .where(and(
+        ne(repertoireEntries.pieceId, pieceId),
+        inArray(repertoireEntries.userId, usersWithPiece)
+      ))
+      .groupBy(pieces.id, pieces.title, composers.name)
+      .orderBy(desc(sql`count(distinct ${repertoireEntries.userId})`))
+      .limit(limit);
+    return rows.map(r => ({ ...r, coCount: Number(r.coCount) }));
   }
 
   async getComposerMembers(composerId: number, limit = 12): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; instrument: string | null; }[]> {

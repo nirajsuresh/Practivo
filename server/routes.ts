@@ -735,5 +735,35 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/pieces/:pieceId/activity", async (req, res) => {
+    try {
+      const pieceId = parseInt(req.params.pieceId);
+      const activity = await storage.getPieceActivity(pieceId);
+      res.json(activity);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get piece activity" });
+    }
+  });
+
+  app.get("/api/pieces/:pieceId/learners", async (req, res) => {
+    try {
+      const pieceId = parseInt(req.params.pieceId);
+      const learners = await storage.getPieceLearners(pieceId);
+      res.json(learners);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get learners" });
+    }
+  });
+
+  app.get("/api/pieces/:pieceId/related", async (req, res) => {
+    try {
+      const pieceId = parseInt(req.params.pieceId);
+      const related = await storage.getRelatedPieces(pieceId);
+      res.json(related);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get related pieces" });
+    }
+  });
+
   return httpServer;
 }
