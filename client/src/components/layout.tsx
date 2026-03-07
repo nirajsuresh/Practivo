@@ -56,7 +56,7 @@ export function Navbar() {
         <Link href="/">
           <div className="flex items-center cursor-pointer group">
             <img 
-              src="/images/Logo.png" 
+              src="/images/logo.png" 
               alt="Réperto Logo" 
               className="h-[4.5rem] w-auto transition-all group-hover:opacity-80"
             />
