@@ -169,6 +169,7 @@ export const measures = pgTable("measures", {
   pageNumber: integer("page_number").notNull(),
   boundingBox: jsonb("bounding_box"), // { x, y, w, h } as fraction of page dimensions
   imageUrl: text("image_url"), // path to cropped bar image
+  movementNumber: integer("movement_number").notNull().default(1), // 1-indexed; bar numbers reset per movement
   userCorrected: boolean("user_corrected").notNull().default(false),
   confirmedAt: timestamp("confirmed_at"),
 });

@@ -76,6 +76,7 @@ app.use((req, res, next) => {
   // Run schema migrations
   try {
     await db.execute(sql`ALTER TABLE repertoire_entries ADD COLUMN IF NOT EXISTS current_cycle integer NOT NULL DEFAULT 1`);
+    await db.execute(sql`ALTER TABLE measures ADD COLUMN IF NOT EXISTS movement_number integer NOT NULL DEFAULT 1`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS piece_milestones (
       id serial PRIMARY KEY,
       user_id varchar NOT NULL REFERENCES users(id),

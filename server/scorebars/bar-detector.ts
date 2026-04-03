@@ -15,7 +15,7 @@
  */
 
 import type { BoundingBox } from "./types.js";
-import { createCanvas, createImageData, loadImage } from "canvas";
+import { createCanvas, loadImage } from "canvas";
 
 export class BarDetector {
   /**
@@ -135,6 +135,41 @@ export class BarDetector {
       }
     }
     return positions;
+  }
+
+  /**
+   * Detect bars within a specific sub-region of a page image.
+   * @param region  Bounding box in page-fraction coords (0–1) defining the sub-region.
+   * @returns       Bounding boxes in FULL-PAGE fraction coords.
+   */
+  async detectBarsInRegion(
+    imageBuffer: Buffer,
+    pageWidth: number,
+    pageHeight: number,
+    region: BoundingBox,
+  ): Promise<BoundingBox[]> {
+    // 1. Load and crop the page to the region
+    const image = await loadImage(imageBuffer);
+    const rx = Math.floor(region.x * pageWidth);
+    const ry = Math.floor(region.y * pageHeight);
+    const rw = Math.ceil(region.w * pageWidth);
+    const rh = Math.ceil(region.h * pageHeight);
+
+    const cropCanvas = createCanvas(rw, rh);
+    const cropCtx = cropCanvas.getContext("2d");
+    cropCtx.drawImage(image, rx, ry, rw, rh, 0, 0, rw, rh);
+    const cropBuffer = cropCanvas.toBuffer("image/png");
+
+    // 2. Run detection on the cropped image
+    const localBoxes = await this.detectBars(cropBuffer, rw, rh);
+
+    // 3. Translate from region-local fractions → full-page fractions
+    return localBoxes.map(b => ({
+      x: region.x + b.x * region.w,
+      y: region.y + b.y * region.h,
+      w: b.w * region.w,
+      h: b.h * region.h,
+    }));
   }
 
   /** Return a simple N-column grid as fallback when detection fails. */

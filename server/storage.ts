@@ -130,6 +130,7 @@ export interface IStorage {
   getSheetMusic(id: number): Promise<SheetMusic | undefined>;
   updateSheetMusicStatus(id: number, status: string, pageCount?: number): Promise<void>;
   saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]>;
+  replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
   getMeasures(sheetMusicId: number): Promise<Measure[]>;
   getMeasureCount(sheetMusicId: number): Promise<number>;
   updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined>;
@@ -758,6 +759,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]> {
+    if (measureList.length === 0) return [];
+    const rows = await db.insert(measures).values(measureList).returning();
+    return rows;
+  }
+
+  /** Delete all measures for a sheet music and replace with the new set. */
+  async replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]> {
+    await db.delete(measures).where(eq(measures.sheetMusicId, sheetMusicId));
     if (measureList.length === 0) return [];
     const rows = await db.insert(measures).values(measureList).returning();
     return rows;

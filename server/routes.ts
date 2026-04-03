@@ -535,6 +535,7 @@ export async function registerRoutes(
           .map(m => ({
             id: m.id,
             measureNumber: m.measureNumber,
+            movementNumber: m.movementNumber,
             boundingBox: m.boundingBox,
           }));
         return { pageNumber, imageUrl, measures: pageMeasures };
@@ -574,6 +575,87 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch {
       res.status(500).json({ error: "Failed to confirm measures" });
+    }
+  });
+
+  // Run bar detection on a user-drawn sub-region of a page image
+  app.post("/api/sheet-music/:id/detect-region", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { pageNumber, region } = req.body as {
+        pageNumber: number;
+        region: { x: number; y: number; w: number; h: number };
+      };
+      if (!pageNumber || !region) {
+        return res.status(400).json({ error: "pageNumber and region required" });
+      }
+      const pageImagePath = path.join(process.cwd(), "uploads", "pages", String(id), `page-${pageNumber}.png`);
+      if (!fs.existsSync(pageImagePath)) {
+        return res.status(404).json({ error: "Page image not found" });
+      }
+      const imageBuffer = fs.readFileSync(pageImagePath);
+      const pageWidth  = imageBuffer.readUInt32BE(16);
+      const pageHeight = imageBuffer.readUInt32BE(20);
+
+      const { BarDetector } = await import("./scorebars/bar-detector.js");
+      const detector = new BarDetector();
+      const boxes = await detector.detectBarsInRegion(imageBuffer, pageWidth, pageHeight, region);
+      res.json({ boxes });
+    } catch (err) {
+      console.error("detect-region failed:", err);
+      res.status(500).json({ error: "Detection failed" });
+    }
+  });
+
+  // Replace all measures for a sheet music with a user-edited set
+  app.put("/api/sheet-music/:id/measures/replace", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const record = await storage.getSheetMusic(id);
+      if (!record) return res.status(404).json({ error: "Sheet music not found" });
+
+      const incoming = req.body.measures as Array<{
+        pageNumber: number;
+        boundingBox: { x: number; y: number; w: number; h: number };
+        movementNumber: number;
+      }>;
+      if (!Array.isArray(incoming)) {
+        return res.status(400).json({ error: "measures array required" });
+      }
+
+      // Sort by page → y → x and assign sequential measureNumber
+      const sorted = [...incoming].sort((a, b) => {
+        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+        if (a.boundingBox.y !== b.boundingBox.y) return a.boundingBox.y - b.boundingBox.y;
+        return a.boundingBox.x - b.boundingBox.x;
+      });
+
+      const insertRows = sorted.map((m, i) => ({
+        sheetMusicId: id,
+        measureNumber: i + 1,
+        pageNumber: m.pageNumber,
+        boundingBox: m.boundingBox,
+        movementNumber: m.movementNumber,
+        userCorrected: true,
+        confirmedAt: new Date(),
+        imageUrl: null,
+      }));
+
+      const saved = await storage.replaceMeasures(id, insertRows);
+
+      // Keep sheet music status and page count in sync
+      await storage.updateSheetMusicStatus(id, "ready", record.pageCount ?? undefined);
+
+      // Update learning plan totalMeasures if one exists
+      const plan = await storage.getLearningPlanBySheetMusic(id);
+      if (plan) {
+        await storage.updateLearningPlan(plan.id, { totalMeasures: saved.length });
+      }
+
+      res.json({ saved: saved.length });
+    } catch (err) {
+      console.error("measures/replace failed:", err);
+      res.status(500).json({ error: "Failed to replace measures" });
     }
   });
 
