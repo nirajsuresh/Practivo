@@ -515,13 +515,20 @@ export async function registerRoutes(
       const measures = await storage.getMeasures(id);
       const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
 
-      // Build page list from saved PNGs
+      // Build page list from saved PNGs, sorted numerically (page-1, page-2 … page-10, not page-1, page-10)
       const pageFiles = fs.existsSync(pagesDir)
-        ? fs.readdirSync(pagesDir).filter(f => f.endsWith(".png")).sort()
+        ? fs.readdirSync(pagesDir)
+            .filter(f => f.endsWith(".png"))
+            .sort((a, b) => {
+              const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
+              const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
+              return na - nb;
+            })
         : [];
 
-      const pages = pageFiles.map((file, i) => {
-        const pageNumber = i + 1;
+      const pages = pageFiles.map((file) => {
+        // Extract the real page number from the filename (page-N.png)
+        const pageNumber = parseInt(file.match(/\d+/)?.[0] ?? "0", 10);
         const imageUrl = `/uploads/pages/${id}/${file}`;
         const pageMeasures = measures
           .filter(m => m.pageNumber === pageNumber)
