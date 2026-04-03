@@ -21,16 +21,27 @@ export interface DetectedMeasure {
   imageUrl: string;      // path to cropped bar image written to disk
 }
 
+/** A saved full-page image produced during processing. */
+export interface PageImage {
+  pageNumber: number;
+  imagePath: string; // absolute path on disk
+}
+
 /** Result returned by ScorebarService.processFile() */
 export interface ProcessResult {
   pageCount: number;
   measures: DetectedMeasure[];
+  pageImages: PageImage[]; // full-page PNGs, one per PDF page
 }
 
 /** Options accepted by ScorebarService constructor */
 export interface ScorebarOptions {
   /** Directory to write cropped bar images. Defaults to uploads/measures/. */
   outputDir?: string;
+  /** Directory to write full-page PNG images (for the review UI). */
+  pagesDir?: string;
   /** DPI to render PDF pages at. Higher = more accurate detection. Default 150. */
   renderDpi?: number;
+  /** Called after each page finishes processing. */
+  onProgress?: (page: number, total: number) => void;
 }

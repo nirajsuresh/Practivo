@@ -22,11 +22,15 @@ export { type ProcessResult, type DetectedMeasure, type BoundingBox, type Scoreb
 
 export class ScorebarService {
   private outputDir: string;
+  private pagesDir?: string;
   private renderDpi: number;
+  private onProgress?: (page: number, total: number) => void;
 
   constructor(opts: ScorebarOptions = {}) {
     this.outputDir = opts.outputDir ?? path.join(process.cwd(), "uploads", "measures");
+    this.pagesDir = opts.pagesDir;
     this.renderDpi = opts.renderDpi ?? 150;
+    this.onProgress = opts.onProgress;
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
@@ -37,7 +41,11 @@ export class ScorebarService {
    * This is the only public method — the sole integration surface.
    */
   async processFile(pdfPath: string): Promise<ProcessResult> {
-    const processor = new PdfProcessor({ dpi: this.renderDpi });
+    const processor = new PdfProcessor({
+      dpi: this.renderDpi,
+      pagesDir: this.pagesDir,
+      onProgress: this.onProgress,
+    });
     const pages = await processor.renderPages(pdfPath);
 
     const detector = new BarDetector();
@@ -63,6 +71,9 @@ export class ScorebarService {
     return {
       pageCount: pages.length,
       measures: allMeasures,
+      pageImages: pages
+        .filter(p => p.savedPath !== null)
+        .map(p => ({ pageNumber: p.pageNumber, imagePath: p.savedPath! })),
     };
   }
 }

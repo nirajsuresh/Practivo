@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -12,9 +12,10 @@ import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Upload, Loader2, CheckCircle2, ChevronLeft, ChevronRight,
-  CalendarDays, Clock, Music2, AlertCircle, Trash2,
+  CalendarDays, Clock, Music2, AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ScoreReviewModal } from "@/components/score-review-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,8 @@ interface SheetMusicStatus {
   id: number;
   processingStatus: "pending" | "processing" | "ready" | "failed";
   pageCount: number | null;
+  processingPage: number | null;
+  processingTotal: number | null;
 }
 
 interface Props {
@@ -251,66 +254,92 @@ function UploadStep({
 // ─── Step: Processing ─────────────────────────────────────────────────────────
 
 function ProcessingStep({ sheetMusicId, onDone }: { sheetMusicId: number; onDone: () => void }) {
-  useQuery<SheetMusicStatus>({
+  const doneCalledRef = useRef(false);
+  const { data } = useQuery<SheetMusicStatus>({
     queryKey: [`/api/sheet-music/${sheetMusicId}/status`],
     refetchInterval: (query) => {
-      const data = query.state.data;
-      if (!data) return 2000;
-      if (data.processingStatus === "ready" || data.processingStatus === "failed") return false;
-      return 2000;
-    },
-    select: (data) => {
-      if (data.processingStatus === "ready") {
-        // Trigger onDone on next tick so query state settles
-        setTimeout(onDone, 300);
-      }
-      return data;
+      const s = query.state.data?.processingStatus;
+      if (s === "ready" || s === "failed") return false;
+      return 1500;
     },
     staleTime: 0,
   });
 
+  useEffect(() => {
+    if (data?.processingStatus === "ready" && !doneCalledRef.current) {
+      doneCalledRef.current = true;
+      setTimeout(onDone, 300);
+    }
+  }, [data?.processingStatus, onDone]);
+
+  const page = data?.processingPage ?? 0;
+  const total = data?.processingTotal ?? 0;
+  const failed = data?.processingStatus === "failed";
+  const pct = total > 0 ? Math.round((page / total) * 100) : 0;
+
   return (
-    <div className="flex flex-col items-center gap-6 py-8">
-      <div className="relative">
-        <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
+    <div className="flex flex-col items-center gap-6 py-6">
+      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+        {failed
+          ? <AlertCircle className="w-8 h-8 text-destructive" />
+          : <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        }
       </div>
-      <div className="text-center space-y-1">
-        <p className="font-semibold">Analysing score…</p>
-        <p className="text-sm text-muted-foreground">
-          Detecting barlines page by page. This usually takes 10–30 seconds.
-        </p>
-      </div>
-      <div className="w-full space-y-2">
-        {[...Array(3)].map((_, i) => (
-          <Skeleton key={i} className="h-3 w-full" style={{ opacity: 1 - i * 0.25 }} />
-        ))}
+
+      <div className="text-center space-y-1 w-full">
+        {failed ? (
+          <>
+            <p className="font-semibold text-destructive">Processing failed</p>
+            <p className="text-sm text-muted-foreground">The PDF could not be analysed. Try a different file.</p>
+          </>
+        ) : total > 0 ? (
+          <>
+            <p className="font-semibold">
+              Processing page {page} of {total}
+            </p>
+            <p className="text-sm text-muted-foreground">Detecting barlines…</p>
+            <div className="mt-3 w-full bg-muted rounded-full overflow-hidden h-2">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground tabular-nums">{pct}%</p>
+          </>
+        ) : (
+          <>
+            <p className="font-semibold">Analysing score…</p>
+            <p className="text-sm text-muted-foreground">Rendering pages with pdftoppm</p>
+            <div className="w-full space-y-2 mt-2">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-2 w-full" style={{ opacity: 1 - i * 0.3 }} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Step: Review ─────────────────────────────────────────────────────────────
+// ─── Step: Review — opens the full-screen ScoreReviewModal ───────────────────
 
 function ReviewStep({
-  sheetMusicId, onConfirm, onBack,
+  sheetMusicId, pieceTitle, onConfirm, onBack,
 }: {
-  sheetMusicId: number; onConfirm: (totalMeasures: number) => void; onBack: () => void;
+  sheetMusicId: number; pieceTitle: string;
+  onConfirm: (totalMeasures: number) => void; onBack: () => void;
 }) {
   const { data: measures = [], isLoading } = useQuery<Measure[]>({
     queryKey: [`/api/sheet-music/${sheetMusicId}/measures`],
+    staleTime: Infinity,
   });
-
-  const [page, setPage] = useState(1);
-
-  const pages = Array.from(new Set(measures.map(m => m.pageNumber))).sort((a, b) => a - b);
-  const pageMeasures = measures.filter(m => m.pageNumber === page);
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
-        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+      <div className="flex flex-col items-center gap-4 py-8">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        <p className="text-sm text-muted-foreground">Loading measures…</p>
       </div>
     );
   }
@@ -320,7 +349,8 @@ function ReviewStep({
       <div className="flex flex-col items-center gap-4 py-8 text-center">
         <AlertCircle className="w-10 h-10 text-destructive" />
         <p className="text-sm text-muted-foreground">
-          No bars were detected. The PDF may be a scan or use non-standard notation. You can still create a plan and enter measures manually.
+          No bars were detected. The PDF may be a scan or use non-standard notation.
+          You can still create a plan and enter measures manually.
         </p>
         <div className="flex gap-3">
           <Button variant="outline" onClick={onBack}><ChevronLeft className="w-4 h-4 mr-1" />Back</Button>
@@ -330,67 +360,15 @@ function ReviewStep({
     );
   }
 
+  // Full-screen review — the Dialog is dismissed and the modal takes over
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          <span className="font-semibold text-foreground">{measures.length}</span> measures detected across{" "}
-          <span className="font-semibold text-foreground">{pages.length}</span> pages
-        </p>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost" size="icon" className="w-7 h-7"
-            disabled={page <= pages[0]}
-            onClick={() => setPage(p => Math.max(pages[0], p - 1))}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <span className="text-xs font-medium px-1">p.{page}</span>
-          <Button
-            variant="ghost" size="icon" className="w-7 h-7"
-            disabled={page >= pages[pages.length - 1]}
-            onClick={() => setPage(p => Math.min(pages[pages.length - 1], p + 1))}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Measure grid */}
-      <div className="grid grid-cols-8 gap-1.5 max-h-60 overflow-y-auto pr-1">
-        {pageMeasures.map((m) => (
-          <div
-            key={m.id}
-            className="aspect-[3/2] rounded border border-border bg-muted/30 flex items-center justify-center overflow-hidden"
-            title={`Bar ${m.measureNumber}`}
-          >
-            {m.imageUrl ? (
-              <img
-                src={m.imageUrl}
-                alt={`Bar ${m.measureNumber}`}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <span className="text-[9px] text-muted-foreground font-medium">{m.measureNumber}</span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        Showing page {page} · {pageMeasures.length} bars. Detection looks wrong? You can adjust later.
-      </p>
-
-      <div className="flex gap-3">
-        <Button variant="outline" onClick={onBack} className="flex-1">
-          <ChevronLeft className="w-4 h-4 mr-1" />Back
-        </Button>
-        <Button onClick={() => onConfirm(measures.length)} className="flex-1">
-          Looks good
-          <ChevronRight className="w-4 h-4 ml-1" />
-        </Button>
-      </div>
-    </div>
+    <ScoreReviewModal
+      sheetMusicId={sheetMusicId}
+      totalMeasures={measures.length}
+      pieceTitle={pieceTitle}
+      onConfirm={() => onConfirm(measures.length)}
+      onBack={onBack}
+    />
   );
 }
 
@@ -513,6 +491,18 @@ export function LearningPlanWizard({ open, onOpenChange, repertoireEntryId, piec
     confirm: "Confirm plan",
   };
 
+  // Review step renders full-screen — bypass the Dialog entirely
+  if (step === "review" && sheetMusicId) {
+    return (
+      <ReviewStep
+        sheetMusicId={sheetMusicId}
+        pieceTitle={pieceTitle}
+        onConfirm={(n) => { setTotalMeasures(n); setStep("confirm"); }}
+        onBack={() => setStep("upload")}
+      />
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
@@ -544,14 +534,6 @@ export function LearningPlanWizard({ open, onOpenChange, repertoireEntryId, piec
 
         {step === "processing" && sheetMusicId && (
           <ProcessingStep sheetMusicId={sheetMusicId} onDone={() => setStep("review")} />
-        )}
-
-        {step === "review" && sheetMusicId && (
-          <ReviewStep
-            sheetMusicId={sheetMusicId}
-            onConfirm={(n) => { setTotalMeasures(n); setStep("confirm"); }}
-            onBack={() => setStep("upload")}
-          />
         )}
 
         {step === "confirm" && (

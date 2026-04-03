@@ -6,6 +6,7 @@ import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import express from "express";
 
 const uploadsDir = path.join(process.cwd(), "uploads", "sheet-music");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -19,10 +20,16 @@ const upload = multer({
   },
 });
 
+/** In-memory processing progress: sheetMusicId → { page, total } */
+const processingProgress = new Map<number, { page: number; total: number }>();
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // Serve uploaded files (page images, cropped bars) as static assets
+  app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
   // ── Composers ────────────────────────────────────────────────────────────
 
@@ -412,25 +419,36 @@ export async function registerRoutes(
       });
 
       // Immediately kick off bar detection in the background
+      const smId = record.id;
       import("./scorebars/index.js").then(async ({ ScorebarService }) => {
         try {
-          await storage.updateSheetMusicStatus(record.id, "processing");
-          const service = new ScorebarService();
+          await storage.updateSheetMusicStatus(smId, "processing");
+          processingProgress.set(smId, { page: 0, total: 0 });
+          const pagesDir = path.join(process.cwd(), "uploads", "pages", String(smId));
+          const service = new ScorebarService({
+            pagesDir,
+            onProgress: (page, total) => {
+              processingProgress.set(smId, { page, total });
+            },
+          });
           const result = await service.processFile(record.fileUrl);
-          await storage.saveMeasures(toInsertMeasures(record.id, result.measures));
-          await storage.updateSheetMusicStatus(record.id, "ready", result.pageCount);
-          const plan = await storage.getLearningPlanBySheetMusic(record.id);
+          await storage.saveMeasures(toInsertMeasures(smId, result.measures));
+          await storage.updateSheetMusicStatus(smId, "ready", result.pageCount);
+          processingProgress.delete(smId);
+          const plan = await storage.getLearningPlanBySheetMusic(smId);
           if (plan) {
             await storage.updateLearningPlan(plan.id, { totalMeasures: result.measures.length });
           }
         } catch (err) {
           console.error("ScoreBars processing failed:", err);
-          await storage.updateSheetMusicStatus(record.id, "failed");
+          await storage.updateSheetMusicStatus(smId, "failed");
+          processingProgress.delete(smId);
         }
       }).catch(console.error);
 
       res.status(201).json({ sheetMusicId: record.id });
-    } catch {
+    } catch (err) {
+      console.error("Upload route error:", err);
       res.status(500).json({ error: "Failed to upload sheet music" });
     }
   });
@@ -473,9 +491,51 @@ export async function registerRoutes(
       const record = await storage.getSheetMusic(id);
       if (!record) return res.status(404).json({ error: "Sheet music not found" });
       const measureCount = await storage.getMeasureCount(id);
-      res.json({ id: record.id, processingStatus: record.processingStatus, measuresFound: measureCount, pageCount: record.pageCount });
+      const progress = processingProgress.get(id) ?? null;
+      res.json({
+        id: record.id,
+        processingStatus: record.processingStatus,
+        measuresFound: measureCount,
+        pageCount: record.pageCount,
+        processingPage: progress?.page ?? null,
+        processingTotal: progress?.total ?? null,
+      });
     } catch {
       res.status(500).json({ error: "Failed to get status" });
+    }
+  });
+
+  // Returns page images + bar bounding boxes for the score review UI
+  app.get("/api/sheet-music/:id/pages", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const record = await storage.getSheetMusic(id);
+      if (!record) return res.status(404).json({ error: "Sheet music not found" });
+
+      const measures = await storage.getMeasures(id);
+      const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
+
+      // Build page list from saved PNGs
+      const pageFiles = fs.existsSync(pagesDir)
+        ? fs.readdirSync(pagesDir).filter(f => f.endsWith(".png")).sort()
+        : [];
+
+      const pages = pageFiles.map((file, i) => {
+        const pageNumber = i + 1;
+        const imageUrl = `/uploads/pages/${id}/${file}`;
+        const pageMeasures = measures
+          .filter(m => m.pageNumber === pageNumber)
+          .map(m => ({
+            id: m.id,
+            measureNumber: m.measureNumber,
+            boundingBox: m.boundingBox,
+          }));
+        return { pageNumber, imageUrl, measures: pageMeasures };
+      });
+
+      res.json(pages);
+    } catch {
+      res.status(500).json({ error: "Failed to get pages" });
     }
   });
 
