@@ -40,7 +40,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ShareToFeedPrompt } from "@/components/share-to-feed-prompt";
 import { ProgressRing } from "@/components/progress-ring";
 
 type BoardItem = {
@@ -66,14 +65,6 @@ type RepertoireBoardProps = {
   userId?: string;
 };
 
-type SharePromptState = {
-  pieceTitle: string;
-  composerName: string;
-  pieceId: number;
-  newStatus: string;
-  /** Populated only when the card represents a single split movement */
-  movementName?: string;
-} | null;
 
 const MAIN_COLUMNS = ["Want to learn", "Up next", "In Progress"] as const;
 const STACKED_A = ["Maintaining"] as const;
@@ -414,7 +405,6 @@ function ColumnWithCards({
 export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMovements, onRemove, userId }: RepertoireBoardProps) {
   const [boardItems, setBoardItems] = useState<BoardItem[]>(items);
   const [activeItem, setActiveItem] = useState<BoardItem | null>(null);
-  const [sharePrompt, setSharePrompt] = useState<SharePromptState>(null);
   const { toast } = useToast();
 
   const sensors = useSensors(
@@ -440,18 +430,8 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
       try {
         await patchItem(item, { status: newStatus });
         onStatusChange();
-        // Only prompt if the user is logged in and it's a meaningful status move
-        if (userId) {
-          setSharePrompt({
-            pieceTitle: item.piece,
-            composerName: item.composer,
-            pieceId: item.pieceId,
-            newStatus,
-            // Only include movement name when the card is a split movement row
-            movementName: item.isSplit && item.movements.length === 1
-              ? item.movements[0]
-              : undefined,
-          });
+        if (false) {
+          // share prompt removed
         }
       } catch {
         toast({ title: "Failed to update status", variant: "destructive" });
@@ -556,19 +536,6 @@ export function RepertoireBoard({ items, onStatusChange, onToggleSplit, onEditMo
           {activeItem ? <OverlayCard item={activeItem} /> : null}
         </DragOverlay>
 
-        {sharePrompt && (
-          <ShareToFeedPrompt
-            open={!!sharePrompt}
-            onClose={() => setSharePrompt(null)}
-            actionText={`Moved to ${sharePrompt.newStatus}`}
-            newStatus={sharePrompt.newStatus}
-            pieceTitle={sharePrompt.pieceTitle}
-            composerName={sharePrompt.composerName}
-            movementName={sharePrompt.movementName}
-            pieceId={sharePrompt.pieceId}
-            postType="status_change"
-          />
-        )}
       </DndContext>
     </>
   );

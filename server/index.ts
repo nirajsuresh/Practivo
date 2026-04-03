@@ -73,7 +73,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Run schema migrations before any seed or query that touches repertoire_entries
+  // Run schema migrations
   try {
     await db.execute(sql`ALTER TABLE repertoire_entries ADD COLUMN IF NOT EXISTS current_cycle integer NOT NULL DEFAULT 1`);
     await db.execute(sql`CREATE TABLE IF NOT EXISTS piece_milestones (
@@ -96,13 +96,71 @@ app.use((req, res, next) => {
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'piece_milestones_unique') THEN
         ALTER TABLE piece_milestones ADD CONSTRAINT piece_milestones_unique UNIQUE (user_id, piece_id, movement_id, cycle_number, milestone_type);
       END IF; END $$`);
+
+    // Learning plan tables
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS learning_plans (
+      id serial PRIMARY KEY,
+      user_id varchar NOT NULL REFERENCES users(id),
+      repertoire_entry_id integer NOT NULL REFERENCES repertoire_entries(id),
+      daily_practice_minutes integer NOT NULL DEFAULT 30,
+      target_completion_date text,
+      total_measures integer,
+      status text NOT NULL DEFAULT 'setup',
+      created_at timestamp DEFAULT now(),
+      updated_at timestamp DEFAULT now()
+    )`);
+
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS sheet_music (
+      id serial PRIMARY KEY,
+      piece_id integer REFERENCES pieces(id),
+      user_id varchar NOT NULL REFERENCES users(id),
+      file_url text NOT NULL,
+      source text NOT NULL DEFAULT 'upload',
+      processing_status text NOT NULL DEFAULT 'pending',
+      page_count integer,
+      uploaded_at timestamp DEFAULT now()
+    )`);
+
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS measures (
+      id serial PRIMARY KEY,
+      sheet_music_id integer NOT NULL REFERENCES sheet_music(id),
+      measure_number integer NOT NULL,
+      page_number integer NOT NULL,
+      bounding_box jsonb,
+      image_url text,
+      user_corrected boolean NOT NULL DEFAULT false,
+      confirmed_at timestamp
+    )`);
+
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS lesson_days (
+      id serial PRIMARY KEY,
+      learning_plan_id integer NOT NULL REFERENCES learning_plans(id),
+      scheduled_date text NOT NULL,
+      measure_start integer NOT NULL,
+      measure_end integer NOT NULL,
+      status text NOT NULL DEFAULT 'upcoming',
+      user_notes text,
+      completed_at timestamp
+    )`);
+
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS measure_progress (
+      id serial PRIMARY KEY,
+      learning_plan_id integer NOT NULL REFERENCES learning_plans(id),
+      measure_id integer NOT NULL REFERENCES measures(id),
+      user_id varchar NOT NULL REFERENCES users(id),
+      status text NOT NULL DEFAULT 'not_started',
+      notes text,
+      last_practiced_at text,
+      UNIQUE(learning_plan_id, measure_id)
+    )`);
+
     console.log("Schema migrations applied");
   } catch (err) {
     console.error("Migration error (non-fatal):", err);
   }
 
-  await autoSeedIfEmpty();
-  await seedExtraUsers();
+  try { await autoSeedIfEmpty(); } catch (err) { console.error("Auto-seed failed (non-fatal):", err); }
+  try { await seedExtraUsers(); } catch (err) { console.error("Extra-users seed failed (non-fatal):", err); }
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

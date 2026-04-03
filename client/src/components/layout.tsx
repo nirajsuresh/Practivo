@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BRAND } from "@/lib/palette";
+import { useQueryClient } from "@tanstack/react-query";
 
 export function Navbar() {
   const [location, setLocation] = useLocation();
@@ -16,19 +15,6 @@ export function Navbar() {
   useEffect(() => {
     setIsLoggedIn(localStorage.getItem("isLoggedIn") === "true");
   }, [location]);
-
-  const currentUserId = localStorage.getItem("userId") || "";
-
-  const { data: pendingReceived = [] } = useQuery<any[]>({
-    queryKey: ["/api/connections/received", currentUserId],
-    queryFn: async () => {
-      const res = await fetch("/api/connections/received", { headers: { "x-user-id": currentUserId } });
-      if (!res.ok) throw new Error("Failed to fetch");
-      return res.json();
-    },
-    enabled: isLoggedIn && !!currentUserId,
-    refetchInterval: 30000,
-  });
 
   const qc = useQueryClient();
 
@@ -49,7 +35,7 @@ export function Navbar() {
 
   return (
     <nav className={cn(
-      "w-full py-5 px-4 md:px-8 xl:px-10 flex justify-between items-center z-50 transition-all duration-300",
+      "w-full py-3 px-4 md:px-8 xl:px-10 flex justify-between items-center z-50 transition-all duration-300",
       isLanding ? "absolute top-0 left-0 bg-transparent text-white" : "bg-[#fdedda] text-foreground backdrop-blur-md border-b border-border sticky top-0"
     )}>
       <div className="flex items-center gap-8 flex-1">
@@ -58,7 +44,7 @@ export function Navbar() {
             <img 
               src="/images/logo.png" 
               alt="Réperto Logo" 
-              className="h-[4.5rem] w-auto transition-all group-hover:opacity-80"
+              className="h-10 w-auto transition-all group-hover:opacity-80"
             />
           </div>
         </Link>
@@ -79,35 +65,6 @@ export function Navbar() {
       <div className="flex items-center gap-6">
         {isLoggedIn ? (
           <>
-            <Link href="/communities">
-              <Button
-                variant="ghost"
-                className={cn(
-                  "text-base font-semibold hover:bg-white/10",
-                  isLanding ? "text-white hover:text-white" : "text-foreground hover:bg-black/5"
-                )}
-                data-testid="link-home"
-              >
-                Communities
-              </Button>
-            </Link>
-            <Link href="/connections">
-              <Button 
-                variant="ghost" 
-                className={cn(
-                  "text-base font-semibold hover:bg-white/10 relative",
-                  isLanding ? "text-white hover:text-white" : "text-foreground hover:bg-black/5"
-                )}
-                data-testid="link-connections"
-              >
-                Connections
-                {pendingReceived.length > 0 && (
-                  <span className="absolute -top-1 -right-1 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: BRAND.primary }} data-testid="badge-pending-count">
-                    {pendingReceived.length}
-                  </span>
-                )}
-              </Button>
-            </Link>
             <Link href="/profile">
               <Button 
                 variant="ghost" 

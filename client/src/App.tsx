@@ -10,10 +10,6 @@ import ProfileSetup from "@/pages/profile-setup";
 import ProfilePage from "@/pages/profile-page";
 import PieceDetailPage from "@/pages/piece-detail";
 import SearchPage from "@/pages/search-page";
-import UserProfilePage from "@/pages/user-profile";
-import FeedPage from "@/pages/feed-page";
-import CommunitiesPage from "@/pages/communities-page";
-import ConnectionsPage from "@/pages/connections-page";
 import ComposerPage from "@/pages/composer-page";
 
 function Router() {
@@ -23,13 +19,9 @@ function Router() {
       <Route path="/auth" component={AuthPage} />
       <Route path="/profile-setup" component={ProfileSetup} />
       <Route path="/profile" component={ProfilePage} />
-      <Route path="/communities" component={CommunitiesPage} />
-      <Route path="/feed" component={FeedPage} />
-      <Route path="/connections" component={ConnectionsPage} />
       <Route path="/piece/:id" component={PieceDetailPage} />
       <Route path="/composer/:id" component={ComposerPage} />
       <Route path="/search" component={SearchPage} />
-      <Route path="/user/:id" component={UserProfilePage} />
       <Route component={NotFound} />
     </Switch>
   );

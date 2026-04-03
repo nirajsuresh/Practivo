@@ -2,7 +2,6 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PianoAvatar } from "@/components/piano-avatars";
 import {
   MapPin, Edit2, Music2, Award, X, ExternalLink, ChevronDown, ChevronUp,
   Layers, Music, BarChart3, BookOpen, Zap, Users, ArrowUpRight, Flag, CheckCircle2,
@@ -15,7 +14,8 @@ import {
 import { AddPieceDialog, type NewPieceData } from "@/components/add-piece-dialog";
 import { EditMovementsDialog } from "@/components/edit-movements-dialog";
 import { MilestoneTimeline } from "@/components/milestone-timeline";
-import { ShareToFeedPrompt } from "@/components/share-to-feed-prompt";
+import { LearningPlanWizard } from "@/components/learning-plan-wizard";
+import { DailyLessonCard, StartPlanButton } from "@/components/daily-lesson-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { cn, toComposerImageUrl } from "@/lib/utils";
@@ -32,7 +32,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { BADGE_TILE_BG_COLOR, computeUserBadges, ERA_TILE_COLOR, TIER_TILE_COLOR, TIER_TEXT_COLOR, TIER_LABEL, type RepertoireEntry, type EarnedBadge } from "@/lib/badges";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -69,18 +68,6 @@ const STATUS_PROGRESS: Record<string, number> = {
   "Maintaining": 100, "Resting": 0,
 };
 
-const TEMPOTOWN_BADGE_MOCKS: EarnedBadge[] = [
-  { id: "tt_chopin_5", name: "Chopin Devotee", description: "5 Chopin works learned", icon: "🌙", tier: "platinum", category: "composer", color: ERA_TILE_COLOR.Romantic },
-  { id: "tt_baroque_3", name: "Baroque Curator", description: "3 Baroque pieces in repertoire", icon: "🎼", tier: "gold", category: "genre", color: ERA_TILE_COLOR.Baroque },
-  { id: "tt_modern_1", name: "Modern Spark", description: "First Modern piece completed", icon: "⚡", tier: "silver", category: "genre", color: ERA_TILE_COLOR.Modern },
-  { id: "tt_etu_3", name: "Etude Warrior", description: "3 etudes at maintaining/performed", icon: "⚔️", tier: "gold", category: "piece", color: BADGE_TILE_BG_COLOR.gold },
-  { id: "tt_romantic_5", name: "Romantic Heart", description: "5 Romantic era works", icon: "❤️", tier: "platinum", category: "genre", color: ERA_TILE_COLOR.Romantic },
-  { id: "tt_first_perf", name: "First Performance", description: "First public performance logged", icon: "🎉", tier: "silver", category: "milestone", color: BADGE_TILE_BG_COLOR.silver },
-  { id: "tt_beethoven_3", name: "Beethoven Student", description: "3 Beethoven works tracked", icon: "🖋️", tier: "gold", category: "composer", color: ERA_TILE_COLOR.Classical },
-  { id: "tt_impressionist", name: "Color & Light", description: "Debussy/Ravel favorites", icon: "🎨", tier: "silver", category: "genre", color: ERA_TILE_COLOR.Impressionist },
-  { id: "tt_sonata_5", name: "Sonata Scholar", description: "5 sonatas in active rotation", icon: "📜", tier: "platinum", category: "piece", color: BADGE_TILE_BG_COLOR.platinum },
-  { id: "tt_pioneer", name: "Community Pioneer", description: "Early contributor badge", icon: "🚩", tier: "platinum", category: "pioneer", color: BADGE_TILE_BG_COLOR.platinum },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -909,7 +896,7 @@ function TableRow({ piece, expanded, onToggleExpand, onOpenPiece, onStatusChange
           );
         })}
         <tr className="border-b border-border/30 bg-muted/5">
-          <td colSpan={7} className="py-2 pl-4 pr-4 flex flex-wrap items-center gap-3 pl-8">
+          <td colSpan={7} className="py-2 pl-8 pr-4 flex flex-wrap items-center gap-3">
             {onEditMovements && (
               <button
                 type="button"
@@ -1071,6 +1058,9 @@ function PieceJourneySidePane({
   userId: string;
   onClose: () => void;
 }) {
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [activePlanId, setActivePlanId] = useState<number | null>(null);
+
   const piece = row?.kind === "piece" ? row.piece : null;
   const entry = row?.kind === "entry" ? row.entry : null;
 
@@ -1093,6 +1083,13 @@ function PieceJourneySidePane({
     console.warn("PieceJourneySidePane: missing pieceId", { piece, entry });
     return null;
   }
+
+  // Check for existing learning plan
+  const { data: existingPlan } = useQuery<{ id: number } | null>({
+    queryKey: [`/api/learning-plans/entry/${primaryEntryId}`],
+    enabled: !!primaryEntryId,
+    staleTime: 30_000,
+  });
 
   return (
     <>
@@ -1157,7 +1154,49 @@ function PieceJourneySidePane({
             editable={!!userId}
           />
         </div>
+
+        {/* ── Learning Plan ─────────────────────────────────────────────── */}
+        <div className="p-5 border-t border-border">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Learning Plan</h3>
+            {!existingPlan && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1"
+                onClick={() => setWizardOpen(true)}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                Start plan
+              </Button>
+            )}
+          </div>
+
+          {existingPlan ? (
+            <DailyLessonCard
+              planId={existingPlan.id}
+              pieceTitle={pieceTitle}
+              composerName={composerName}
+              pieceId={pieceId}
+              userId={userId}
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Create a structured day-by-day schedule to learn this piece.
+            </p>
+          )}
+        </div>
       </aside>
+
+      {primaryEntryId && (
+        <LearningPlanWizard
+          open={wizardOpen}
+          onOpenChange={setWizardOpen}
+          repertoireEntryId={primaryEntryId}
+          pieceTitle={pieceTitle}
+          userId={userId}
+        />
+      )}
     </>
   );
 }
@@ -1187,16 +1226,6 @@ export default function ProfilePage() {
     Array.isArray(rawRepertoire) ? rawRepertoire : (rawRepertoire?.entries ?? []), [rawRepertoire]);
   const movementOrderByPiece = useMemo(() =>
     Array.isArray(rawRepertoire) ? {} : (rawRepertoire?.movementOrderByPiece ?? {}), [rawRepertoire]);
-
-  const { data: pioneerStatus } = useQuery<{ pioneerComposers: string[]; pioneerPieces: string[] }>({
-    queryKey: [`/api/users/${userId}/pioneer-status`],
-    queryFn: async () => {
-      const r = await fetch(`/api/users/${userId}/pioneer-status`);
-      return r.ok ? r.json() : { pioneerComposers: [], pioneerPieces: [] };
-    },
-    enabled: !!userId,
-    staleTime: 60_000,
-  });
 
   const queryClient = useQueryClient();
 
@@ -1230,10 +1259,6 @@ export default function ProfilePage() {
   const [expandedPieceIds, setExpandedPieceIds] = useState<Set<number>>(() => new Set());
   const [tableExpanded, setTableExpanded] = useState(false);
   const [tableFilter, setTableFilter] = useState<"all" | "active" | "maintaining">("all");
-  const [addPieceSharePrompt, setAddPieceSharePrompt] = useState<{
-    pieceTitle: string; composerName: string; pieceId: number;
-  } | null>(null);
-
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const composerGroups = useMemo(() =>
@@ -1346,14 +1371,6 @@ export default function ProfilePage() {
   const avatarUrl   = profileData?.avatarUrl || "avatar-8";
   const isTempotown = String(displayName).trim().toLowerCase() === "tempotown";
 
-  const earnedBadges = useMemo(() => {
-    if (!repertoireEntries.length) return [];
-    const entries: RepertoireEntry[] = repertoireEntries.map((e: any) => ({
-      id: e.id, composerName: e.composerName, pieceTitle: e.pieceTitle, status: e.status,
-    }));
-    return computeUserBadges(entries, pioneerStatus ?? undefined);
-  }, [repertoireEntries, pioneerStatus]);
-  const renderedBadges = useMemo(() => (isTempotown ? TEMPOTOWN_BADGE_MOCKS : earnedBadges), [isTempotown, earnedBadges]);
 
   const eraData = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1416,7 +1433,6 @@ export default function ProfilePage() {
       }
       queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
-      setAddPieceSharePrompt({ pieceTitle: piece.piece, composerName: piece.composer, pieceId: piece.pieceId });
     } catch (err) { console.error("Failed to add piece:", err); }
   };
 
@@ -1439,12 +1455,10 @@ export default function ProfilePage() {
         <div className="bg-black text-primary-foreground">
           <div className="container mx-auto px-6 xl:px-8 max-w-[1760px] pt-6 pb-10">
             <div className="flex flex-col sm:flex-row items-start gap-8">
-              <div className="shrink-0">
-                <PianoAvatar
-                  avatarId={avatarUrl}
-                  size={112}
-                  className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-2xl border border-primary-foreground/30"
-                />
+              <div className="shrink-0 w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-2xl border border-primary-foreground/30 bg-primary-foreground/20 flex items-center justify-center">
+                <span className="text-3xl font-bold text-primary-foreground/80">
+                  {displayName?.charAt(0)?.toUpperCase() ?? "?"}
+                </span>
               </div>
               <div className="flex-1 min-w-0 pt-1">
                 {profileLoading
@@ -1618,51 +1632,8 @@ export default function ProfilePage() {
               </section>
             </div>
 
-            {/* Right rail: badges + analytics */}
+            {/* Right rail: analytics */}
             <section className="space-y-5 lg:col-span-1">
-              {renderedBadges.length > 0 && (
-                <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Award className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Badges earned</span>
-                    <span className="text-xs text-muted-foreground/50">({renderedBadges.length})</span>
-                  </div>
-                  <div className="max-h-[330px] overflow-y-auto pr-1">
-                    <div className="grid grid-cols-3 gap-2">
-                    {renderedBadges.map(badge => {
-                      const bg = badge.color ?? BADGE_TILE_BG_COLOR[badge.tier];
-                      const tierColor = TIER_TILE_COLOR[badge.tier];
-                      return (
-                        <div
-                          key={badge.id}
-                          title={badge.description}
-                          style={{ backgroundColor: bg, borderColor: tierColor }}
-                          className="rounded-xl overflow-hidden shadow-md cursor-default select-none flex flex-col aspect-square border-2"
-                        >
-                          <div className="px-1.5 pt-1.5 flex items-center justify-between">
-                            <span className="text-[8px] uppercase tracking-wider font-bold text-white/80">{badge.category}</span>
-                            <span
-                              style={{ backgroundColor: tierColor, borderColor: tierColor, color: TIER_TEXT_COLOR[badge.tier] }}
-                              className="text-[7px] uppercase tracking-wider font-bold px-1 py-0.5 rounded-full border"
-                            >
-                              {TIER_LABEL[badge.tier]}
-                            </span>
-                          </div>
-                          <div className="flex-1 flex items-center justify-center px-1">
-                            <span className="text-[1.5rem] leading-none drop-shadow-sm">{badge.icon}</span>
-                          </div>
-                          <div className="px-1.5 py-1.5 bg-black/24 text-center">
-                            <p className="text-[8px] font-extrabold text-white leading-tight uppercase tracking-wide line-clamp-2">
-                              {badge.name}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Analytics (1/3) */}
               <div className="space-y-5">
@@ -1754,17 +1725,6 @@ export default function ProfilePage() {
             currentStatus={getStatusForPiece(editMovementsPieceId)}
             composerId={getComposerIdForPiece(editMovementsPieceId)}
             onSave={() => queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] })}
-          />
-        )}
-        {addPieceSharePrompt && (
-          <ShareToFeedPrompt
-            open={!!addPieceSharePrompt}
-            onClose={() => setAddPieceSharePrompt(null)}
-            actionText="Added to repertoire"
-            pieceTitle={addPieceSharePrompt.pieceTitle}
-            composerName={addPieceSharePrompt.composerName}
-            pieceId={addPieceSharePrompt.pieceId}
-            postType="added_piece"
           />
         )}
       </div>
