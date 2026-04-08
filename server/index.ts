@@ -143,6 +143,14 @@ app.use((req, res, next) => {
       user_notes text,
       completed_at timestamp
     )`);
+    await db.execute(sql`ALTER TABLE lesson_days ADD COLUMN IF NOT EXISTS tasks jsonb DEFAULT '[]'::jsonb`);
+
+    // Seed the single implicit user
+    await db.execute(sql`
+      INSERT INTO users (id, username, password)
+      VALUES ('00000000-0000-0000-0000-000000000001', 'default', 'x')
+      ON CONFLICT (id) DO NOTHING
+    `);
 
     await db.execute(sql`CREATE TABLE IF NOT EXISTS measure_progress (
       id serial PRIMARY KEY,

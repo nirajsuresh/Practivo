@@ -178,12 +178,22 @@ export const insertMeasureSchema = createInsertSchema(measures).omit({ id: true 
 export type InsertMeasure = z.infer<typeof insertMeasureSchema>;
 export type Measure = typeof measures.$inferSelect;
 
+// Each task within a lesson day (stored as JSONB array)
+export type LessonTask = {
+  id: string;
+  description: string; // "Practice mm. 9–16"
+  measureStart: number;
+  measureEnd: number;
+  completed: boolean;
+};
+
 export const lessonDays = pgTable("lesson_days", {
   id: serial("id").primaryKey(),
   learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id),
   scheduledDate: text("scheduled_date").notNull(), // YYYY-MM-DD
   measureStart: integer("measure_start").notNull(),
   measureEnd: integer("measure_end").notNull(),
+  tasks: jsonb("tasks").$type<LessonTask[]>().default([]),
   status: text("status").notNull().default("upcoming"), // upcoming | active | completed | skipped
   userNotes: text("user_notes"),
   completedAt: timestamp("completed_at"),

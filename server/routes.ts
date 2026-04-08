@@ -1,12 +1,17 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { MILESTONE_TYPES } from "@shared/schema";
 import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import express from "express";
+import { db } from "./db";
+import { eq, and, gte, lte } from "drizzle-orm";
+import { composers, pieces, repertoireEntries, learningPlans, lessonDays, sheetMusic } from "@shared/schema";
+import type { LessonTask } from "@shared/schema";
+
+export const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 const uploadsDir = path.join(process.cwd(), "uploads", "sheet-music");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -30,6 +35,54 @@ export async function registerRoutes(
 
   // Serve uploaded files (page images, cropped bars) as static assets
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
+  // ── Today (aggregate endpoint for home screen) ───────────────────────────
+
+  app.get("/api/today", async (_req, res) => {
+    try {
+      const userId = DEFAULT_USER_ID;
+
+      // Get the user's full repertoire (with piece + composer info)
+      const { entries } = await storage.getRepertoireByUser(userId);
+
+      // Active entry = first "In Progress" entry
+      const activeEntry = entries.find(e => e.status === "In Progress") ?? entries[0] ?? null;
+
+      let todayLesson = null;
+      let activePlan = null;
+      let sheetMusicId = null;
+
+      if (activeEntry) {
+        // Find the learning plan for this entry
+        activePlan = await storage.getLearningPlan(activeEntry.id);
+        if (activePlan) {
+          const today = new Date().toISOString().split("T")[0];
+          todayLesson = await storage.getLessonDay(activePlan.id, today);
+
+          // Get the sheet music ID for bar images
+          const [sm] = await db.select({ id: sheetMusic.id })
+            .from(sheetMusic)
+            .where(and(
+              eq(sheetMusic.pieceId, activeEntry.pieceId),
+              eq(sheetMusic.userId, userId)
+            ))
+            .limit(1);
+          sheetMusicId = sm?.id ?? null;
+        }
+      }
+
+      res.json({
+        activeEntry,
+        activePlan,
+        todayLesson,
+        sheetMusicId,
+        repertoire: entries,
+      });
+    } catch (err) {
+      console.error("GET /api/today error:", err);
+      res.status(500).json({ error: "Failed to load today's data" });
+    }
+  });
 
   // ── Composers ────────────────────────────────────────────────────────────
 
@@ -98,93 +151,21 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/pieces/:pieceId/analysis", async (req, res) => {
+  // ── Repertoire ───────────────────────────────────────────────────────────
+
+  app.get("/api/repertoire", async (_req, res) => {
     try {
-      const pieceId = parseInt(req.params.pieceId);
-
-      const cached = await storage.getPieceAnalysis(pieceId);
-      if (cached) {
-        return res.json({ analysis: cached.analysis, wikiUrl: cached.wikiUrl });
-      }
-
-      const piece = await storage.getPieceById(pieceId);
-      if (!piece) return res.status(404).json({ error: "Piece not found" });
-
-      const composer = await storage.getComposerById(piece.composerId);
-      const composerName = composer?.name ?? "Unknown";
-      const searchQuery = `${composerName} ${piece.title} piano`;
-
-      let wikiExtract = "";
-      let wikiUrl: string | null = null;
-
-      try {
-        const searchRes = await fetch(
-          `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchQuery)}&format=json&srlimit=1`
-        );
-        const searchData = await searchRes.json() as any;
-        const topResult = searchData?.query?.search?.[0];
-
-        if (topResult) {
-          const pageTitle = topResult.title;
-          wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(pageTitle.replace(/ /g, "_"))}`;
-          const extractRes = await fetch(
-            `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=true&titles=${encodeURIComponent(pageTitle)}&format=json&exlimit=1`
-          );
-          const extractData = await extractRes.json() as any;
-          const pages = extractData?.query?.pages;
-          if (pages) {
-            const page = Object.values(pages)[0] as any;
-            wikiExtract = (page?.extract ?? "").substring(0, 1500);
-          }
-        }
-      } catch (wikiError) {
-        console.error("Wikipedia fetch error:", wikiError);
-      }
-
-      if (!process.env.GEMINI_API_KEY) {
-        return res.status(503).json({ error: "AI service not configured" });
-      }
-
-      const prompt = wikiExtract
-        ? `Write a single short paragraph (3-5 sentences) describing "${piece.title}" by ${composerName}. Cover when it was composed, its musical character, and what makes it notable. Write as a factual encyclopedia-style description, not as a response to someone. Do not use headers, bullet points, or address the reader.\n\nReference material:\n${wikiExtract}`
-        : `Write a single short paragraph (3-5 sentences) describing "${piece.title}" by ${composerName}. Cover its musical character, style period, and what makes it notable for pianists. Write as a factual encyclopedia-style description, not as a response to someone. Do not use headers, bullet points, or address the reader.`;
-
-      try {
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              system_instruction: {
-                parts: [{ text: "You write brief, factual descriptions of classical music pieces in the style of a music encyclopedia entry." }],
-              },
-              contents: [{ parts: [{ text: prompt }] }],
-            }),
-          }
-        );
-        if (!geminiRes.ok) {
-          return res.status(502).json({ error: "AI service temporarily unavailable." });
-        }
-        const geminiData = await geminiRes.json() as any;
-        const text = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        const analysis = text.trim() || "Analysis not available.";
-        const saved = await storage.savePieceAnalysis({ pieceId, analysis, wikiUrl });
-        res.json({ analysis: saved.analysis, wikiUrl: saved.wikiUrl });
-      } catch {
-        return res.status(502).json({ error: "AI service temporarily unavailable." });
-      }
-    } catch (error) {
-      res.status(500).json({ error: "Failed to generate analysis" });
+      const repertoire = await storage.getRepertoireByUser(DEFAULT_USER_ID);
+      res.json(repertoire);
+    } catch {
+      res.status(500).json({ error: "Failed to get repertoire" });
     }
   });
 
-  // ── Repertoire ───────────────────────────────────────────────────────────
-
-  app.get("/api/repertoire/:userId", async (req, res) => {
+  // Legacy userId route kept for compatibility
+  app.get("/api/repertoire/:userId", async (_req, res) => {
     try {
-      const userId = req.params.userId;
-      const repertoire = await storage.getRepertoireByUser(userId);
+      const repertoire = await storage.getRepertoireByUser(DEFAULT_USER_ID);
       res.json(repertoire);
     } catch {
       res.status(500).json({ error: "Failed to get repertoire" });
@@ -193,35 +174,10 @@ export async function registerRoutes(
 
   app.post("/api/repertoire", async (req, res) => {
     try {
-      const entry = await storage.createRepertoireEntry(req.body);
+      const entry = await storage.createRepertoireEntry({ ...req.body, userId: DEFAULT_USER_ID });
       res.status(201).json(entry);
     } catch {
       res.status(500).json({ error: "Failed to create repertoire entry" });
-    }
-  });
-
-  app.put("/api/repertoire/reorder", async (req, res) => {
-    try {
-      const { userId, order } = req.body;
-      if (!userId || !Array.isArray(order)) {
-        return res.status(400).json({ error: "userId and order array are required" });
-      }
-      await storage.updateRepertoireOrder(userId, order);
-      res.json({ success: true });
-    } catch {
-      res.status(500).json({ error: "Failed to update repertoire order" });
-    }
-  });
-
-  app.patch("/api/repertoire/piece/:pieceId", async (req, res) => {
-    try {
-      const pieceId = parseInt(req.params.pieceId);
-      const userId = req.headers["x-user-id"] as string;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const updated = await storage.updateRepertoireByPiece(userId, pieceId, req.body);
-      res.json(updated);
-    } catch {
-      res.status(500).json({ error: "Failed to update repertoire entries" });
     }
   });
 
@@ -236,19 +192,6 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/repertoire/piece/:pieceId", async (req, res) => {
-    try {
-      const pieceId = parseInt(req.params.pieceId);
-      const userId = req.headers["x-user-id"] as string;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const deleted = await storage.deleteRepertoireByPiece(userId, pieceId);
-      if (!deleted) return res.status(404).json({ error: "No repertoire entries found for this piece" });
-      res.status(204).send();
-    } catch {
-      res.status(500).json({ error: "Failed to delete repertoire entries" });
-    }
-  });
-
   app.delete("/api/repertoire/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -260,104 +203,8 @@ export async function registerRoutes(
     }
   });
 
-  // ── Milestones ───────────────────────────────────────────────────────────
-
-  app.get("/api/milestones/:userId/:pieceId", async (req, res) => {
-    try {
-      const { userId, pieceId } = req.params;
-      const movementId = req.query.movementId != null ? parseInt(req.query.movementId as string) : undefined;
-      const allMovements = req.query.allMovements === "true";
-      const data = await storage.getMilestones(
-        userId,
-        parseInt(pieceId),
-        Number.isInteger(movementId) ? movementId : undefined,
-        allMovements,
-      );
-      res.json(data);
-    } catch {
-      res.status(500).json({ error: "Failed to get milestones" });
-    }
-  });
-
-  app.post("/api/milestones", async (req, res) => {
-    try {
-      const { userId, pieceId, cycleNumber, milestoneType, achievedAt, movementId } = req.body;
-      if (!userId || !pieceId || !milestoneType || !achievedAt) {
-        return res.status(400).json({ error: "Missing required fields" });
-      }
-      const normalizedType = String(milestoneType).trim();
-      if (!MILESTONE_TYPES.includes(normalizedType as (typeof MILESTONE_TYPES)[number])) {
-        return res.status(400).json({ error: `Invalid milestone type: ${normalizedType}` });
-      }
-      const parsedCycle = Number(cycleNumber ?? 1);
-      if (!Number.isInteger(parsedCycle) || parsedCycle < 1) {
-        return res.status(400).json({ error: "cycleNumber must be a positive integer" });
-      }
-      const normalizedDate = String(achievedAt).trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-        return res.status(400).json({ error: "achievedAt must be YYYY-MM-DD" });
-      }
-      const parsedMovementId = movementId != null && movementId !== "" ? parseInt(movementId) : undefined;
-      const data = await storage.upsertMilestone(
-        userId, parseInt(pieceId), parsedCycle, normalizedType, normalizedDate,
-        Number.isInteger(parsedMovementId) ? parsedMovementId : undefined
-      );
-      res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to upsert milestone", detail: error instanceof Error ? error.message : String(error) });
-    }
-  });
-
-  app.patch("/api/milestones/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const normalizedDate = String(req.body?.achievedAt ?? "").trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
-        return res.status(400).json({ error: "achievedAt must be YYYY-MM-DD" });
-      }
-      const updated = await storage.updateMilestoneDate(id, normalizedDate);
-      if (!updated) return res.status(404).json({ error: "Milestone not found" });
-      res.json(updated);
-    } catch {
-      res.status(500).json({ error: "Failed to update milestone" });
-    }
-  });
-
-  app.delete("/api/milestones/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const ok = await storage.deleteMilestone(id);
-      res.json({ success: ok });
-    } catch {
-      res.status(500).json({ error: "Failed to delete milestone" });
-    }
-  });
-
-  app.post("/api/repertoire/:id/new-cycle", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const entry = await storage.startNewCycle(id);
-      if (!entry) return res.status(404).json({ error: "Repertoire entry not found" });
-      res.json(entry);
-    } catch {
-      res.status(500).json({ error: "Failed to start new cycle" });
-    }
-  });
-
-  app.post("/api/repertoire/:id/remove-cycle", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const entry = await storage.removeCurrentCycle(id);
-      if (!entry) return res.status(404).json({ error: "Repertoire entry not found" });
-      res.json(entry);
-    } catch {
-      res.status(500).json({ error: "Failed to remove current cycle" });
-    }
-  });
-
   // ── Learning Plans ───────────────────────────────────────────────────────
 
-  // Look up plan by repertoire entry ID
   app.get("/api/learning-plans/entry/:entryId", async (req, res) => {
     try {
       const entryId = parseInt(req.params.entryId);
@@ -368,7 +215,6 @@ export async function registerRoutes(
     }
   });
 
-  // Look up plan by its own ID
   app.get("/api/learning-plans/:planId", async (req, res) => {
     try {
       const planId = parseInt(req.params.planId);
@@ -381,9 +227,7 @@ export async function registerRoutes(
 
   app.post("/api/learning-plans", async (req, res) => {
     try {
-      const userId = req.headers["x-user-id"] as string;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const plan = await storage.createLearningPlan({ ...req.body, userId });
+      const plan = await storage.createLearningPlan({ ...req.body, userId: DEFAULT_USER_ID });
       res.status(201).json(plan);
     } catch {
       res.status(500).json({ error: "Failed to create learning plan" });
@@ -405,20 +249,17 @@ export async function registerRoutes(
 
   app.post("/api/sheet-music/upload", upload.single("pdf"), async (req, res) => {
     try {
-      const userId = (req.headers["x-user-id"] as string) || req.body.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       const pieceId = req.body.pieceId ? parseInt(req.body.pieceId) : null;
 
       const record = await storage.createSheetMusic({
         pieceId,
-        userId,
+        userId: DEFAULT_USER_ID,
         fileUrl: req.file.path,
         source: "upload",
         processingStatus: "pending",
       });
 
-      // Immediately kick off bar detection in the background
       const smId = record.id;
       import("./scorebars/index.js").then(async ({ ScorebarService }) => {
         try {
@@ -453,38 +294,6 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/sheet-music/:id/process", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const record = await storage.getSheetMusic(id);
-      if (!record) return res.status(404).json({ error: "Sheet music not found" });
-
-      await storage.updateSheetMusicStatus(id, "processing");
-
-      // Fire-and-forget: process asynchronously
-      import("./scorebars/index.js").then(async ({ ScorebarService }) => {
-        try {
-          const service = new ScorebarService();
-          const result = await service.processFile(record.fileUrl);
-          const savedMeasures = await storage.saveMeasures(toInsertMeasures(id, result.measures));
-          await storage.updateSheetMusicStatus(id, "done", result.pageCount);
-          // Auto-update learning plan total measures if one exists
-          const plan = await storage.getLearningPlanBySheetMusic(id);
-          if (plan) {
-            await storage.updateLearningPlan(plan.id, { totalMeasures: savedMeasures.length });
-          }
-        } catch (err) {
-          console.error("ScoreBars processing failed:", err);
-          await storage.updateSheetMusicStatus(id, "failed");
-        }
-      }).catch(console.error);
-
-      res.json({ status: "processing" });
-    } catch {
-      res.status(500).json({ error: "Failed to start processing" });
-    }
-  });
-
   app.get("/api/sheet-music/:id/status", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -505,7 +314,6 @@ export async function registerRoutes(
     }
   });
 
-  // Returns page images + bar bounding boxes for the score review UI
   app.get("/api/sheet-music/:id/pages", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -515,7 +323,6 @@ export async function registerRoutes(
       const measures = await storage.getMeasures(id);
       const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
 
-      // Build page list from saved PNGs, sorted numerically (page-1, page-2 … page-10, not page-1, page-10)
       const pageFiles = fs.existsSync(pagesDir)
         ? fs.readdirSync(pagesDir)
             .filter(f => f.endsWith(".png"))
@@ -527,7 +334,6 @@ export async function registerRoutes(
         : [];
 
       const pages = pageFiles.map((file) => {
-        // Extract the real page number from the filename (page-N.png)
         const pageNumber = parseInt(file.match(/\d+/)?.[0] ?? "0", 10);
         const imageUrl = `/uploads/pages/${id}/${file}`;
         const pageMeasures = measures
@@ -547,10 +353,15 @@ export async function registerRoutes(
     }
   });
 
+  // Returns measures, optionally filtered by measure number range (for session/plan bar images)
   app.get("/api/sheet-music/:id/measures", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const measureList = await storage.getMeasures(id);
+      let measureList = await storage.getMeasures(id);
+      const start = req.query.start ? parseInt(req.query.start as string) : null;
+      const end = req.query.end ? parseInt(req.query.end as string) : null;
+      if (start !== null) measureList = measureList.filter(m => m.measureNumber >= start);
+      if (end !== null) measureList = measureList.filter(m => m.measureNumber <= end);
       res.json(measureList);
     } catch {
       res.status(500).json({ error: "Failed to get measures" });
@@ -578,7 +389,6 @@ export async function registerRoutes(
     }
   });
 
-  // Run bar detection on a user-drawn sub-region of a page image
   app.post("/api/sheet-music/:id/detect-region", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -607,7 +417,6 @@ export async function registerRoutes(
     }
   });
 
-  // Replace all measures for a sheet music with a user-edited set
   app.put("/api/sheet-music/:id/measures/replace", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -623,7 +432,6 @@ export async function registerRoutes(
         return res.status(400).json({ error: "measures array required" });
       }
 
-      // Sort by page → y → x and assign sequential measureNumber
       const sorted = [...incoming].sort((a, b) => {
         if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
         if (a.boundingBox.y !== b.boundingBox.y) return a.boundingBox.y - b.boundingBox.y;
@@ -642,11 +450,7 @@ export async function registerRoutes(
       }));
 
       const saved = await storage.replaceMeasures(id, insertRows);
-
-      // Keep sheet music status and page count in sync
       await storage.updateSheetMusicStatus(id, "ready", record.pageCount ?? undefined);
-
-      // Update learning plan totalMeasures if one exists
       const plan = await storage.getLearningPlanBySheetMusic(id);
       if (plan) {
         await storage.updateLearningPlan(plan.id, { totalMeasures: saved.length });
@@ -685,8 +489,6 @@ export async function registerRoutes(
       today.setHours(0, 0, 0, 0);
       const target = new Date(targetCompletionDate);
       const totalDays = Math.max(1, Math.round((target.getTime() - today.getTime()) / 86400000));
-
-      // How many measures to assign per day (at least 1)
       const measuresPerDay = totalMeasures > 0 ? Math.ceil(totalMeasures / totalDays) : 1;
 
       const days: Array<{
@@ -694,26 +496,51 @@ export async function registerRoutes(
         scheduledDate: string;
         measureStart: number;
         measureEnd: number;
-        status: "pending";
+        tasks: LessonTask[];
+        status: string;
       }> = [];
 
-      let measureCursor = 1;
+      let cursor = 1;
       for (let i = 0; i < totalDays; i++) {
         const d = new Date(today);
         d.setDate(d.getDate() + i);
         const dateStr = d.toISOString().split("T")[0];
-        const start = measureCursor;
-        const end = totalMeasures > 0 ? Math.min(measureCursor + measuresPerDay - 1, totalMeasures) : measuresPerDay;
-        days.push({ learningPlanId: planId, scheduledDate: dateStr, measureStart: start, measureEnd: end, status: "pending" });
+        const start = cursor;
+        const end = totalMeasures > 0 ? Math.min(cursor + measuresPerDay - 1, totalMeasures) : measuresPerDay;
+
+        const tasks: LessonTask[] = [
+          {
+            id: `${i}_1`,
+            description: `Practice mm. ${start}–${end}`,
+            measureStart: start,
+            measureEnd: end,
+            completed: false,
+          },
+        ];
+
+        // Add a cumulative run-through once there's a meaningful amount learned
+        if (start > measuresPerDay && end > 1) {
+          tasks.push({
+            id: `${i}_2`,
+            description: `Play mm. 1–${end}`,
+            measureStart: 1,
+            measureEnd: end,
+            completed: false,
+          });
+        }
+
+        days.push({ learningPlanId: planId, scheduledDate: dateStr, measureStart: start, measureEnd: end, tasks, status: "upcoming" });
+
         if (totalMeasures > 0) {
-          measureCursor = end + 1;
-          if (measureCursor > totalMeasures) break;
+          cursor = end + 1;
+          if (cursor > totalMeasures) break;
         } else {
-          measureCursor += measuresPerDay;
+          cursor += measuresPerDay;
         }
       }
 
-      const created = await storage.createLessonDays(days);
+      const created = await storage.createLessonDays(days as any);
+      await storage.updateLearningPlan(planId, { status: "active" });
       res.status(201).json({ lessonDays: created.length });
     } catch (err) {
       console.error("generate-lessons error:", err);
@@ -735,195 +562,27 @@ export async function registerRoutes(
   app.patch("/api/lessons/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const updated = await storage.updateLessonDay(id, req.body);
+      const body = req.body;
+      // If completing a task, update the tasks JSONB
+      if (typeof body.completedTaskIndex === "number") {
+        const lesson = await storage.getLessonDay(0, ""); // get by id
+        // Update via raw SQL for JSONB
+        const { db } = await import("./db.js");
+        const { lessonDays: ld } = await import("@shared/schema");
+        const { eq: eqFn, sql: sqlFn } = await import("drizzle-orm");
+        const [current] = await db.select().from(ld).where(eqFn(ld.id, id));
+        if (!current) return res.status(404).json({ error: "Lesson not found" });
+        const tasks = (current.tasks ?? []) as any[];
+        const idx = body.completedTaskIndex;
+        if (tasks[idx]) tasks[idx].completed = true;
+        const [updated] = await db.update(ld).set({ tasks } as any).where(eqFn(ld.id, id)).returning();
+        return res.json(updated);
+      }
+      const updated = await storage.updateLessonDay(id, body);
       if (!updated) return res.status(404).json({ error: "Lesson not found" });
       res.json(updated);
     } catch {
       res.status(500).json({ error: "Failed to update lesson" });
-    }
-  });
-
-  // ── Measure Progress ─────────────────────────────────────────────────────
-
-  app.get("/api/learning-plans/:planId/progress", async (req, res) => {
-    try {
-      const planId = parseInt(req.params.planId);
-      const [plan, measureProgress, lessons] = await Promise.all([
-        storage.getLearningPlanById(planId),
-        storage.getMeasureProgress(planId),
-        storage.getLessonDays(planId),
-      ]);
-      const learnedMeasures = measureProgress.filter((p: any) => p.status === "learned").length;
-      const completedLessons = lessons.filter((l: any) => l.status === "completed").length;
-      const totalLessons = lessons.length;
-
-      // Simple streak: count consecutive completed days working backwards from today
-      const today = new Date().toISOString().split("T")[0];
-      const completedDates = new Set(
-        lessons.filter((l: any) => l.status === "completed").map((l: any) => l.scheduledDate.toString().slice(0, 10))
-      );
-      let streakDays = 0;
-      const d = new Date(today);
-      while (completedDates.has(d.toISOString().split("T")[0])) {
-        streakDays++;
-        d.setDate(d.getDate() - 1);
-      }
-
-      res.json({
-        learnedMeasures,
-        totalMeasures: plan?.totalMeasures ?? 0,
-        completedLessons,
-        totalLessons,
-        streakDays,
-      });
-    } catch {
-      res.status(500).json({ error: "Failed to get measure progress" });
-    }
-  });
-
-  app.put("/api/learning-plans/:planId/progress/:measureNumber", async (req, res) => {
-    try {
-      const planId = parseInt(req.params.planId);
-      const measureNumber = parseInt(req.params.measureNumber);
-      const userId = (req.headers["x-user-id"] as string) || req.body.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const updated = await storage.upsertMeasureProgress({ planId, measureId: measureNumber, userId, ...req.body });
-
-      // Auto-trigger milestones based on progress thresholds (fire-and-forget)
-      storage.getLearningPlanById(planId).then(async (plan) => {
-        const total = plan?.totalMeasures ?? 0;
-        if (!plan || total <= 0) return;
-        const allProgress = await storage.getMeasureProgress(planId);
-        const learnedCount = allProgress.filter((p: any) => p.status === "learned").length;
-        const pct = learnedCount / total;
-
-        const { db } = await import("./db.js");
-        const { learningPlans: lpTable, repertoireEntries: reTable } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        const [lp] = await db.select().from(lpTable).where(eq(lpTable.id, planId));
-        if (!lp) return;
-        const [entry] = await db.select().from(reTable).where(eq(reTable.id, lp.repertoireEntryId));
-        if (!entry) return;
-
-        const now = new Date().toISOString().slice(0, 10);
-        const cycle = entry.currentCycle ?? 1;
-        if (learnedCount === 1) await storage.upsertMilestone(userId, entry.pieceId, cycle, "started", now);
-        if (pct >= 0.30) await storage.upsertMilestone(userId, entry.pieceId, cycle, "read_through", now);
-        if (pct >= 0.75) await storage.upsertMilestone(userId, entry.pieceId, cycle, "notes_learned", now);
-        if (pct >= 1.0)  await storage.upsertMilestone(userId, entry.pieceId, cycle, "up_to_speed", now);
-      }).catch(console.error);
-
-      res.json(updated);
-    } catch (err) {
-      console.error("progress update error:", err);
-      res.status(500).json({ error: "Failed to update measure progress" });
-    }
-  });
-
-  // ── Auth ─────────────────────────────────────────────────────────────────
-
-  app.post("/api/auth/register", async (req, res) => {
-    try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: "Username and password are required" });
-      }
-      const existing = await storage.getUserByUsername(username);
-      if (existing) return res.status(409).json({ error: "Username already taken" });
-      const user = await storage.createUser({ username, password });
-      res.status(201).json({ id: user.id, username: user.username });
-    } catch {
-      res.status(500).json({ error: "Failed to register" });
-    }
-  });
-
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { username, password } = req.body;
-      if (!username || !password) {
-        return res.status(400).json({ error: "Username and password are required" });
-      }
-      const user = await storage.getUserByUsername(username);
-      if (!user || user.password !== password) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-      res.json({ id: user.id, username: user.username });
-    } catch {
-      res.status(500).json({ error: "Failed to login" });
-    }
-  });
-
-  // ── Users ────────────────────────────────────────────────────────────────
-
-  app.get("/api/users/search", async (req, res) => {
-    try {
-      const query = (req.query.q as string) || "";
-      const currentUserId = req.headers["x-user-id"] as string;
-      if (!currentUserId) return res.status(401).json({ error: "Not authenticated" });
-      const users = await storage.searchUsers(query, currentUserId);
-      res.json(users);
-    } catch {
-      res.status(500).json({ error: "Failed to search users" });
-    }
-  });
-
-  app.get("/api/users/lookup/:username", async (req, res) => {
-    try {
-      const user = await storage.getUserByUsername(req.params.username);
-      if (!user) return res.status(404).json({ error: "User not found" });
-      res.json({ id: user.id, username: user.username });
-    } catch {
-      res.status(500).json({ error: "Failed to lookup user" });
-    }
-  });
-
-  app.get("/api/users/:userId/profile", async (req, res) => {
-    try {
-      const profile = await storage.getUserProfile(req.params.userId);
-      if (!profile) return res.status(404).json({ error: "User profile not found" });
-      res.json(profile);
-    } catch {
-      res.status(500).json({ error: "Failed to get user profile" });
-    }
-  });
-
-  app.post("/api/users/:userId/profile", async (req, res) => {
-    try {
-      const profile = await storage.createUserProfile({ ...req.body, userId: req.params.userId });
-      res.status(201).json(profile);
-    } catch {
-      res.status(500).json({ error: "Failed to create profile" });
-    }
-  });
-
-  app.post("/api/users/:userId/repertoire", async (req, res) => {
-    try {
-      const userId = req.params.userId;
-      const entries = req.body.entries as Array<{ composerId: number; pieceId: number; movementId?: number; status: string; startedDate?: string }>;
-      if (!entries || !Array.isArray(entries)) {
-        return res.status(400).json({ error: "entries array is required" });
-      }
-      const created = [];
-      for (const entry of entries) {
-        const result = await storage.createRepertoireEntry({ ...entry, userId });
-        created.push(result);
-      }
-      res.status(201).json(created);
-    } catch {
-      res.status(500).json({ error: "Failed to create repertoire entries" });
-    }
-  });
-
-  // ── Search ───────────────────────────────────────────────────────────────
-
-  app.get("/api/search/unified", async (req, res) => {
-    try {
-      const query = (req.query.q as string) || "";
-      const results = await storage.unifiedSearch(query);
-      res.json(results);
-    } catch {
-      res.status(500).json({ error: "Failed to search" });
     }
   });
 
