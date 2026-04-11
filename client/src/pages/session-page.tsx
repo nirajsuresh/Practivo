@@ -8,7 +8,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { measuresUsePageGeometry, sheetPageImageUrl } from "@/lib/sheet-page";
+import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -176,6 +176,7 @@ function SectionCard({
   onFocusBar: (idx: number | null) => void;
   sheetId: number | null;
 }) {
+  const pageUrl = useSheetPageUrl(sheetId);
   const [heightScale, setHeightScale] = useState(1);
   const [hoveredBarIdx, setHoveredBarIdx] = useState<number | null>(null);
   const dragRef = useRef<{ startY: number; startScale: number } | null>(null);
@@ -301,7 +302,7 @@ function SectionCard({
                     className="relative w-full bg-white border-b border-border/30 last:border-b-0"
                   >
                     <img
-                      src={sheetPageImageUrl(sheetId!, pageNum)}
+                      src={pageUrl(pageNum)}
                       alt=""
                       className="w-full h-auto block pointer-events-none"
                       onLoad={() => {
@@ -508,6 +509,7 @@ function FocusedBarViewer({
   onNavigate: (idx: number) => void;
   sheetId: number | null;
 }) {
+  const pageUrl = useSheetPageUrl(sheetId);
   const bar = bars[focusedIdx];
   const showPage =
     sheetId != null && bar.pageNumber != null && bar.boundingBox != null;
@@ -551,7 +553,7 @@ function FocusedBarViewer({
           <div className="w-full max-h-[min(50vh,520px)] overflow-y-auto">
             <div className="relative w-full">
               <img
-                src={sheetPageImageUrl(sheetId, bar.pageNumber!)}
+                src={pageUrl(bar.pageNumber!)}
                 alt=""
                 className="w-full h-auto block"
               />
@@ -614,6 +616,7 @@ export default function SessionPage() {
   });
 
   const sheetId = bundle?.plan.sheetMusicId;
+  const pageUrl = useSheetPageUrl(sheetId);
   // Fetch ALL measures for the sheet (server ignores from/to), then filter client-side
   const { data: allMeasures = [] } = useQuery<MeasureRow[]>({
     queryKey: [`/api/sheet-music/${sheetId}/measures`],

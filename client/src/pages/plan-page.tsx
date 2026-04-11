@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { ChevronDown, ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { measuresUsePageGeometry, sheetPageImageUrl } from "@/lib/sheet-page";
+import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
 
 type LearningPlan = {
   id: number;
@@ -97,6 +97,8 @@ export default function PlanPage() {
     queryKey: [`/api/sheet-music/${sheetId}/measures`],
     enabled: sheetId != null && sheetId > 0,
   });
+
+  const pageUrl = useSheetPageUrl(sheetId);
 
   const byNumber = new Map(measures.map((m) => [m.measureNumber, m]));
 
@@ -354,7 +356,7 @@ export default function PlanPage() {
                                       }
                                     >
                                       <img
-                                        src={sheetPageImageUrl(sheetId!, pageNum)}
+                                        src={pageUrl(pageNum)}
                                         alt={`Page ${pageNum}`}
                                         className="w-full h-32 object-cover object-top pointer-events-none bg-white"
                                       />
@@ -448,7 +450,7 @@ export default function PlanPage() {
                                   }
                                 >
                                   <img
-                                    src={sheetPageImageUrl(sheetId!, pageNum)}
+                                    src={pageUrl(pageNum)}
                                     alt={`Page ${pageNum}`}
                                     className="w-full h-32 object-cover object-top pointer-events-none bg-white"
                                   />
@@ -557,7 +559,7 @@ export default function PlanPage() {
                 <div className="w-full rounded-md border border-border bg-white overflow-hidden">
                   <div className="relative w-full">
                     <img
-                      src={sheetPageImageUrl(scoreReview.sheetId, pageReviewCurrent)}
+                      src={pageUrl(pageReviewCurrent)}
                       alt={`Page ${pageReviewCurrent}`}
                       className="w-full h-auto block"
                     />
