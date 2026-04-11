@@ -8,7 +8,6 @@
  * Safe to re-run — skips rows already present in sheet_music_pages.
  */
 
-import "dotenv/config";
 import fs from "fs";
 import path from "path";
 import { db } from "../db.js";
