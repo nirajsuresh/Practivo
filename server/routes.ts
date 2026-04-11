@@ -1159,10 +1159,8 @@ export async function registerRoutes(
     if (isNaN(pieceId)) return res.status(400).json({ error: "Invalid pieceId" });
     try {
       const scores = await storage.getAllCommunityScoresForPiece(pieceId);
-      const withCounts = await Promise.all(scores.map(async (s) => {
-        const totalMeasures = await storage.getMeasureCount(s.sheetMusicId);
-        return { ...s, totalMeasures };
-      }));
+      const countMap = await storage.batchGetMeasureCounts(scores.map((s) => s.sheetMusicId));
+      const withCounts = scores.map((s) => ({ ...s, totalMeasures: countMap.get(s.sheetMusicId) ?? 0 }));
       res.json(withCounts);
     } catch {
       res.status(500).json({ error: "Failed to fetch community scores" });

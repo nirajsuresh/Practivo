@@ -136,6 +136,7 @@ export interface IStorage {
   replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
   getMeasures(sheetMusicId: number): Promise<Measure[]>;
   getMeasureCount(sheetMusicId: number): Promise<number>;
+  batchGetMeasureCounts(sheetMusicIds: number[]): Promise<Map<number, number>>;
   clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void>;
   updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined>;
   confirmMeasures(sheetMusicId: number): Promise<void>;
@@ -820,6 +821,16 @@ export class DatabaseStorage implements IStorage {
       .from(measures)
       .where(eq(measures.sheetMusicId, sheetMusicId));
     return result?.count ?? 0;
+  }
+
+  async batchGetMeasureCounts(sheetMusicIds: number[]): Promise<Map<number, number>> {
+    if (sheetMusicIds.length === 0) return new Map();
+    const rows = await db
+      .select({ sheetMusicId: measures.sheetMusicId, count: sql<number>`count(*)::int` })
+      .from(measures)
+      .where(inArray(measures.sheetMusicId, sheetMusicIds))
+      .groupBy(measures.sheetMusicId);
+    return new Map(rows.map((r) => [r.sheetMusicId, r.count]));
   }
 
   async clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void> {

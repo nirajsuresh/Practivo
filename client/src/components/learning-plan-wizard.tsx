@@ -653,12 +653,12 @@ export function LearningPlanWizard({
     staleTime: 60_000,
   });
 
-  // Re-fetch whenever the dialog opens so the card reflects a recent contribution.
+  // Re-fetch when the dialog opens (or when the piece/movement scope changes while open)
+  // so the card always reflects the latest contribution without waiting for staleTime.
   useEffect(() => {
     if (open && communityScoreUrl) {
       refetchCommunityScore();
     }
-    // intentionally omitting refetchCommunityScore from deps to avoid re-triggering
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, communityScoreUrl]);
 
