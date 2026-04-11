@@ -4,22 +4,23 @@ import {
   type Piece, type InsertPiece,
   type Movement, type InsertMovement,
   type RepertoireEntry, type InsertRepertoireEntry,
-  type Post, type InsertPost,
-  type PostLike, type PostComment,
-  type Challenge, type InsertChallenge,
   type UserProfile, type InsertUserProfile,
-  type Follow, type InsertFollow,
-  type PieceRating, type InsertPieceRating,
-  type PieceComment, type InsertPieceComment,
   type PieceAnalysis, type InsertPieceAnalysis,
-  type Connection, type InsertConnection,
-  type ComposerFollow,
   type PieceMilestone,
-  users, composers, pieces, movements, repertoireEntries, posts, postLikes, postComments, challenges, userProfiles, follows,
-  pieceRatings, pieceComments, pieceAnalyses, connections, composerFollows, composerComments, pieceMilestones
+  type LearningPlan, type InsertLearningPlan,
+  type SheetMusic, type InsertSheetMusic,
+  type Measure, type InsertMeasure,
+  type LessonDay, type InsertLessonDay,
+  type MeasureProgress, type InsertMeasureProgress,
+  type CommunityScore, type InsertCommunityScore,
+  type SheetMusicPage,
+  users, composers, pieces, movements, repertoireEntries, userProfiles,
+  pieceAnalyses, pieceMilestones,
+  learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
+  sheetMusicPages,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, inArray, sql, count, avg, or, ne } from "drizzle-orm";
+import { eq, ilike, and, desc, sql, ne, inArray, isNull } from "drizzle-orm";
 
 const CANONICAL_REPERTOIRE_STATUSES = [
   "Want to learn",
@@ -41,29 +42,36 @@ function normalizeRepertoireStatus(status: string | null | undefined): string {
   if (key === "in progress" || key === "learning" || key === "refining" || key === "polishing") return "In Progress";
   if (key === "maintaining" || key === "performance ready" || key === "learned") return "Maintaining";
   if (key === "resting" || key === "shelved" || key === "stopped learning" || key === "paused") return "Resting";
-
   const canonical = CANONICAL_REPERTOIRE_STATUSES.find((s) => normalizeStatusKey(s) === key);
   return canonical ?? "In Progress";
 }
 
 export interface IStorage {
+  // ── Users ────────────────────────────────────────────────────────────────
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  
+
+  // ── Composers ────────────────────────────────────────────────────────────
   searchComposers(query: string): Promise<Composer[]>;
   getComposerById(id: number): Promise<Composer | undefined>;
   createComposer(composer: InsertComposer): Promise<Composer>;
-  
+
+  // ── Pieces ───────────────────────────────────────────────────────────────
   searchPieces(query: string, composerId?: number): Promise<(Piece & { composerName: string })[]>;
   getPieceById(id: number): Promise<Piece | undefined>;
   getPiecesByComposer(composerId: number): Promise<Piece[]>;
+  getComposerPieces(composerId: number): Promise<Piece[]>;
   createPiece(piece: InsertPiece): Promise<Piece>;
-  
+  getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined>;
+  savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis>;
+
+  // ── Movements ────────────────────────────────────────────────────────────
   getMovementsByPiece(pieceId: number): Promise<Movement[]>;
   getMovementById(id: number): Promise<Movement | undefined>;
   createMovement(movement: InsertMovement): Promise<Movement>;
-  
+
+  // ── Repertoire ───────────────────────────────────────────────────────────
   getRepertoireByUser(userId: string): Promise<{
     entries: (RepertoireEntry & {
       composerName: string;
@@ -76,42 +84,25 @@ export interface IStorage {
       hasStartedMilestone: boolean;
       everMilestone: "completed" | "performed" | null;
       performedCount: number;
+      movementEverMilestone: "completed" | "performed" | null;
+      movementPerformedCount: number;
     })[];
     movementOrderByPiece: Record<number, number[]>;
   }>;
   createRepertoireEntry(entry: InsertRepertoireEntry): Promise<RepertoireEntry>;
+  getRepertoireEntryById(id: number): Promise<RepertoireEntry | undefined>;
   updateRepertoireEntry(id: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry | undefined>;
   updateRepertoireByPiece(userId: string, pieceId: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry[]>;
   deleteRepertoireEntry(id: number): Promise<boolean>;
   deleteRepertoireByPiece(userId: string, pieceId: number): Promise<boolean>;
   updateRepertoireOrder(userId: string, order: { pieceId: number; displayOrder: number }[]): Promise<void>;
-  
-  createPost(post: InsertPost): Promise<Post>;
-  getUserActivityLog(userId: string, limit?: number): Promise<any[]>;
-  deletePost(id: number): Promise<boolean>;
-  getPostById(id: number): Promise<Post | undefined>;
-  getFeedPosts(userId: string, limit?: number, viewerUserId?: string): Promise<any[]>;
-  likePost(postId: number, userId: string): Promise<void>;
-  unlikePost(postId: number, userId: string): Promise<void>;
-  getPostLikeCount(postId: number): Promise<number>;
-  hasUserLikedPost(postId: number, userId: string): Promise<boolean>;
-  addPostComment(postId: number, userId: string, content: string): Promise<PostComment>;
-  getPostComments(postId: number): Promise<any[]>;
-  deletePostComment(id: number): Promise<boolean>;
-  getActiveChallenges(): Promise<Challenge[]>;
-  getRecordingPosts(limit?: number): Promise<any[]>;
+
+  // ── User Profiles ────────────────────────────────────────────────────────
   getUserProfile(userId: string): Promise<UserProfile | undefined>;
   createUserProfile(profile: InsertUserProfile): Promise<UserProfile>;
-  getFollowing(userId: string): Promise<string[]>;
-  getSuggestedUsers(userId: string, limit?: number): Promise<any[]>;
-  
-  getPieceRatingSummary(pieceId: number): Promise<{ averageRating: number; totalRatings: number }>;
-  getPieceComments(pieceId: number): Promise<any[]>;
-  getPieceStatusDistribution(pieceId: number): Promise<{ status: string; count: number }[]>;
-  
-  getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined>;
-  savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis>;
+  searchUsers(query: string, currentUserId: string): Promise<any[]>;
 
+  // ── Search ───────────────────────────────────────────────────────────────
   unifiedSearch(query: string): Promise<{
     type: "piece" | "movement";
     composerId: number;
@@ -122,59 +113,72 @@ export interface IStorage {
     movementName: string | null;
     score: number;
   }[]>;
-  searchUsers(query: string, currentUserId: string): Promise<any[]>;
-  sendConnectionRequest(requesterId: string, recipientId: string): Promise<Connection>;
-  getConnectionBetween(userA: string, userB: string): Promise<Connection | undefined>;
-  getConnectionById(id: number): Promise<Connection | undefined>;
-  getPendingRequestsReceived(userId: string): Promise<any[]>;
-  getPendingRequestsSent(userId: string): Promise<any[]>;
-  updateConnectionStatus(connectionId: number, status: "accepted" | "denied"): Promise<Connection>;
-  getAcceptedConnections(userId: string): Promise<any[]>;
 
-  // Composer follows
-  followComposer(userId: string, composerId: number): Promise<ComposerFollow>;
-  unfollowComposer(userId: string, composerId: number): Promise<boolean>;
-  isFollowingComposer(userId: string, composerId: number): Promise<boolean>;
-  getComposerFollowerCount(composerId: number): Promise<number>;
-  getComposerCommunityStats(composerId: number): Promise<{
-    followerCount: number;
-    activeLearners: number;
-    catalogSize: number;
-    mostPopularPiece: { id: number; title: string; learnerCount: number } | null;
-  }>;
-  getComposerComments(composerId: number, limit?: number): Promise<any[]>;
-  addComposerComment(composerId: number, userId: string, content: string): Promise<any>;
-  getComposerChallenges(composerId: number, limit?: number): Promise<any[]>;
-  getComposerPiecesWithCounts(composerId: number): Promise<(Piece & { learnerCount: number })[]>;
-  getPieceActivity(pieceId: number, limit?: number): Promise<any[]>;
-  getPieceLearners(pieceId: number, limit?: number): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; status: string }[]>;
-  getRelatedPieces(pieceId: number, limit?: number): Promise<{ id: number; title: string; composerName: string; coCount: number }[]>;
-  getComposerMembers(composerId: number, limit?: number): Promise<{
-    userId: string; displayName: string | null; avatarUrl: string | null; instrument: string | null;
-  }[]>;
-  getComposerActivity(composerId: number, limit?: number): Promise<any[]>;
-  // Pioneer badge queries
-  getPioneerStatus(userId: string): Promise<{ pioneerComposers: string[]; pioneerPieces: string[] }>;
-  // Communities feed
-  getFollowedComposersWithFeed(userId: string): Promise<Array<{
-    id: number; name: string; imageUrl: string | null; period: string | null;
-    learnerCount: number; followerCount: number; recentActivity: any[];
-  }>>;
-  getTrendingCommunityData(): Promise<{
-    composers: Array<{ id: number; name: string; imageUrl: string | null; period: string | null; learnerCount: number }>;
-    pieces:    Array<{ id: number; title: string; composerName: string; composerId: number; learnerCount: number }>;
-  }>;
-
-  // Milestones
-  getMilestones(userId: string, pieceId: number, movementId?: number | null): Promise<PieceMilestone[]>;
+  // ── Milestones ───────────────────────────────────────────────────────────
+  getMilestones(userId: string, pieceId: number, movementId?: number | null, allMovements?: boolean): Promise<PieceMilestone[]>;
   upsertMilestone(userId: string, pieceId: number, cycleNumber: number, milestoneType: string, achievedAt: string, movementId?: number | null): Promise<PieceMilestone>;
   updateMilestoneDate(id: number, achievedAt: string): Promise<PieceMilestone | undefined>;
   deleteMilestone(id: number): Promise<boolean>;
   startNewCycle(repertoireEntryId: number): Promise<RepertoireEntry | undefined>;
   removeCurrentCycle(repertoireEntryId: number): Promise<RepertoireEntry | undefined>;
+
+  // ── Learning Plans ───────────────────────────────────────────────────────
+  getLearningPlan(repertoireEntryId: number): Promise<LearningPlan | undefined>;
+  getLearningPlanById(id: number): Promise<LearningPlan | undefined>;
+  getLearningPlanBySheetMusic(sheetMusicId: number): Promise<LearningPlan | undefined>;
+  createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan>;
+  updateLearningPlan(id: number, updates: Partial<InsertLearningPlan>): Promise<LearningPlan | undefined>;
+  deleteLearningPlan(id: number, userId: string): Promise<boolean>;
+
+  // ── Sheet Music ──────────────────────────────────────────────────────────
+  createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic>;
+  getSheetMusic(id: number): Promise<SheetMusic | undefined>;
+  updateSheetMusicStatus(id: number, status: string, pageCount?: number): Promise<void>;
+  updateSheetMusicFileUrl(id: number, fileUrl: string): Promise<void>;
+  saveSheetMusicPages(pages: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }>): Promise<void>;
+  getSheetMusicPages(sheetMusicId: number): Promise<SheetMusicPage[]>;
+  saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]>;
+  replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
+  getMeasures(sheetMusicId: number): Promise<Measure[]>;
+  getMeasureCount(sheetMusicId: number): Promise<number>;
+  batchGetMeasureCounts(sheetMusicIds: number[]): Promise<Map<number, number>>;
+  clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void>;
+  updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined>;
+  confirmMeasures(sheetMusicId: number): Promise<void>;
+
+  // ── Lesson Days ──────────────────────────────────────────────────────────
+  getLessonDays(learningPlanId: number): Promise<LessonDay[]>;
+  getLessonDay(learningPlanId: number, date: string): Promise<LessonDay | undefined>;
+  getLessonSessionBundle(
+    lessonId: number,
+    userId: string,
+  ): Promise<{
+    lesson: LessonDay;
+    plan: LearningPlan;
+    pieceTitle: string;
+    composerName: string;
+  } | null>;
+  createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]>;
+  deleteLessonDaysForPlan(learningPlanId: number): Promise<void>;
+  updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined>;
+
+  // ── Measure Progress ─────────────────────────────────────────────────────
+  getMeasureProgress(learningPlanId: number): Promise<MeasureProgress[]>;
+  upsertMeasureProgress(data: { planId: number; measureId: number; userId: string } & Partial<InsertMeasureProgress>): Promise<MeasureProgress>;
+
+  // ── Community Scores ─────────────────────────────────────────────────────
+  getCommunityScoreById(id: number): Promise<CommunityScore | undefined>;
+  getCommunityScoreByPiece(pieceId: number, movementId?: number | null): Promise<CommunityScore | undefined>;
+  getAllCommunityScoresForPiece(pieceId: number): Promise<CommunityScore[]>;
+  createCommunityScore(data: InsertCommunityScore): Promise<CommunityScore>;
+  incrementCommunityScoreDownloads(id: number): Promise<void>;
+  deleteCommunityScore(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
+
+  // ── Users ────────────────────────────────────────────────────────────────
+
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -189,6 +193,8 @@ export class DatabaseStorage implements IStorage {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
   }
+
+  // ── Composers ────────────────────────────────────────────────────────────
 
   async searchComposers(query: string): Promise<Composer[]> {
     const lastNameOrder = sql`split_part(${composers.name}, ' ', array_length(string_to_array(${composers.name}, ' '), 1))`;
@@ -214,6 +220,8 @@ export class DatabaseStorage implements IStorage {
     const [newComposer] = await db.insert(composers).values(composer).returning();
     return newComposer;
   }
+
+  // ── Pieces ───────────────────────────────────────────────────────────────
 
   async searchPieces(query: string, composerId?: number): Promise<(Piece & { composerName: string })[]> {
     const selectFields = {
@@ -251,9 +259,7 @@ export class DatabaseStorage implements IStorage {
       const tokenScore = sql`(${sql.join(tokenHits, sql` + `)})::float / ${tokens.length}`;
       return db.select(selectFields).from(pieces)
         .innerJoin(composers, eq(pieces.composerId, composers.id))
-        .where(
-          sql`(${allTokensMatch}) OR word_similarity(unaccent(${query}), unaccent(${combined})) > 0.3`
-        )
+        .where(sql`(${allTokensMatch}) OR word_similarity(unaccent(${query}), unaccent(${combined})) > 0.3`)
         .orderBy(sql`GREATEST(word_similarity(unaccent(${query}), unaccent(${combined})), ${tokenScore}) DESC`, pieces.title)
         .limit(50);
     }
@@ -271,10 +277,33 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(pieces).where(eq(pieces.composerId, composerId));
   }
 
+  async getComposerPieces(composerId: number): Promise<Piece[]> {
+    return db.select().from(pieces).where(eq(pieces.composerId, composerId)).orderBy(pieces.title);
+  }
+
   async createPiece(piece: InsertPiece): Promise<Piece> {
     const [newPiece] = await db.insert(pieces).values(piece).returning();
     return newPiece;
   }
+
+  async getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined> {
+    const [analysis] = await db.select().from(pieceAnalyses).where(eq(pieceAnalyses.pieceId, pieceId));
+    return analysis;
+  }
+
+  async savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis> {
+    const [analysis] = await db
+      .insert(pieceAnalyses)
+      .values(data)
+      .onConflictDoUpdate({
+        target: pieceAnalyses.pieceId,
+        set: { analysis: data.analysis, wikiUrl: data.wikiUrl },
+      })
+      .returning();
+    return analysis;
+  }
+
+  // ── Movements ────────────────────────────────────────────────────────────
 
   async getMovementsByPiece(pieceId: number): Promise<Movement[]> {
     return db.select().from(movements).where(eq(movements.pieceId, pieceId)).orderBy(movements.id);
@@ -289,6 +318,8 @@ export class DatabaseStorage implements IStorage {
     const [newMovement] = await db.insert(movements).values(movement).returning();
     return newMovement;
   }
+
+  // ── Repertoire ───────────────────────────────────────────────────────────
 
   async getRepertoireByUser(userId: string): Promise<{
     entries: (RepertoireEntry & {
@@ -328,24 +359,21 @@ export class DatabaseStorage implements IStorage {
         composer_birth_year: composers.birthYear,
         composer_death_year: composers.deathYear,
         hasStartedMilestone: sql<boolean>`EXISTS (
-          SELECT 1
-          FROM ${pieceMilestones} pm
+          SELECT 1 FROM ${pieceMilestones} pm
           WHERE pm.user_id = ${userId}
             AND pm.piece_id = ${repertoireEntries.pieceId}
             AND pm.milestone_type = 'started'
         )`,
         everMilestone: sql<"completed" | "performed" | null>`CASE
           WHEN EXISTS (
-            SELECT 1
-            FROM ${pieceMilestones} pm
+            SELECT 1 FROM ${pieceMilestones} pm
             WHERE pm.user_id = ${userId}
               AND pm.piece_id = ${repertoireEntries.pieceId}
               AND pm.movement_id IS NULL
               AND pm.milestone_type LIKE 'performed%'
           ) THEN 'performed'
           WHEN EXISTS (
-            SELECT 1
-            FROM ${pieceMilestones} pm
+            SELECT 1 FROM ${pieceMilestones} pm
             WHERE pm.user_id = ${userId}
               AND pm.piece_id = ${repertoireEntries.pieceId}
               AND pm.movement_id IS NULL
@@ -354,8 +382,7 @@ export class DatabaseStorage implements IStorage {
           ELSE NULL
         END`,
         performedCount: sql<number>`(
-          SELECT COUNT(*)
-          FROM ${pieceMilestones} pm
+          SELECT COUNT(*) FROM ${pieceMilestones} pm
           WHERE pm.user_id = ${userId}
             AND pm.piece_id = ${repertoireEntries.pieceId}
             AND pm.movement_id IS NULL
@@ -364,16 +391,14 @@ export class DatabaseStorage implements IStorage {
         movementEverMilestone: sql<"completed" | "performed" | null>`CASE
           WHEN ${repertoireEntries.movementId} IS NULL THEN NULL
           WHEN EXISTS (
-            SELECT 1
-            FROM ${pieceMilestones} pm
+            SELECT 1 FROM ${pieceMilestones} pm
             WHERE pm.user_id = ${userId}
               AND pm.piece_id = ${repertoireEntries.pieceId}
               AND pm.movement_id = ${repertoireEntries.movementId}
               AND pm.milestone_type LIKE 'performed%'
           ) THEN 'performed'
           WHEN EXISTS (
-            SELECT 1
-            FROM ${pieceMilestones} pm
+            SELECT 1 FROM ${pieceMilestones} pm
             WHERE pm.user_id = ${userId}
               AND pm.piece_id = ${repertoireEntries.pieceId}
               AND pm.movement_id = ${repertoireEntries.movementId}
@@ -384,8 +409,7 @@ export class DatabaseStorage implements IStorage {
         movementPerformedCount: sql<number>`CASE
           WHEN ${repertoireEntries.movementId} IS NULL THEN 0
           ELSE (
-            SELECT COUNT(*)
-            FROM ${pieceMilestones} pm
+            SELECT COUNT(*) FROM ${pieceMilestones} pm
             WHERE pm.user_id = ${userId}
               AND pm.piece_id = ${repertoireEntries.pieceId}
               AND pm.movement_id = ${repertoireEntries.movementId}
@@ -421,12 +445,7 @@ export class DatabaseStorage implements IStorage {
         await tx
           .update(repertoireEntries)
           .set({ displayOrder: item.displayOrder })
-          .where(
-            and(
-              eq(repertoireEntries.userId, userId),
-              eq(repertoireEntries.pieceId, item.pieceId)
-            )
-          );
+          .where(and(eq(repertoireEntries.userId, userId), eq(repertoireEntries.pieceId, item.pieceId)));
       }
     });
   }
@@ -442,6 +461,11 @@ export class DatabaseStorage implements IStorage {
     }
     const [newEntry] = await db.insert(repertoireEntries).values(entry).returning();
     return newEntry;
+  }
+
+  async getRepertoireEntryById(id: number): Promise<RepertoireEntry | undefined> {
+    const [row] = await db.select().from(repertoireEntries).where(eq(repertoireEntries.id, id));
+    return row;
   }
 
   async updateRepertoireEntry(id: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry | undefined> {
@@ -478,16 +502,14 @@ export class DatabaseStorage implements IStorage {
             });
           }
           await this.deleteRepertoireEntry(wholePieceEntry.id);
-          const after = await db.select().from(repertoireEntries).where(and(eq(repertoireEntries.userId, userId), eq(repertoireEntries.pieceId, pieceId)));
-          return after;
+          return db.select().from(repertoireEntries).where(and(eq(repertoireEntries.userId, userId), eq(repertoireEntries.pieceId, pieceId)));
         }
       }
     }
-    const updated = await db.update(repertoireEntries)
+    return db.update(repertoireEntries)
       .set(updates)
       .where(and(eq(repertoireEntries.userId, userId), eq(repertoireEntries.pieceId, pieceId)))
       .returning();
-    return updated;
   }
 
   async deleteRepertoireEntry(id: number): Promise<boolean> {
@@ -502,150 +524,7 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async createPost(post: InsertPost): Promise<Post> {
-    const [created] = await db.insert(posts).values(post).returning();
-    return created;
-  }
-
-  async getUserActivityLog(userId: string, limit: number = 30): Promise<any[]> {
-    const results = await db
-      .select({
-        id: posts.id,
-        userId: posts.userId,
-        type: posts.type,
-        content: posts.content,
-        pieceId: posts.pieceId,
-        createdAt: posts.createdAt,
-        pieceTitle: pieces.title,
-        composerName: composers.name,
-        likeCount: sql<number>`(SELECT COUNT(*) FROM post_likes WHERE post_id = ${posts.id})::int`,
-      })
-      .from(posts)
-      .leftJoin(pieces, eq(posts.pieceId, pieces.id))
-      .leftJoin(composers, eq(pieces.composerId, composers.id))
-      .where(eq(posts.userId, userId))
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-    return results;
-  }
-
-  async getPostById(id: number): Promise<Post | undefined> {
-    const [post] = await db.select().from(posts).where(eq(posts.id, id));
-    return post;
-  }
-
-  async deletePost(id: number): Promise<boolean> {
-    const result = await db.delete(posts).where(eq(posts.id, id)).returning();
-    return result.length > 0;
-  }
-
-  async getFeedPosts(userId: string, limit: number = 20, viewerUserId?: string): Promise<any[]> {
-    const followingIds = await this.getFollowing(userId);
-    const allUserIds = [userId, ...followingIds];
-    const viewer = viewerUserId || userId;
-
-    const results = await db
-      .select({
-        id: posts.id,
-        userId: posts.userId,
-        type: posts.type,
-        content: posts.content,
-        pieceId: posts.pieceId,
-        recordingUrl: posts.recordingUrl,
-        practiceHours: posts.practiceHours,
-        createdAt: posts.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-        pieceTitle: pieces.title,
-        composerName: composers.name,
-        likeCount: sql<number>`(SELECT COUNT(*) FROM post_likes WHERE post_id = ${posts.id})::int`,
-        userLiked: sql<boolean>`EXISTS(SELECT 1 FROM post_likes WHERE post_id = ${posts.id} AND user_id = ${viewer})`,
-        commentCount: sql<number>`(SELECT COUNT(*) FROM post_comments WHERE post_id = ${posts.id})::int`,
-      })
-      .from(posts)
-      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
-      .leftJoin(pieces, eq(posts.pieceId, pieces.id))
-      .leftJoin(composers, eq(pieces.composerId, composers.id))
-      .where(inArray(posts.userId, allUserIds))
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-
-    return results;
-  }
-
-  async likePost(postId: number, userId: string): Promise<void> {
-    await db.insert(postLikes).values({ postId, userId }).onConflictDoNothing();
-  }
-
-  async unlikePost(postId: number, userId: string): Promise<void> {
-    await db.delete(postLikes).where(and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)));
-  }
-
-  async getPostLikeCount(postId: number): Promise<number> {
-    const [result] = await db.select({ count: count(postLikes.id) }).from(postLikes).where(eq(postLikes.postId, postId));
-    return result?.count ?? 0;
-  }
-
-  async hasUserLikedPost(postId: number, userId: string): Promise<boolean> {
-    const [result] = await db.select().from(postLikes).where(and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)));
-    return !!result;
-  }
-
-  async addPostComment(postId: number, userId: string, content: string): Promise<PostComment> {
-    const [comment] = await db.insert(postComments).values({ postId, userId, content }).returning();
-    return comment;
-  }
-
-  async getPostComments(postId: number): Promise<any[]> {
-    return db
-      .select({
-        id: postComments.id,
-        postId: postComments.postId,
-        userId: postComments.userId,
-        content: postComments.content,
-        createdAt: postComments.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(postComments)
-      .leftJoin(userProfiles, eq(postComments.userId, userProfiles.userId))
-      .where(eq(postComments.postId, postId))
-      .orderBy(postComments.createdAt);
-  }
-
-  async deletePostComment(id: number): Promise<boolean> {
-    const result = await db.delete(postComments).where(eq(postComments.id, id)).returning();
-    return result.length > 0;
-  }
-
-  async getActiveChallenges(): Promise<Challenge[]> {
-    return db.select().from(challenges).where(eq(challenges.isActive, true)).orderBy(desc(challenges.createdAt));
-  }
-
-  async getRecordingPosts(limit: number = 10): Promise<any[]> {
-    const results = await db
-      .select({
-        id: posts.id,
-        userId: posts.userId,
-        content: posts.content,
-        pieceId: posts.pieceId,
-        recordingUrl: posts.recordingUrl,
-        createdAt: posts.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-        pieceTitle: pieces.title,
-        composerName: composers.name,
-      })
-      .from(posts)
-      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
-      .leftJoin(pieces, eq(posts.pieceId, pieces.id))
-      .leftJoin(composers, eq(pieces.composerId, composers.id))
-      .where(eq(posts.type, "recording"))
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-    
-    return results;
-  }
+  // ── User Profiles ────────────────────────────────────────────────────────
 
   async getUserProfile(userId: string): Promise<UserProfile | undefined> {
     const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
@@ -657,95 +536,26 @@ export class DatabaseStorage implements IStorage {
     return newProfile;
   }
 
-  async getFollowing(userId: string): Promise<string[]> {
-    const result = await db.select({ followingId: follows.followingId }).from(follows).where(eq(follows.followerId, userId));
-    return result.map(r => r.followingId);
-  }
-
-  async getSuggestedUsers(userId: string, limit: number = 5): Promise<any[]> {
-    const followingIds = await this.getFollowing(userId);
-    const excludeIds = [userId, ...followingIds];
-    
-    const results = await db
+  async searchUsers(query: string, currentUserId: string): Promise<any[]> {
+    if (!query.trim()) return [];
+    return db
       .select({
         userId: userProfiles.userId,
         displayName: userProfiles.displayName,
         instrument: userProfiles.instrument,
         level: userProfiles.level,
         avatarUrl: userProfiles.avatarUrl,
+        location: userProfiles.location,
       })
       .from(userProfiles)
-      .limit(limit + excludeIds.length);
-    
-    return results.filter(r => !excludeIds.includes(r.userId)).slice(0, limit);
+      .where(and(
+        sql`unaccent(${userProfiles.displayName}) ILIKE unaccent(${'%' + query + '%'}) OR word_similarity(unaccent(${query}), unaccent(${userProfiles.displayName})) > 0.3`,
+        ne(userProfiles.userId, currentUserId)
+      ))
+      .limit(20);
   }
 
-  async getPieceRatingSummary(pieceId: number): Promise<{ averageRating: number; totalRatings: number }> {
-    const result = await db
-      .select({
-        averageRating: avg(pieceRatings.rating),
-        totalRatings: count(pieceRatings.id),
-      })
-      .from(pieceRatings)
-      .where(eq(pieceRatings.pieceId, pieceId));
-    
-    return {
-      averageRating: result[0]?.averageRating ? parseFloat(result[0].averageRating) : 0,
-      totalRatings: result[0]?.totalRatings ?? 0,
-    };
-  }
-
-  async getPieceComments(pieceId: number): Promise<any[]> {
-    const results = await db
-      .select({
-        id: pieceComments.id,
-        content: pieceComments.content,
-        createdAt: pieceComments.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(pieceComments)
-      .leftJoin(userProfiles, eq(pieceComments.userId, userProfiles.userId))
-      .where(eq(pieceComments.pieceId, pieceId))
-      .orderBy(desc(pieceComments.createdAt));
-    
-    return results;
-  }
-
-  async getPieceStatusDistribution(pieceId: number): Promise<{ status: string; count: number }[]> {
-    const results = await db
-      .select({
-        status: repertoireEntries.status,
-        count: count(repertoireEntries.id),
-      })
-      .from(repertoireEntries)
-      .where(eq(repertoireEntries.pieceId, pieceId))
-      .groupBy(repertoireEntries.status);
-
-    const merged = new Map<string, number>();
-    for (const row of results) {
-      const normalized = normalizeRepertoireStatus(row.status);
-      merged.set(normalized, (merged.get(normalized) ?? 0) + row.count);
-    }
-
-    return Array.from(merged.entries()).map(([status, count]) => ({ status, count }));
-  }
-  async getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined> {
-    const [analysis] = await db.select().from(pieceAnalyses).where(eq(pieceAnalyses.pieceId, pieceId));
-    return analysis;
-  }
-
-  async savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis> {
-    const [analysis] = await db
-      .insert(pieceAnalyses)
-      .values(data)
-      .onConflictDoUpdate({
-        target: pieceAnalyses.pieceId,
-        set: { analysis: data.analysis, wikiUrl: data.wikiUrl },
-      })
-      .returning();
-    return analysis;
-  }
+  // ── Search ───────────────────────────────────────────────────────────────
 
   async unifiedSearch(query: string): Promise<{
     type: "piece" | "movement";
@@ -806,501 +616,19 @@ export class DatabaseStorage implements IStorage {
       ...pieceResults.map(r => ({ type: "piece" as const, ...r, movementId: null, movementName: null })),
       ...movementResults.map(r => ({ type: "movement" as const, ...r })),
     ];
-
     combined.sort((a, b) => b.score - a.score);
     return combined.slice(0, 30);
   }
 
-  async searchUsers(query: string, currentUserId: string): Promise<any[]> {
-    if (!query.trim()) return [];
-    return db
-      .select({
-        userId: userProfiles.userId,
-        displayName: userProfiles.displayName,
-        instrument: userProfiles.instrument,
-        level: userProfiles.level,
-        avatarUrl: userProfiles.avatarUrl,
-        location: userProfiles.location,
-      })
-      .from(userProfiles)
-      .where(and(
-        sql`unaccent(${userProfiles.displayName}) ILIKE unaccent(${'%' + query + '%'}) OR word_similarity(unaccent(${query}), unaccent(${userProfiles.displayName})) > 0.3`,
-        ne(userProfiles.userId, currentUserId)
-      ))
-      .limit(20);
-  }
-
-  async sendConnectionRequest(requesterId: string, recipientId: string): Promise<Connection> {
-    const existing = await this.getConnectionBetween(requesterId, recipientId);
-    if (existing) {
-      throw new Error("Connection already exists between these users");
-    }
-    const [conn] = await db.insert(connections).values({
-      requesterId,
-      recipientId,
-      status: "pending",
-    }).returning();
-    return conn;
-  }
-
-  async getConnectionById(id: number): Promise<Connection | undefined> {
-    const [conn] = await db.select().from(connections).where(eq(connections.id, id));
-    return conn;
-  }
-
-  async getConnectionBetween(userA: string, userB: string): Promise<Connection | undefined> {
-    const [conn] = await db.select().from(connections).where(
-      or(
-        and(eq(connections.requesterId, userA), eq(connections.recipientId, userB)),
-        and(eq(connections.requesterId, userB), eq(connections.recipientId, userA))
-      )
-    );
-    return conn;
-  }
-
-  async getPendingRequestsReceived(userId: string): Promise<any[]> {
-    return db
-      .select({
-        id: connections.id,
-        requesterId: connections.requesterId,
-        status: connections.status,
-        createdAt: connections.createdAt,
-        displayName: userProfiles.displayName,
-        instrument: userProfiles.instrument,
-        level: userProfiles.level,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(connections)
-      .leftJoin(userProfiles, eq(connections.requesterId, userProfiles.userId))
-      .where(and(eq(connections.recipientId, userId), eq(connections.status, "pending")));
-  }
-
-  async getPendingRequestsSent(userId: string): Promise<any[]> {
-    return db
-      .select({
-        id: connections.id,
-        recipientId: connections.recipientId,
-        status: connections.status,
-        createdAt: connections.createdAt,
-        displayName: userProfiles.displayName,
-        instrument: userProfiles.instrument,
-        level: userProfiles.level,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(connections)
-      .leftJoin(userProfiles, eq(connections.recipientId, userProfiles.userId))
-      .where(and(eq(connections.requesterId, userId), eq(connections.status, "pending")));
-  }
-
-  async updateConnectionStatus(connectionId: number, status: "accepted" | "denied"): Promise<Connection> {
-    const [conn] = await db
-      .update(connections)
-      .set({ status, updatedAt: new Date() })
-      .where(eq(connections.id, connectionId))
-      .returning();
-    return conn;
-  }
-
-  async getAcceptedConnections(userId: string): Promise<any[]> {
-    const sent = await db
-      .select({
-        connectionId: connections.id,
-        userId: userProfiles.userId,
-        displayName: userProfiles.displayName,
-        instrument: userProfiles.instrument,
-        level: userProfiles.level,
-        avatarUrl: userProfiles.avatarUrl,
-        location: userProfiles.location,
-      })
-      .from(connections)
-      .leftJoin(userProfiles, eq(connections.recipientId, userProfiles.userId))
-      .where(and(eq(connections.requesterId, userId), eq(connections.status, "accepted")));
-
-    const received = await db
-      .select({
-        connectionId: connections.id,
-        userId: userProfiles.userId,
-        displayName: userProfiles.displayName,
-        instrument: userProfiles.instrument,
-        level: userProfiles.level,
-        avatarUrl: userProfiles.avatarUrl,
-        location: userProfiles.location,
-      })
-      .from(connections)
-      .leftJoin(userProfiles, eq(connections.requesterId, userProfiles.userId))
-      .where(and(eq(connections.recipientId, userId), eq(connections.status, "accepted")));
-
-    return [...sent, ...received];
-  }
-
-  // Composer follows
-  async followComposer(userId: string, composerId: number): Promise<ComposerFollow> {
-    const [follow] = await db
-      .insert(composerFollows)
-      .values({ userId, composerId })
-      .onConflictDoNothing()
-      .returning();
-    return follow;
-  }
-
-  async unfollowComposer(userId: string, composerId: number): Promise<boolean> {
-    const result = await db
-      .delete(composerFollows)
-      .where(and(eq(composerFollows.userId, userId), eq(composerFollows.composerId, composerId)));
-    return (result.rowCount ?? 0) > 0;
-  }
-
-  async isFollowingComposer(userId: string, composerId: number): Promise<boolean> {
-    const [row] = await db
-      .select()
-      .from(composerFollows)
-      .where(and(eq(composerFollows.userId, userId), eq(composerFollows.composerId, composerId)));
-    return !!row;
-  }
-
-  async getComposerFollowerCount(composerId: number): Promise<number> {
-    const [row] = await db
-      .select({ count: count() })
-      .from(composerFollows)
-      .where(eq(composerFollows.composerId, composerId));
-    return row?.count ?? 0;
-  }
-
-  async getComposerCommunityStats(composerId: number): Promise<{
-    followerCount: number;
-    activeLearners: number;
-    catalogSize: number;
-    mostPopularPiece: { id: number; title: string; learnerCount: number } | null;
-  }> {
-    const [followerRow, learnersRow, catalogRow, pieceRows] = await Promise.all([
-      db.select({ count: count() }).from(composerFollows).where(eq(composerFollows.composerId, composerId)),
-      db.select({ count: sql<number>`count(distinct ${repertoireEntries.userId})` })
-        .from(repertoireEntries)
-        .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
-        .where(eq(pieces.composerId, composerId)),
-      db.select({ count: count() }).from(pieces).where(eq(pieces.composerId, composerId)),
-      db.select({ id: pieces.id, title: pieces.title, learnerCount: sql<number>`count(${repertoireEntries.id})` })
-        .from(pieces)
-        .leftJoin(repertoireEntries, eq(pieces.id, repertoireEntries.pieceId))
-        .where(eq(pieces.composerId, composerId))
-        .groupBy(pieces.id, pieces.title)
-        .orderBy(desc(sql`count(${repertoireEntries.id})`))
-        .limit(1),
-    ]);
-
-    const topPiece = pieceRows[0] ?? null;
-    return {
-      followerCount: followerRow[0]?.count ?? 0,
-      activeLearners: Number(learnersRow[0]?.count ?? 0),
-      catalogSize: catalogRow[0]?.count ?? 0,
-      mostPopularPiece: topPiece ? { id: topPiece.id, title: topPiece.title, learnerCount: Number(topPiece.learnerCount) } : null,
-    };
-  }
-
-  async getComposerComments(composerId: number, limit = 8): Promise<any[]> {
-    return db
-      .select({
-        id: composerComments.id,
-        userId: composerComments.userId,
-        content: composerComments.content,
-        createdAt: composerComments.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(composerComments)
-      .leftJoin(userProfiles, eq(composerComments.userId, userProfiles.userId))
-      .where(eq(composerComments.composerId, composerId))
-      .orderBy(desc(composerComments.createdAt))
-      .limit(limit);
-  }
-
-  async addComposerComment(composerId: number, userId: string, content: string): Promise<any> {
-    const [row] = await db
-      .insert(composerComments)
-      .values({ composerId, userId, content })
-      .returning();
-    // Re-fetch with profile join
-    const [enriched] = await db
-      .select({
-        id: composerComments.id,
-        userId: composerComments.userId,
-        content: composerComments.content,
-        createdAt: composerComments.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(composerComments)
-      .leftJoin(userProfiles, eq(composerComments.userId, userProfiles.userId))
-      .where(eq(composerComments.id, row.id));
-    return enriched;
-  }
-
-  async getComposerChallenges(composerId: number, limit = 3): Promise<any[]> {
-    // Find active challenges where the linked piece belongs to this composer
-    return db
-      .select({
-        id: challenges.id,
-        title: challenges.title,
-        description: challenges.description,
-        deadline: challenges.deadline,
-        pieceId: challenges.pieceId,
-        pieceTitle: pieces.title,
-      })
-      .from(challenges)
-      .leftJoin(pieces, eq(challenges.pieceId, pieces.id))
-      .where(
-        and(
-          eq(challenges.isActive, true),
-          or(
-            eq(pieces.composerId, composerId),
-            // Also include challenges without a pieceId linkage (community-wide)
-            sql`${challenges.pieceId} is null`
-          )
-        )
-      )
-      .orderBy(desc(challenges.createdAt))
-      .limit(limit);
-  }
-
-  async getPieceActivity(pieceId: number, limit = 8): Promise<any[]> {
-    return db
-      .select({
-        id: posts.id,
-        userId: posts.userId,
-        content: posts.content,
-        postType: posts.type,
-        createdAt: posts.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(posts)
-      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
-      .where(eq(posts.pieceId, pieceId))
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-  }
-
-  async getPieceLearners(pieceId: number, limit = 8): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; status: string }[]> {
-    return db
-      .select({
-        userId: userProfiles.userId,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-        status: repertoireEntries.status,
-      })
-      .from(repertoireEntries)
-      .innerJoin(userProfiles, eq(repertoireEntries.userId, userProfiles.userId))
-      .where(eq(repertoireEntries.pieceId, pieceId))
-      .limit(limit);
-  }
-
-  async getRelatedPieces(pieceId: number, limit = 5): Promise<{ id: number; title: string; composerName: string; coCount: number }[]> {
-    const usersWithPiece = db
-      .selectDistinct({ userId: repertoireEntries.userId })
-      .from(repertoireEntries)
-      .where(eq(repertoireEntries.pieceId, pieceId));
-
-    const rows = await db
-      .select({
-        id: pieces.id,
-        title: pieces.title,
-        composerName: composers.name,
-        coCount: sql<number>`count(distinct ${repertoireEntries.userId})`,
-      })
-      .from(repertoireEntries)
-      .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
-      .innerJoin(composers, eq(pieces.composerId, composers.id))
-      .where(and(
-        ne(repertoireEntries.pieceId, pieceId),
-        inArray(repertoireEntries.userId, usersWithPiece)
-      ))
-      .groupBy(pieces.id, pieces.title, composers.name)
-      .orderBy(desc(sql`count(distinct ${repertoireEntries.userId})`))
-      .limit(limit);
-    return rows.map(r => ({ ...r, coCount: Number(r.coCount) }));
-  }
-
-  async getComposerMembers(composerId: number, limit = 12): Promise<{ userId: string; displayName: string | null; avatarUrl: string | null; instrument: string | null; }[]> {
-    const rows = await db
-      .selectDistinct({
-        userId: userProfiles.userId,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-        instrument: userProfiles.instrument,
-      })
-      .from(repertoireEntries)
-      .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
-      .innerJoin(userProfiles, eq(repertoireEntries.userId, userProfiles.userId))
-      .where(eq(pieces.composerId, composerId))
-      .limit(limit);
-    return rows;
-  }
-
-  async getComposerActivity(composerId: number, limit = 10): Promise<any[]> {
-    const rows = await db
-      .select({
-        id: posts.id,
-        userId: posts.userId,
-        content: posts.content,
-        postType: posts.type,
-        pieceId: posts.pieceId,
-        pieceTitle: pieces.title,
-        createdAt: posts.createdAt,
-        displayName: userProfiles.displayName,
-        avatarUrl: userProfiles.avatarUrl,
-      })
-      .from(posts)
-      .innerJoin(pieces, eq(posts.pieceId, pieces.id))
-      .leftJoin(userProfiles, eq(posts.userId, userProfiles.userId))
-      .where(and(eq(pieces.composerId, composerId), ne(posts.type, "recording")))
-      .orderBy(desc(posts.createdAt))
-      .limit(limit);
-    return rows;
-  }
-
-  // Pioneer status: composer pioneer = first follower; piece pioneer = first post for a piece
-  async getPioneerStatus(userId: string): Promise<{ pioneerComposers: string[]; pioneerPieces: string[] }> {
-    // Composers where this user was the very first follower
-    const followedRows = await db
-      .select({ composerId: composerFollows.composerId, composerName: composers.name, followedAt: composerFollows.createdAt })
-      .from(composerFollows)
-      .innerJoin(composers, eq(composerFollows.composerId, composers.id))
-      .where(eq(composerFollows.userId, userId));
-
-    const pioneerComposers: string[] = [];
-    for (const row of followedRows) {
-      const [first] = await db
-        .select({ userId: composerFollows.userId })
-        .from(composerFollows)
-        .where(eq(composerFollows.composerId, row.composerId))
-        .orderBy(composerFollows.createdAt)
-        .limit(1);
-      if (first?.userId === userId) {
-        pioneerComposers.push(row.composerName);
-      }
-    }
-
-    // Pieces where this user was the first to post (any post type)
-    const userPostedPieces = await db
-      .select({ pieceId: posts.pieceId, pieceTitle: pieces.title, createdAt: posts.createdAt })
-      .from(posts)
-      .innerJoin(pieces, eq(posts.pieceId, pieces.id))
-      .where(and(eq(posts.userId, userId), sql`${posts.pieceId} is not null`));
-
-    const pioneerPieces: string[] = [];
-    const seenPieces = new Set<number>();
-    for (const row of userPostedPieces) {
-      if (!row.pieceId || seenPieces.has(row.pieceId)) continue;
-      seenPieces.add(row.pieceId);
-      const [first] = await db
-        .select({ userId: posts.userId })
-        .from(posts)
-        .where(and(eq(posts.pieceId, row.pieceId!), sql`${posts.pieceId} is not null`))
-        .orderBy(posts.createdAt)
-        .limit(1);
-      if (first?.userId === userId) {
-        pioneerPieces.push(row.pieceTitle);
-      }
-    }
-
-    return { pioneerComposers, pioneerPieces };
-  }
-
-  async getComposerPiecesWithCounts(composerId: number): Promise<(Piece & { learnerCount: number })[]> {
-    const rows = await db
-      .select({
-        id: pieces.id,
-        title: pieces.title,
-        composerId: pieces.composerId,
-        instrument: pieces.instrument,
-        imslpUrl: pieces.imslpUrl,
-        keySignature: pieces.keySignature,
-        yearComposed: pieces.yearComposed,
-        difficulty: pieces.difficulty,
-        learnerCount: sql<number>`count(${repertoireEntries.id})`,
-      })
-      .from(pieces)
-      .leftJoin(repertoireEntries, eq(pieces.id, repertoireEntries.pieceId))
-      .where(eq(pieces.composerId, composerId))
-      .groupBy(pieces.id)
-      .orderBy(pieces.title);
-
-    return rows.map(r => ({ ...r, learnerCount: Number(r.learnerCount) }));
-  }
-
-  // ── Communities feed ─────────────────────────────────────────────────────────
-
-  async getFollowedComposersWithFeed(userId: string) {
-    const followedList = await db
-      .select({ id: composers.id, name: composers.name, imageUrl: composers.imageUrl, period: composers.period })
-      .from(composerFollows)
-      .innerJoin(composers, eq(composerFollows.composerId, composers.id))
-      .where(eq(composerFollows.userId, userId))
-      .orderBy(composers.name);
-
-    if (followedList.length === 0) return [];
-
-    return Promise.all(followedList.map(async (c) => {
-      const [learnerRes, followerRes, activity] = await Promise.all([
-        db.select({ count: sql<number>`count(distinct ${repertoireEntries.userId})::int` })
-          .from(repertoireEntries).where(eq(repertoireEntries.composerId, c.id)),
-        db.select({ count: sql<number>`count(*)::int` })
-          .from(composerFollows).where(eq(composerFollows.composerId, c.id)),
-        this.getComposerActivity(c.id, 6),
-      ]);
-      return {
-        ...c,
-        learnerCount: Number(learnerRes[0]?.count ?? 0),
-        followerCount: Number(followerRes[0]?.count ?? 0),
-        recentActivity: activity,
-      };
-    }));
-  }
-
-  async getTrendingCommunityData() {
-    const [trendingComposers, trendingPieces] = await Promise.all([
-      db.select({
-        id: composers.id, name: composers.name,
-        imageUrl: composers.imageUrl, period: composers.period,
-        learnerCount: sql<number>`count(distinct ${repertoireEntries.userId})::int`,
-      })
-      .from(composers)
-      .leftJoin(repertoireEntries, eq(repertoireEntries.composerId, composers.id))
-      .groupBy(composers.id, composers.name, composers.imageUrl, composers.period)
-      .orderBy(desc(sql`count(distinct ${repertoireEntries.userId})`))
-      .limit(8),
-
-      db.select({
-        id: pieces.id, title: pieces.title, composerId: pieces.composerId,
-        composerName: composers.name,
-        learnerCount: sql<number>`count(distinct ${repertoireEntries.userId})::int`,
-      })
-      .from(pieces)
-      .innerJoin(composers, eq(pieces.composerId, composers.id))
-      .leftJoin(repertoireEntries, eq(repertoireEntries.pieceId, pieces.id))
-      .groupBy(pieces.id, pieces.title, pieces.composerId, composers.name)
-      .orderBy(desc(sql`count(distinct ${repertoireEntries.userId})`))
-      .limit(8),
-    ]);
-
-    return {
-      composers: trendingComposers.map(c => ({ ...c, learnerCount: Number(c.learnerCount) })),
-      pieces:    trendingPieces.map(p => ({ ...p, learnerCount: Number(p.learnerCount) })),
-    };
-  }
-
-  // ── Milestones ─────────────────────────────────────────────────────────────
+  // ── Milestones ───────────────────────────────────────────────────────────
 
   async getMilestones(userId: string, pieceId: number, movementId?: number | null, allMovements?: boolean): Promise<PieceMilestone[]> {
     const conditions = [eq(pieceMilestones.userId, userId), eq(pieceMilestones.pieceId, pieceId)];
     if (movementId != null) {
-      // Filter to a specific movement
       conditions.push(eq(pieceMilestones.movementId, movementId));
     } else if (!allMovements) {
-      // Default: only piece-level milestones (no movement)
       conditions.push(sql`${pieceMilestones.movementId} IS NULL`);
     }
-    // allMovements=true: return everything (piece-level + all movements)
     const rows = await db
       .select()
       .from(pieceMilestones)
@@ -1331,10 +659,6 @@ export class DatabaseStorage implements IStorage {
       return { ...row, milestoneType: "performed" };
     }
 
-    // Use UPDATE-then-INSERT to avoid ON CONFLICT ambiguity when there are
-    // multiple unique constraints on the table (e.g. a stale auto-generated
-    // constraint left over from before movement_id was added to the schema).
-    // The WHERE clause uses IS NULL for nullable movement_id comparisons.
     const whereCondition = and(
       eq(pieceMilestones.userId, userId),
       eq(pieceMilestones.pieceId, pieceId),
@@ -1364,10 +688,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(pieceMilestones.id, id))
       .returning();
     if (!row) return undefined;
-    return {
-      ...row,
-      milestoneType: row.milestoneType.startsWith("performed") ? "performed" : row.milestoneType,
-    };
+    return { ...row, milestoneType: row.milestoneType.startsWith("performed") ? "performed" : row.milestoneType };
   }
 
   async deleteMilestone(id: number): Promise<boolean> {
@@ -1378,7 +699,6 @@ export class DatabaseStorage implements IStorage {
   async startNewCycle(repertoireEntryId: number): Promise<RepertoireEntry | undefined> {
     const [entry] = await db.select().from(repertoireEntries).where(eq(repertoireEntries.id, repertoireEntryId));
     if (!entry) return undefined;
-
     const entryWhere = entry.movementId != null
       ? and(eq(repertoireEntries.userId, entry.userId), eq(repertoireEntries.pieceId, entry.pieceId), eq(repertoireEntries.movementId, entry.movementId))
       : and(eq(repertoireEntries.userId, entry.userId), eq(repertoireEntries.pieceId, entry.pieceId));
@@ -1386,14 +706,13 @@ export class DatabaseStorage implements IStorage {
       .select({ maxCycle: sql<number>`MAX(${repertoireEntries.currentCycle})::int` })
       .from(repertoireEntries)
       .where(entryWhere);
-
     const nextCycle = (maxCycleRow?.maxCycle ?? entry.currentCycle ?? 1) + 1;
-    const updatedRows = await db
+    const [updated] = await db
       .update(repertoireEntries)
       .set({ currentCycle: nextCycle })
       .where(eq(repertoireEntries.id, repertoireEntryId))
       .returning();
-    return updatedRows[0];
+    return updated;
   }
 
   async removeCurrentCycle(repertoireEntryId: number): Promise<RepertoireEntry | undefined> {
@@ -1406,26 +725,265 @@ export class DatabaseStorage implements IStorage {
       .select({ maxCycle: sql<number>`MAX(${repertoireEntries.currentCycle})::int` })
       .from(repertoireEntries)
       .where(entryWhere);
-
     const activeCycle = maxCycleRow?.maxCycle ?? entry.currentCycle ?? 1;
     if (activeCycle <= 1) return entry;
-
     const milestoneWhere = entry.movementId != null
       ? and(eq(pieceMilestones.userId, entry.userId), eq(pieceMilestones.pieceId, entry.pieceId), eq(pieceMilestones.movementId, entry.movementId), eq(pieceMilestones.cycleNumber, activeCycle))
       : and(eq(pieceMilestones.userId, entry.userId), eq(pieceMilestones.pieceId, entry.pieceId), sql`${pieceMilestones.movementId} IS NULL`, eq(pieceMilestones.cycleNumber, activeCycle));
-
     const updatedRows = await db.transaction(async (tx) => {
       await tx.delete(pieceMilestones).where(milestoneWhere);
-      return tx
-        .update(repertoireEntries)
-        .set({ currentCycle: activeCycle - 1 })
-        .where(eq(repertoireEntries.id, repertoireEntryId))
-        .returning();
+      return tx.update(repertoireEntries).set({ currentCycle: activeCycle - 1 }).where(eq(repertoireEntries.id, repertoireEntryId)).returning();
     });
-
     return updatedRows[0];
   }
 
+  // ── Learning Plans ───────────────────────────────────────────────────────
+
+  async getLearningPlan(repertoireEntryId: number): Promise<LearningPlan | undefined> {
+    const [plan] = await db.select().from(learningPlans).where(eq(learningPlans.repertoireEntryId, repertoireEntryId));
+    return plan;
+  }
+
+  async getLearningPlanById(id: number): Promise<LearningPlan | undefined> {
+    const [plan] = await db.select().from(learningPlans).where(eq(learningPlans.id, id));
+    return plan;
+  }
+
+  async getLearningPlanBySheetMusic(sheetMusicId: number): Promise<LearningPlan | undefined> {
+    const [sm] = await db.select().from(sheetMusic).where(eq(sheetMusic.id, sheetMusicId));
+    if (!sm || sm.pieceId == null) return undefined;
+    const pieceId = sm.pieceId;
+    const [plan] = await db
+      .select()
+      .from(learningPlans)
+      .innerJoin(repertoireEntries, eq(learningPlans.repertoireEntryId, repertoireEntries.id))
+      .where(and(eq(learningPlans.userId, sm.userId), eq(repertoireEntries.pieceId, pieceId)))
+      .limit(1)
+      .then(rows => rows.map(r => r.learning_plans));
+    return plan;
+  }
+
+  async createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan> {
+    const [created] = await db.insert(learningPlans).values(plan).returning();
+    return created;
+  }
+
+  async updateLearningPlan(id: number, updates: Partial<InsertLearningPlan>): Promise<LearningPlan | undefined> {
+    const [updated] = await db.update(learningPlans).set({ ...updates, updatedAt: new Date() }).where(eq(learningPlans.id, id)).returning();
+    return updated;
+  }
+
+  async deleteLearningPlan(id: number, userId: string): Promise<boolean> {
+    const plan = await this.getLearningPlanById(id);
+    if (!plan || plan.userId !== userId) return false;
+    await db.transaction(async (tx) => {
+      await tx.delete(measureProgress).where(eq(measureProgress.learningPlanId, id));
+      await tx.delete(lessonDays).where(eq(lessonDays.learningPlanId, id));
+      await tx.delete(learningPlans).where(eq(learningPlans.id, id));
+    });
+    return true;
+  }
+
+  // ── Sheet Music ──────────────────────────────────────────────────────────
+
+  async createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic> {
+    const [created] = await db.insert(sheetMusic).values(data).returning();
+    return created;
+  }
+
+  async getSheetMusic(id: number): Promise<SheetMusic | undefined> {
+    const [record] = await db.select().from(sheetMusic).where(eq(sheetMusic.id, id));
+    return record;
+  }
+
+  async updateSheetMusicStatus(id: number, status: string, pageCount?: number): Promise<void> {
+    const updates: Record<string, any> = { processingStatus: status };
+    if (pageCount !== undefined) updates.pageCount = pageCount;
+    await db.update(sheetMusic).set(updates).where(eq(sheetMusic.id, id));
+  }
+
+  async updateSheetMusicFileUrl(id: number, fileUrl: string): Promise<void> {
+    await db.update(sheetMusic).set({ fileUrl }).where(eq(sheetMusic.id, id));
+  }
+
+  async saveSheetMusicPages(pages: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }>): Promise<void> {
+    if (!pages.length) return;
+    await db.insert(sheetMusicPages).values(pages);
+  }
+
+  async getSheetMusicPages(sheetMusicId: number): Promise<SheetMusicPage[]> {
+    return db.select().from(sheetMusicPages)
+      .where(eq(sheetMusicPages.sheetMusicId, sheetMusicId))
+      .orderBy(sheetMusicPages.pageNumber);
+  }
+
+  async saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]> {
+    if (measureList.length === 0) return [];
+    const rows = await db.insert(measures).values(measureList).returning();
+    return rows;
+  }
+
+  /** Delete all measures for a sheet music and replace with the new set. */
+  async replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]> {
+    await db.delete(measures).where(eq(measures.sheetMusicId, sheetMusicId));
+    if (measureList.length === 0) return [];
+    const rows = await db.insert(measures).values(measureList).returning();
+    return rows;
+  }
+
+  async getMeasures(sheetMusicId: number): Promise<Measure[]> {
+    return db.select().from(measures).where(eq(measures.sheetMusicId, sheetMusicId)).orderBy(measures.measureNumber);
+  }
+
+  async getMeasureCount(sheetMusicId: number): Promise<number> {
+    const [result] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(measures)
+      .where(eq(measures.sheetMusicId, sheetMusicId));
+    return result?.count ?? 0;
+  }
+
+  async batchGetMeasureCounts(sheetMusicIds: number[]): Promise<Map<number, number>> {
+    if (sheetMusicIds.length === 0) return new Map();
+    const rows = await db
+      .select({ sheetMusicId: measures.sheetMusicId, count: sql<number>`count(*)::int` })
+      .from(measures)
+      .where(inArray(measures.sheetMusicId, sheetMusicIds))
+      .groupBy(measures.sheetMusicId);
+    return new Map(rows.map((r) => [r.sheetMusicId, r.count]));
+  }
+
+  async clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void> {
+    const rows = await db.select({ id: measures.id }).from(measures).where(eq(measures.sheetMusicId, sheetMusicId));
+    const ids = rows.map((r) => r.id);
+    if (ids.length === 0) return;
+    await db.delete(measureProgress).where(inArray(measureProgress.measureId, ids));
+    await db.delete(measures).where(eq(measures.sheetMusicId, sheetMusicId));
+  }
+
+  async updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined> {
+    const [updated] = await db.update(measures).set(updates).where(eq(measures.id, id)).returning();
+    return updated;
+  }
+
+  async confirmMeasures(sheetMusicId: number): Promise<void> {
+    await db.update(measures)
+      .set({ confirmedAt: new Date() })
+      .where(and(eq(measures.sheetMusicId, sheetMusicId), sql`${measures.confirmedAt} IS NULL`));
+    await db.update(sheetMusic).set({ processingStatus: "done" }).where(eq(sheetMusic.id, sheetMusicId));
+  }
+
+  // ── Lesson Days ──────────────────────────────────────────────────────────
+
+  async getLessonDays(learningPlanId: number): Promise<LessonDay[]> {
+    return db.select().from(lessonDays).where(eq(lessonDays.learningPlanId, learningPlanId)).orderBy(lessonDays.scheduledDate);
+  }
+
+  async getLessonDay(learningPlanId: number, date: string): Promise<LessonDay | undefined> {
+    const [lesson] = await db.select().from(lessonDays)
+      .where(and(eq(lessonDays.learningPlanId, learningPlanId), eq(lessonDays.scheduledDate, date)));
+    return lesson;
+  }
+
+  async getLessonSessionBundle(
+    lessonId: number,
+    userId: string,
+  ): Promise<{
+    lesson: LessonDay;
+    plan: LearningPlan;
+    pieceTitle: string;
+    composerName: string;
+    dayIndex: number;
+  } | null> {
+    const [lesson] = await db.select().from(lessonDays).where(eq(lessonDays.id, lessonId));
+    if (!lesson) return null;
+    const plan = await this.getLearningPlanById(lesson.learningPlanId);
+    if (!plan || plan.userId !== userId) return null;
+    const [ctx] = await db
+      .select({ pieceTitle: pieces.title, composerName: composers.name })
+      .from(repertoireEntries)
+      .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
+      .innerJoin(composers, eq(repertoireEntries.composerId, composers.id))
+      .where(eq(repertoireEntries.id, plan.repertoireEntryId))
+      .limit(1);
+    if (!ctx) return null;
+    // Compute 1-based day index by counting lessons scheduled before this one
+    const allLessons = await db
+      .select({ id: lessonDays.id, scheduledDate: lessonDays.scheduledDate })
+      .from(lessonDays)
+      .where(eq(lessonDays.learningPlanId, lesson.learningPlanId))
+      .orderBy(lessonDays.scheduledDate);
+    const dayIndex = allLessons.findIndex((l) => l.id === lessonId) + 1;
+    return { lesson, plan, pieceTitle: ctx.pieceTitle, composerName: ctx.composerName, dayIndex };
+  }
+
+  async createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]> {
+    if (days.length === 0) return [];
+    return db.insert(lessonDays).values(days).returning();
+  }
+
+  async deleteLessonDaysForPlan(learningPlanId: number): Promise<void> {
+    await db.delete(lessonDays).where(eq(lessonDays.learningPlanId, learningPlanId));
+  }
+
+  async updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined> {
+    const [updated] = await db.update(lessonDays).set(updates).where(eq(lessonDays.id, id)).returning();
+    return updated;
+  }
+
+  // ── Measure Progress ─────────────────────────────────────────────────────
+
+  async getMeasureProgress(learningPlanId: number): Promise<MeasureProgress[]> {
+    return db.select().from(measureProgress).where(eq(measureProgress.learningPlanId, learningPlanId));
+  }
+
+  async upsertMeasureProgress(data: { planId: number; measureId: number; userId: string } & Partial<InsertMeasureProgress>): Promise<MeasureProgress> {
+    const { planId, measureId, userId, ...rest } = data;
+    const [existing] = await db.select().from(measureProgress)
+      .where(and(eq(measureProgress.learningPlanId, planId), eq(measureProgress.measureId, measureId)));
+    if (existing) {
+      const [updated] = await db.update(measureProgress).set(rest).where(eq(measureProgress.id, existing.id)).returning();
+      return updated;
+    }
+    const [created] = await db.insert(measureProgress)
+      .values({ learningPlanId: planId, measureId, userId, ...rest })
+      .returning();
+    return created;
+  }
+
+  // ── Community Scores ─────────────────────────────────────────────────────
+
+  async getCommunityScoreById(id: number): Promise<CommunityScore | undefined> {
+    const [row] = await db.select().from(communityScores).where(eq(communityScores.id, id));
+    return row;
+  }
+
+  async getCommunityScoreByPiece(pieceId: number, movementId?: number | null): Promise<CommunityScore | undefined> {
+    const conditions = movementId != null
+      ? and(eq(communityScores.pieceId, pieceId), eq(communityScores.movementId, movementId))
+      : and(eq(communityScores.pieceId, pieceId), isNull(communityScores.movementId));
+    const [row] = await db.select().from(communityScores).where(conditions);
+    return row;
+  }
+
+  async getAllCommunityScoresForPiece(pieceId: number): Promise<CommunityScore[]> {
+    return db.select().from(communityScores).where(eq(communityScores.pieceId, pieceId));
+  }
+
+  async createCommunityScore(data: InsertCommunityScore): Promise<CommunityScore> {
+    const [row] = await db.insert(communityScores).values(data).returning();
+    return row;
+  }
+
+  async incrementCommunityScoreDownloads(id: number): Promise<void> {
+    await db.update(communityScores)
+      .set({ downloadCount: sql`${communityScores.downloadCount} + 1` })
+      .where(eq(communityScores.id, id));
+  }
+
+  async deleteCommunityScore(id: number): Promise<void> {
+    await db.delete(communityScores).where(eq(communityScores.id, id));
+  }
 }
 
 export const storage = new DatabaseStorage();

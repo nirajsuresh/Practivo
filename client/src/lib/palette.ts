@@ -1,74 +1,72 @@
 /**
- * Single source of truth for Reperto color palette.
- * Status colors drive badges, dropdowns, charts, and progress; other semantic
- * colors align to the same vibrant brand system.
+ * Feature palette — light ivory surfaces (#F4F1EA, #E9E5DC) + soft gold & sage.
+ * Golds: #EADDC8 / #DCCAA6 / #C8B388 · Greens: #729E8F / #9BBBAD
  */
 
-// ── Status (piece learning) ─────────────────────────────────────────────────
+// ── Status (piece learning) — contrast on ivory / secondary surface ───────────
 export const STATUS_DOT: Record<string, string> = {
-  "Want to learn": "#DAD2D8",
-  "Up next": "#D4967C",
-  "In Progress": "#0F8B8D",
-  "Maintaining": "#EC9A29",
-  "Resting": "#143642",
+  "Want to learn": "#8A877F",
+  "Up next": "#C8B388",
+  "In Progress": "#729E8F",
+  "Maintaining": "#DCCAA6",
+  "Resting": "#5C5A54",
 };
 
 export const STATUS_BADGE: Record<string, string> = {
-  "Want to learn": "bg-[#DAD2D8] text-[#143642] border-[#c8bdc5]",
-  "Up next": "bg-[#D4967C] text-[#143642] border-[#c88566]",
-  "In Progress": "bg-[#0F8B8D] text-white border-[#0b7173]",
-  "Maintaining": "bg-[#EC9A29] text-[#143642] border-[#da8716]",
-  "Resting": "bg-[#143642] text-[#DAD2D8] border-[#214b5c]",
+  "Want to learn": "bg-[#E9E5DC] text-[#1C1C1A] border-[#D6D1C7]",
+  "Up next": "bg-[#EADDC8]/50 text-[#1C1C1A] border-[#DCCAA6]",
+  "In Progress": "bg-[#729E8F]/14 text-[#1C1C1A] border-[#729E8F]",
+  "Maintaining": "bg-[#DCCAA6]/45 text-[#1C1C1A] border-[#C8B388]",
+  "Resting": "bg-[#D6D1C7]/60 text-[#5C5A54] border-[#8A877F]/50",
 };
 
 // ── Milestones ───────────────────────────────────────────────────────────────
 export const MILESTONE_DOT: Record<string, string> = {
-  started: "#0F8B8D",
-  read_through: "#0F8B8D",
-  notes_learned: "#0F8B8D",
-  up_to_speed: "#0F8B8D",
-  memorized: "#0F8B8D",
-  completed: "#EC9A29",
-  performed: "#A8201A",
+  started: "#729E8F",
+  read_through: "#729E8F",
+  notes_learned: "#729E8F",
+  up_to_speed: "#729E8F",
+  memorized: "#729E8F",
+  completed: "#C8B388",
+  performed: "#9BBBAD",
 };
 
 export const MILESTONE_BG: Record<string, string> = {
-  started: "bg-[#0F8B8D]/12",
-  read_through: "bg-[#0F8B8D]/12",
-  notes_learned: "bg-[#0F8B8D]/12",
-  up_to_speed: "bg-[#0F8B8D]/12",
-  memorized: "bg-[#0F8B8D]/12",
-  completed: "bg-[#EC9A29]/18",
-  performed: "bg-[#A8201A]/16",
+  started: "bg-[#729E8F]/10",
+  read_through: "bg-[#729E8F]/10",
+  notes_learned: "bg-[#729E8F]/10",
+  up_to_speed: "bg-[#729E8F]/10",
+  memorized: "bg-[#729E8F]/10",
+  completed: "bg-[#DCCAA6]/18",
+  performed: "bg-[#9BBBAD]/18",
 };
 
 export const MILESTONE_BORDER: Record<string, string> = {
-  started: "border-[#0F8B8D]",
-  read_through: "border-[#0F8B8D]",
-  notes_learned: "border-[#0F8B8D]",
-  up_to_speed: "border-[#0F8B8D]",
-  memorized: "border-[#0F8B8D]",
-  completed: "border-[#EC9A29]",
-  performed: "border-[#A8201A]",
+  started: "border-[#729E8F]",
+  read_through: "border-[#729E8F]",
+  notes_learned: "border-[#729E8F]",
+  up_to_speed: "border-[#729E8F]",
+  memorized: "border-[#729E8F]",
+  completed: "border-[#C8B388]",
+  performed: "border-[#9BBBAD]",
 };
 
 // ── Brand / accent ───────────────────────────────────────────────────────────
 export const BRAND = {
-  primary: "#143642",
-  primaryHover: "#1f4f62",
-  primaryMuted: "rgba(20, 54, 66, 0.10)",
-  primaryMutedBorder: "rgba(20, 54, 66, 0.22)",
-  logo: "#d4967c",
-  accent: "#EC9A29",
-  cyan: "#0F8B8D",
-  red: "#A8201A",
+  primary: "#1C1C1A",
+  primaryHover: "#629084",
+  primaryMuted: "rgba(220, 202, 166, 0.28)",
+  primaryMutedBorder: "rgba(200, 179, 136, 0.42)",
+  logo: "#C8B388",
+  accent: "#DCCAA6",
+  cyan: "#729E8F",
+  red: "#B54A4A",
 } as const;
 
-// ── Progress bar segments (by journey stage) ─────────────────────────────────
 export const PROGRESS = {
   completed: STATUS_DOT["Maintaining"],
   high: STATUS_DOT["In Progress"],
-  low: BRAND.logo,
+  low: STATUS_DOT["Up next"],
 } as const;
 
 export function getProgressColor(pct: number): string {
@@ -77,88 +75,90 @@ export function getProgressColor(pct: number): string {
   return PROGRESS.low;
 }
 
-// ── Activity feed types (border, bg, text) ──────────────────────────────────
+// ── Activity feed ───────────────────────────────────────────────────────────
 export const ACTIVITY = {
-  status: { border: "border-l-[#0F8B8D]", iconBg: "bg-[#0F8B8D]/15", iconColor: "text-[#0F8B8D]" },
-  added: { border: "border-l-[#143642]", iconBg: "bg-[#143642]/12", iconColor: "text-[#143642]" },
-  milestone: { border: "border-l-[#EC9A29]", iconBg: "bg-[#EC9A29]/16", iconColor: "text-[#c77e1b]" },
-  recording: { border: "border-l-[#A8201A]", iconBg: "bg-[#A8201A]/12", iconColor: "text-[#A8201A]" },
+  status: { border: "border-l-[#729E8F]", iconBg: "bg-[#729E8F]/10", iconColor: "text-[#629084]" },
+  added: { border: "border-l-[#C8B388]", iconBg: "bg-[#DCCAA6]/18", iconColor: "text-[#8B7D5C]" },
+  milestone: { border: "border-l-[#DCCAA6]", iconBg: "bg-[#EADDC8]/28", iconColor: "text-[#5C5A54]" },
+  recording: { border: "border-l-[#B54A4A]", iconBg: "bg-[#B54A4A]/12", iconColor: "text-[#8f2f2f]" },
 } as const;
 
 // ── Era distribution ──────────────────────────────────────────────────────────
 export const ERA_DOT: Record<string, string> = {
-  Renaissance: "#D4967C",
-  Baroque: "#EC9A29",
-  Classical: "#143642",
-  Romantic: "#A8201A",
-  Impressionist: "#0F8B8D",
+  Renaissance: "#EADDC8",
+  Baroque: "#DCCAA6",
+  Classical: "#729E8F",
+  Romantic: "#B54A4A",
+  Impressionist: "#9BBBAD",
   Modern: "#7b5ea7",
-  Contemporary: "#0F8B8D",
-  Other: "#8a7f86",
+  Contemporary: "#A8C4BC",
+  Other: "#8A877F",
 };
 
 export const ERA_BADGE: Record<string, string> = {
-  Renaissance: "bg-[#D4967C]/20 text-[#7a4a32]",
-  Baroque: "bg-[#EC9A29]/20 text-[#8a560e]",
-  Classical: "bg-[#143642]/18 text-[#143642]",
-  Romantic: "bg-[#A8201A]/18 text-[#A8201A]",
-  Impressionist: "bg-[#0F8B8D]/16 text-[#0F8B8D]",
-  Modern: "bg-[#7b5ea7]/18 text-[#5a4280]",
-  Contemporary: "bg-[#0F8B8D]/16 text-[#0F8B8D]",
-  Other: "bg-[#8a7f86]/20 text-[#5d545a]",
+  Renaissance: "bg-[#EADDC8]/45 text-[#1C1C1A]",
+  Baroque: "bg-[#DCCAA6]/35 text-[#1C1C1A]",
+  Classical: "bg-[#729E8F]/12 text-[#1C1C1A]",
+  Romantic: "bg-[#B54A4A]/15 text-[#5c2222]",
+  Impressionist: "bg-[#9BBBAD]/22 text-[#1C1C1A]",
+  Modern: "bg-[#7b5ea7]/18 text-[#3d2f5c]",
+  Contemporary: "bg-[#A8C4BC]/28 text-[#1C1C1A]",
+  Other: "bg-[#E9E5DC] text-[#5C5A54]",
 };
 
 // ── Difficulty badges ──────────────────────────────────────────────────────
 export const DIFFICULTY_BADGE: Record<string, string> = {
-  Beginner: "bg-[#DAD2D8] text-[#143642]",
-  Intermediate: "bg-[#0F8B8D]/20 text-[#0F8B8D]",
-  Advanced: "bg-[#EC9A29]/20 text-[#7e4d0c]",
-  Expert: "bg-[#A8201A]/20 text-[#7a1712]",
+  Beginner: "bg-[#E9E5DC] text-[#1C1C1A]",
+  Intermediate: "bg-[#729E8F]/10 text-[#1C1C1A]",
+  Advanced: "bg-[#DCCAA6]/30 text-[#1C1C1A]",
+  Expert: "bg-[#B54A4A]/15 text-[#5c2222]",
 };
 
 // ── Discussion/tag badges ────────────────────────────────────────────────────
 export const TAG_BADGE: Record<string, string> = {
-  General: "bg-[#143642]/10 text-[#143642]",
-  "Tips & Technique": "bg-[#0F8B8D]/15 text-[#0F8B8D]",
-  Interpretation: "bg-[#EC9A29]/18 text-[#8a560e]",
-  Help: "bg-[#A8201A]/14 text-[#8d1a14]",
+  General: "bg-[#E9E5DC] text-[#5C5A54]",
+  "Tips & Technique": "bg-[#729E8F]/10 text-[#1C1C1A]",
+  Interpretation: "bg-[#DCCAA6]/22 text-[#1C1C1A]",
+  Help: "bg-[#B54A4A]/12 text-[#6b2828]",
 };
 
-// ── Video type badges (Performance / Analysis / Masterclass) ──────────────────
+// ── Video type badges ─────────────────────────────────────────────────────────
 export const VIDEO_TYPE_BADGE: Record<string, string> = {
-  Performance: "bg-[#A8201A]/16 text-[#8d1a14]",
-  Analysis: "bg-[#0F8B8D]/16 text-[#0F8B8D]",
-  Masterclass: "bg-[#EC9A29]/18 text-[#8a560e]",
+  Performance: "bg-[#B54A4A]/14 text-[#6b2828]",
+  Analysis: "bg-[#729E8F]/10 text-[#1C1C1A]",
+  Masterclass: "bg-[#DCCAA6]/22 text-[#1C1C1A]",
 };
 
 // ── Surfaces ────────────────────────────────────────────────────────────────
 export const SURFACE = {
-  card: "#ffffff",
-  cardBorder: "border-primary/25",
+  card: "#F4F1EA",
+  cardBorder: "border-[#D6D1C7]",
 } as const;
 
 // ── Semantic ────────────────────────────────────────────────────────────────
 export const SEMANTIC = {
-  success: "#0F8B8D",
-  destructive: "#A8201A",
+  success: "#729E8F",
+  destructive: "#B54A4A",
 } as const;
 
-// ── Star rating (warm gold from palette) ───────────────────────────────────
+// ── Star rating ───────────────────────────────────────────────────────────
 export const RATING = {
-  filled: "#EC9A29",
-  filledHalf: "rgba(236, 154, 41, 0.5)",
+  filled: "#DCCAA6",
+  filledHalf: "rgba(220, 202, 166, 0.55)",
   empty: "currentColor",
 } as const;
 
-// ── Learned/performed emphasis helpers ─────────────────────────────────────
+// ── Learned (gold) vs performed (sage) — repertoire table / panes ─────────────
 export const HIGHLIGHT = {
-  learnedRow: "bg-gradient-to-r from-[#fff8e8] to-[#ffefcb] hover:from-[#fff2d9] hover:to-[#ffe3ae]",
-  performedRow: "bg-gradient-to-r from-[#ffecea] via-[#ffd7d3] to-[#ffc2bb] hover:from-[#ffe0dc] hover:to-[#ffb4aa]",
-  learnedBorder: "border-l-[#EC9A29]",
-  performedBorder: "border-l-[#A8201A]",
-  learnedEdge: "bg-[#EC9A29]",
-  performedEdge: "bg-[#A8201A]",
-  learnedPill: "bg-[#EC9A29] text-[#143642]",
-  performedPill: "bg-[#A8201A] text-white",
-  performedIcon: "#8d1a14",
+  learnedRow: "bg-gradient-to-r from-[#fdfbf7] to-[#f5ecda] hover:from-[#faf6ef] hover:to-[#efe4cf]",
+  performedRow: "bg-gradient-to-r from-[#f4faf8] via-[#eaf4f1] to-[#dfece7] hover:from-[#eef6f3] hover:to-[#d3e5de]",
+  learnedBorder: "border-l-[#DCCAA6]",
+  performedBorder: "border-l-[#729E8F]",
+  learnedEdge: "bg-[#DCCAA6]",
+  performedEdge: "bg-[#729E8F]",
+  learnedPill: "bg-[#DCCAA6] text-[#1C1C1A]",
+  performedPill: "bg-[#C5DDD4] text-[#1C1C1A]",
+  /** Music note next to performed pieces in table */
+  performedMusicIcon: "text-[#629084]",
+  performedIcon: "#629084",
 } as const;

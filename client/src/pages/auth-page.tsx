@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation, Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { BrandWordmark } from "@/components/brand-wordmark";
 
 export default function AuthPage() {
   const [location] = useLocation();
@@ -45,7 +46,7 @@ export default function AuthPage() {
       localStorage.setItem("isLoggedIn", "true");
       localStorage.setItem("userId", String(data.id));
       localStorage.setItem("username", data.username);
-      setLocation("/profile");
+      setLocation("/");
     } catch (err: any) {
       toast({ title: "Login Failed", description: err.message, variant: "destructive" });
     } finally {
@@ -96,7 +97,7 @@ export default function AuthPage() {
       localStorage.setItem("isLoggedIn", "true");
       localStorage.setItem("userId", String(data.id));
       localStorage.setItem("username", data.username);
-      setLocation("/profile");
+      setLocation("/");
     } catch (err: any) {
       toast({ title: "Test Login Failed", description: err.message, variant: "destructive" });
     } finally {
@@ -116,12 +117,8 @@ export default function AuthPage() {
         </div>
         <div className="relative z-10 h-full flex flex-col justify-between p-12 text-white">
           <Link href="/">
-             <div className="flex items-center cursor-pointer">
-              <img 
-                src="/images/logo.png" 
-                alt="Réperto Logo" 
-                className="h-12 w-auto"
-              />
+            <div className="flex items-center cursor-pointer py-1">
+              <BrandWordmark inverse size="lg" />
             </div>
           </Link>
           <blockquote className="max-w-md">
@@ -137,12 +134,8 @@ export default function AuthPage() {
         <div className="w-full max-w-md space-y-8">
           <div className="text-center md:hidden mb-8">
             <Link href="/">
-              <div className="flex justify-center">
-                <img 
-                  src="/images/logo.png" 
-                  alt="Réperto Logo" 
-                  className="h-12 w-auto"
-                />
+              <div className="flex justify-center py-1">
+                <BrandWordmark size="lg" />
               </div>
             </Link>
           </div>
