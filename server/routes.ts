@@ -6,9 +6,9 @@ import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import express from "express";
-const uploadsDir = path.join(process.cwd(), "uploads", "sheet-music");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+import { uploadToR2, downloadFromR2 } from "./r2.js";
 
 function getWarmupTasks(instr: string): string[] {
   if (instr.includes("piano")) {
@@ -38,7 +38,7 @@ function getPracticeTasks(start: number, end: number): string[] {
 }
 
 const upload = multer({
-  dest: uploadsDir,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/pdf") cb(null, true);
@@ -49,24 +49,10 @@ const upload = multer({
 /** In-memory processing progress: sheetMusicId → { page, total } */
 const processingProgress = new Map<number, { page: number; total: number }>();
 
-/** DB may store absolute paths from older crops; the client needs `/uploads/...` URLs. */
-function measureImageUrlForClient(stored: string | null | undefined): string | null {
-  if (!stored) return null;
-  const s = stored.trim();
-  if (s.startsWith("/uploads/")) return s;
-  const forward = s.replace(/\\/g, "/");
-  const idx = forward.toLowerCase().indexOf("/uploads/");
-  if (idx >= 0) return forward.slice(idx);
-  return null;
-}
-
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-
-  // Serve uploaded files (page images, cropped bars) as static assets
-  app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
   // ── Composers ────────────────────────────────────────────────────────────
 
@@ -464,28 +450,32 @@ export async function registerRoutes(
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       const pieceId = req.body.pieceId ? parseInt(req.body.pieceId) : null;
 
+      // Insert with placeholder fileUrl; update after we have the record id for the R2 key.
       const record = await storage.createSheetMusic({
         pieceId,
         userId,
-        fileUrl: req.file.path,
+        fileUrl: "",
         source: "upload",
         processingStatus: "pending",
       });
 
-      const smId = record.id;
+      const r2Key = `sheet-music/${record.id}.pdf`;
+      await uploadToR2(r2Key, req.file.buffer, "application/pdf");
+      await storage.updateSheetMusicFileUrl(record.id, r2Key);
+
       let pageCount: number | null = null;
       try {
-        const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
-        const n = await getPdfPageCountForPath(record.fileUrl);
+        const { getPdfPageCountFromBuffer } = await import("./scorebars/pdf-processor.js");
+        const n = await getPdfPageCountFromBuffer(req.file.buffer);
         if (n > 0) {
           pageCount = n;
-          await storage.updateSheetMusicStatus(smId, "pending", n);
+          await storage.updateSheetMusicStatus(record.id, "pending", n);
         }
       } catch (e) {
         console.warn("Could not count PDF pages at upload:", e);
       }
 
-      res.status(201).json({ sheetMusicId: smId, pageCount });
+      res.status(201).json({ sheetMusicId: record.id, pageCount });
     } catch (err) {
       console.error("Upload route error:", err);
       res.status(500).json({ error: "Failed to upload sheet music" });
@@ -501,11 +491,17 @@ export async function registerRoutes(
       const record = await storage.getSheetMusic(id);
       if (!record) return res.status(404).json({ error: "Sheet music not found" });
       if (record.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
-      const pageCount = await getPdfPageCountForPath(record.fileUrl);
+      // Return cached count if available; only download the PDF from R2 as a fallback.
+      if (record.pageCount && record.pageCount > 0) {
+        return res.json({ pageCount: record.pageCount });
+      }
+      const pdfBuffer = await downloadFromR2(record.fileUrl);
+      const { getPdfPageCountFromBuffer } = await import("./scorebars/pdf-processor.js");
+      const pageCount = await getPdfPageCountFromBuffer(pdfBuffer);
       if (pageCount <= 0) {
         return res.status(422).json({ error: "Could not read PDF page count" });
       }
+      await storage.updateSheetMusicStatus(id, record.processingStatus, pageCount);
       res.json({ pageCount });
     } catch {
       res.status(500).json({ error: "Failed to read PDF" });
@@ -524,10 +520,13 @@ export async function registerRoutes(
       if (record.userId !== userId) return res.status(403).json({ error: "Forbidden" });
 
       const body = req.body as { firstPage?: number; lastPage?: number };
-      const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
-      let pdfTotal = record.pageCount ?? (await getPdfPageCountForPath(record.fileUrl));
+      const { getPdfPageCountFromBuffer } = await import("./scorebars/pdf-processor.js");
+
+      // Download the PDF from R2 once; reuse the buffer for page-count and processing.
+      const pdfBuffer = await downloadFromR2(record.fileUrl);
+      let pdfTotal = record.pageCount ?? 0;
       if (pdfTotal <= 0) {
-        pdfTotal = await getPdfPageCountForPath(record.fileUrl);
+        pdfTotal = await getPdfPageCountFromBuffer(pdfBuffer);
       }
       if (pdfTotal <= 0) {
         return res.status(422).json({ error: "Could not determine PDF length" });
@@ -540,31 +539,42 @@ export async function registerRoutes(
       lastPage = Math.max(firstPage, Math.min(lastPage, pdfTotal));
 
       await storage.updateSheetMusicStatus(id, "processing");
-
-      const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
-      const measuresOutputDir = path.join(process.cwd(), "uploads", "measures", String(id));
-      try {
-        if (fs.existsSync(pagesDir)) fs.rmSync(pagesDir, { recursive: true });
-        if (fs.existsSync(measuresOutputDir)) fs.rmSync(measuresOutputDir, { recursive: true });
-      } catch (e) {
-        console.warn("Could not clear prior score outputs:", e);
-      }
       await storage.clearMeasuresForSheetMusic(id);
 
       const pageRange = { firstPdfPage: firstPage, lastPdfPage: lastPage };
 
       import("./scorebars/index.js").then(async ({ ScorebarService }) => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "reperto-proc-"));
         try {
           processingProgress.set(id, { page: 0, total: 0 });
-          if (!fs.existsSync(pagesDir)) fs.mkdirSync(pagesDir, { recursive: true });
+
+          const tmpPdfPath = path.join(tmpDir, "input.pdf");
+          const tmpPagesDir = path.join(tmpDir, "pages");
+          fs.mkdirSync(tmpPagesDir);
+          fs.writeFileSync(tmpPdfPath, pdfBuffer);
+
           const service = new ScorebarService({
-            pagesDir,
+            pagesDir: tmpPagesDir,
             renderDpi: 220,
             onProgress: (page, total) => {
               processingProgress.set(id, { page, total });
             },
           });
-          const result = await service.processFile(record.fileUrl, pageRange);
+          const result = await service.processFile(tmpPdfPath, pageRange);
+
+          // Upload rendered pages to R2 and record in DB.
+          // Read width/height from the PNG IHDR chunk (bytes 16-23).
+          const pageRecords: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }> = [];
+          for (const pi of result.pageImages) {
+            const buf = fs.readFileSync(pi.imagePath);
+            const width = buf.readUInt32BE(16);
+            const height = buf.readUInt32BE(20);
+            const key = `pages/${id}/page-${pi.pageNumber}.png`;
+            const imageUrl = await uploadToR2(key, buf, "image/png");
+            pageRecords.push({ sheetMusicId: id, pageNumber: pi.pageNumber, imageUrl, width, height });
+          }
+          await storage.saveSheetMusicPages(pageRecords);
+
           const savedMeasures = await storage.saveMeasures(toInsertMeasures(id, result.measures));
           await storage.updateSheetMusicStatus(id, "ready", result.pageCount);
           processingProgress.delete(id);
@@ -576,6 +586,8 @@ export async function registerRoutes(
           console.error("ScoreBars processing failed:", err);
           await storage.updateSheetMusicStatus(id, "failed");
           processingProgress.delete(id);
+        } finally {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
         }
       }).catch(console.error);
 
@@ -612,34 +624,23 @@ export async function registerRoutes(
       const record = await storage.getSheetMusic(id);
       if (!record) return res.status(404).json({ error: "Sheet music not found" });
 
-      const measures = await storage.getMeasures(id);
-      const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
+      const [dbPages, measureList] = await Promise.all([
+        storage.getSheetMusicPages(id),
+        storage.getMeasures(id),
+      ]);
 
-      // Build page list from saved PNGs, sorted numerically (page-1, page-2 … page-10, not page-1, page-10)
-      const pageFiles = fs.existsSync(pagesDir)
-        ? fs.readdirSync(pagesDir)
-            .filter(f => f.endsWith(".png"))
-            .sort((a, b) => {
-              const na = parseInt(a.match(/\d+/)?.[0] ?? "0", 10);
-              const nb = parseInt(b.match(/\d+/)?.[0] ?? "0", 10);
-              return na - nb;
-            })
-        : [];
-
-      const pages = pageFiles.map((file) => {
-        // Extract the real page number from the filename (page-N.png)
-        const pageNumber = parseInt(file.match(/\d+/)?.[0] ?? "0", 10);
-        const imageUrl = `/uploads/pages/${id}/${file}`;
-        const pageMeasures = measures
-          .filter(m => m.pageNumber === pageNumber)
-          .map(m => ({
+      const pages = dbPages.map((p) => ({
+        pageNumber: p.pageNumber,
+        imageUrl: p.imageUrl, // R2 public URL
+        measures: measureList
+          .filter((m) => m.pageNumber === p.pageNumber)
+          .map((m) => ({
             id: m.id,
             measureNumber: m.measureNumber,
             movementNumber: m.movementNumber,
             boundingBox: m.boundingBox,
-          }));
-        return { pageNumber, imageUrl, measures: pageMeasures };
-      });
+          })),
+      }));
 
       res.json(pages);
     } catch {
@@ -651,12 +652,7 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const measureList = await storage.getMeasures(id);
-      res.json(
-        measureList.map((m) => ({
-          ...m,
-          imageUrl: measureImageUrlForClient(m.imageUrl ?? null),
-        })),
-      );
+      res.json(measureList.map((m) => ({ ...m, imageUrl: null })));
     } catch {
       res.status(500).json({ error: "Failed to get measures" });
     }
@@ -694,19 +690,16 @@ export async function registerRoutes(
       if (!pageNumber || !region) {
         return res.status(400).json({ error: "pageNumber and region required" });
       }
-      const pageImagePath = path.join(process.cwd(), "uploads", "pages", String(id), `page-${pageNumber}.png`);
-      if (!fs.existsSync(pageImagePath)) {
+      const dbPages = await storage.getSheetMusicPages(id);
+      const pageInfo = dbPages.find((p) => p.pageNumber === pageNumber);
+      if (!pageInfo) {
         return res.status(404).json({ error: "Page image not found" });
       }
-      const imageBuffer = fs.readFileSync(pageImagePath);
-      const { loadImage } = await import("canvas");
-      const img = await loadImage(imageBuffer);
-      const pageWidth = img.width;
-      const pageHeight = img.height;
+      const imageBuffer = await downloadFromR2(`pages/${id}/page-${pageNumber}.png`);
 
       const { BarDetector } = await import("./scorebars/bar-detector.js");
       const detector = new BarDetector();
-      const boxes = await detector.detectBarsInRegion(imageBuffer, pageWidth, pageHeight, region);
+      const boxes = await detector.detectBarsInRegion(imageBuffer, pageInfo.width, pageInfo.height, region);
       res.json({ boxes });
     } catch (err) {
       console.error("detect-region failed:", err);

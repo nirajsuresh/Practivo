@@ -116,6 +116,18 @@ export async function getPdfPageCountForPath(pdfPath: string): Promise<number> {
   }
 }
 
+/** Count pages from an in-memory PDF buffer (writes to a temp file internally). */
+export async function getPdfPageCountFromBuffer(buffer: Buffer): Promise<number> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scorebars-buf-"));
+  try {
+    const tmpPath = path.join(tmpDir, "input.pdf");
+    fs.writeFileSync(tmpPath, buffer);
+    return await getPdfPageCountForPath(tmpPath);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 export class PdfProcessor {
   private dpi: number;
   private pagesDir?: string;

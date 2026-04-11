@@ -182,6 +182,19 @@ export const insertMeasureSchema = createInsertSchema(measures).omit({ id: true 
 export type InsertMeasure = z.infer<typeof insertMeasureSchema>;
 export type Measure = typeof measures.$inferSelect;
 
+// ── Sheet music page images (stored in R2; one row per rendered page) ─────────
+
+export const sheetMusicPages = pgTable("sheet_music_pages", {
+  id: serial("id").primaryKey(),
+  sheetMusicId: integer("sheet_music_id").notNull().references(() => sheetMusic.id, { onDelete: "cascade" }),
+  pageNumber: integer("page_number").notNull(),
+  imageUrl: text("image_url").notNull(), // full R2 public URL
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+});
+
+export type SheetMusicPage = typeof sheetMusicPages.$inferSelect;
+
 export const lessonDays = pgTable("lesson_days", {
   id: serial("id").primaryKey(),
   learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id),

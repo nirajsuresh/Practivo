@@ -13,9 +13,11 @@ import {
   type LessonDay, type InsertLessonDay,
   type MeasureProgress, type InsertMeasureProgress,
   type CommunityScore, type InsertCommunityScore,
+  type SheetMusicPage,
   users, composers, pieces, movements, repertoireEntries, userProfiles,
   pieceAnalyses, pieceMilestones,
   learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
+  sheetMusicPages,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, and, desc, sql, ne, inArray, isNull } from "drizzle-orm";
@@ -132,6 +134,9 @@ export interface IStorage {
   createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic>;
   getSheetMusic(id: number): Promise<SheetMusic | undefined>;
   updateSheetMusicStatus(id: number, status: string, pageCount?: number): Promise<void>;
+  updateSheetMusicFileUrl(id: number, fileUrl: string): Promise<void>;
+  saveSheetMusicPages(pages: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }>): Promise<void>;
+  getSheetMusicPages(sheetMusicId: number): Promise<SheetMusicPage[]>;
   saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]>;
   replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
   getMeasures(sheetMusicId: number): Promise<Measure[]>;
@@ -795,6 +800,21 @@ export class DatabaseStorage implements IStorage {
     const updates: Record<string, any> = { processingStatus: status };
     if (pageCount !== undefined) updates.pageCount = pageCount;
     await db.update(sheetMusic).set(updates).where(eq(sheetMusic.id, id));
+  }
+
+  async updateSheetMusicFileUrl(id: number, fileUrl: string): Promise<void> {
+    await db.update(sheetMusic).set({ fileUrl }).where(eq(sheetMusic.id, id));
+  }
+
+  async saveSheetMusicPages(pages: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }>): Promise<void> {
+    if (!pages.length) return;
+    await db.insert(sheetMusicPages).values(pages);
+  }
+
+  async getSheetMusicPages(sheetMusicId: number): Promise<SheetMusicPage[]> {
+    return db.select().from(sheetMusicPages)
+      .where(eq(sheetMusicPages.sheetMusicId, sheetMusicId))
+      .orderBy(sheetMusicPages.pageNumber);
   }
 
   async saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]> {
