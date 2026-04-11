@@ -1,11 +1,10 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChevronLeft, ChevronRight, CheckCircle2, ZoomIn, ZoomOut,
-  Pencil, MousePointer2, SplitSquareHorizontal, X,
-  Trash2, RectangleHorizontal, Milestone, Undo2,
+  Pencil, Trash2, RectangleHorizontal, Undo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -14,12 +13,15 @@ import { apiRequest } from "@/lib/queryClient";
 
 interface BoundingBox { x: number; y: number; w: number; h: number }
 
-interface EditMeasure {
+export interface EditMeasure {
   tempId: string;
   pageNumber: number;
   boundingBox: BoundingBox;
   movementNumber: number;
 }
+
+/** Passed to PageOverlay; supports functional updates so deletes use latest measure list. */
+export type SetMeasuresFn = (next: EditMeasure[] | ((prev: EditMeasure[]) => EditMeasure[])) => void;
 
 interface ScorePage {
   pageNumber: number;
@@ -35,7 +37,7 @@ interface Props {
   onBack: () => void;
 }
 
-type Tool = "pointer" | "add-barline" | "remove-bar" | "delete-system" | "draw-system" | "movement";
+export type Tool = "barline-edit" | "delete-system" | "draw-system";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,109 +58,270 @@ function toRoman(n: number): string {
 }
 
 /**
- * Compute the within-movement bar number and display label for a measure.
- * allMeasures must be sorted by page → y → x (same as measureNumber order).
- */
-function barLabel(m: EditMeasure, allMeasures: EditMeasure[]): string {
-  // Count how many measures with the same movementNumber come before m
-  const idx = allMeasures.indexOf(m);
-  let withinMvt = 1;
-  for (let i = 0; i < idx; i++) {
-    if (allMeasures[i].movementNumber === m.movementNumber) withinMvt++;
-  }
-  return m.movementNumber === 1 ? String(withinMvt) : `${toRoman(m.movementNumber)}.${withinMvt}`;
-}
-
-/**
  * Group measures on a page into "systems" — rows of measures with overlapping y-ranges.
- * Two measures are in the same system if their y-midpoints are within 3% of page height.
+ * Two measures are in the same system if their y-ranges overlap (with tolerance).
  */
 function groupIntoSystems(measures: EditMeasure[], pageNumber: number): EditMeasure[][] {
   const pageMeasures = measures
     .filter(m => m.pageNumber === pageNumber)
     .sort((a, b) => a.boundingBox.y - b.boundingBox.y || a.boundingBox.x - b.boundingBox.x);
 
-  const systems: EditMeasure[][] = [];
+  const tolerance = 0.01;
+  const groups: Array<{ y0: number; y1: number; measures: EditMeasure[] }> = [];
   for (const m of pageMeasures) {
-    const mid = m.boundingBox.y + m.boundingBox.h / 2;
-    const existing = systems.find(sys => {
-      const sysMid = sys[0].boundingBox.y + sys[0].boundingBox.h / 2;
-      return Math.abs(mid - sysMid) < 0.04; // 4% tolerance
-    });
-    if (existing) existing.push(m);
-    else systems.push([m]);
+    const my0 = m.boundingBox.y;
+    const my1 = m.boundingBox.y + m.boundingBox.h;
+    const existing = groups.find(g => my0 <= g.y1 + tolerance && my1 >= g.y0 - tolerance);
+    if (existing) {
+      existing.measures.push(m);
+      existing.y0 = Math.min(existing.y0, my0);
+      existing.y1 = Math.max(existing.y1, my1);
+    } else {
+      groups.push({ y0: my0, y1: my1, measures: [m] });
+    }
   }
-  return systems;
+  return groups
+    .sort((a, b) => a.y0 - b.y0)
+    .map(g => g.measures.sort((a, b) => a.boundingBox.x - b.boundingBox.x));
 }
 
-/** Find which system (if any) contains a given measure. */
-function findSystem(m: EditMeasure, systems: EditMeasure[][]): EditMeasure[] | null {
-  return systems.find(s => s.includes(m)) ?? null;
+function sortMeasures(measures: EditMeasure[]): EditMeasure[] {
+  return [...measures].sort((a, b) => {
+    if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+    if (a.boundingBox.y !== b.boundingBox.y) return a.boundingBox.y - b.boundingBox.y;
+    return a.boundingBox.x - b.boundingBox.x;
+  });
 }
 
-/** Find the measure (if any) whose bounding box contains fractional coords (fx, fy). */
-function hitMeasure(measures: EditMeasure[], fx: number, fy: number): EditMeasure | null {
-  return measures.find(m => {
-    const { x, y, w, h } = m.boundingBox;
-    return fx >= x && fx <= x + w && fy >= y && fy <= y + h;
-  }) ?? null;
+function overlapArea(a: BoundingBox, b: BoundingBox): number {
+  const x0 = Math.max(a.x, b.x);
+  const y0 = Math.max(a.y, b.y);
+  const x1 = Math.min(a.x + a.w, b.x + b.w);
+  const y1 = Math.min(a.y + a.h, b.y + b.h);
+  if (x1 <= x0 || y1 <= y0) return 0;
+  return (x1 - x0) * (y1 - y0);
 }
 
-/** Get fractional coords of a mouse event relative to an SVG element. */
-function svgFrac(e: React.MouseEvent, el: SVGSVGElement): { x: number; y: number } {
+function area(b: BoundingBox): number {
+  return Math.max(0, b.w) * Math.max(0, b.h);
+}
+
+function shouldReplaceExistingInRegion(existing: BoundingBox, region: BoundingBox): boolean {
+  const inter = overlapArea(existing, region);
+  if (inter <= 0) return false;
+  const ratio = inter / Math.max(1e-6, Math.min(area(existing), area(region)));
+  return ratio > 0.2;
+}
+
+interface SystemInfo {
+  index: number;
+  measures: EditMeasure[];
+  y0: number;
+  y1: number;
+}
+
+function buildSystemInfo(systems: EditMeasure[][]): SystemInfo[] {
+  return systems.map((sys, index) => {
+    const y0 = Math.min(...sys.map(m => m.boundingBox.y));
+    const y1 = Math.max(...sys.map(m => m.boundingBox.y + m.boundingBox.h));
+    return {
+      index,
+      measures: [...sys].sort((a, b) => a.boundingBox.x - b.boundingBox.x),
+      y0,
+      y1,
+    };
+  });
+}
+
+function systemBoundaries(sys: SystemInfo): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < sys.measures.length - 1; i++) {
+    const a = sys.measures[i]!;
+    const b = sys.measures[i + 1]!;
+    const rightA = a.boundingBox.x + a.boundingBox.w;
+    const leftB = b.boundingBox.x;
+    out.push((rightA + leftB) / 2);
+  }
+  return out;
+}
+
+function extractBarlineXs(sys: SystemInfo): number[] {
+  const xs = sys.measures.map(m => m.boundingBox.x).sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const x of xs) {
+    const prev = out[out.length - 1];
+    if (prev === undefined || Math.abs(prev - x) > 0.002) out.push(x);
+  }
+  return out;
+}
+
+function lineKey(systemMidY: number, x: number): string {
+  return `${systemMidY.toFixed(3)}:${x.toFixed(3)}`;
+}
+
+function dedupeMeasures(measures: EditMeasure[]): EditMeasure[] {
+  const seen = new Set<string>();
+  const out: EditMeasure[] = [];
+  for (const m of measures) {
+    const k = `${m.pageNumber}:${m.boundingBox.x.toFixed(4)}:${m.boundingBox.y.toFixed(4)}:${m.boundingBox.w.toFixed(4)}:${m.boundingBox.h.toFixed(4)}:${m.movementNumber}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out;
+}
+
+function buildBarLabelMap(allMeasures: EditMeasure[]): Map<string, string> {
+  const sorted = sortMeasures(allMeasures);
+  const seenPerMovement = new Map<number, number>();
+  const labelById = new Map<string, string>();
+  for (const m of sorted) {
+    const current = (seenPerMovement.get(m.movementNumber) ?? 0) + 1;
+    seenPerMovement.set(m.movementNumber, current);
+    const label = m.movementNumber === 1 ? String(current) : `${toRoman(m.movementNumber)}.${current}`;
+    labelById.set(m.tempId, label);
+  }
+  return labelById;
+}
+
+/**
+ * Map viewport (client) coords into SVG user space (viewBox 0..1).
+ * Uses getScreenCTM so results match what the SVG actually draws — dividing by
+ * getBoundingClientRect() alone can disagree (subpixel, transforms, preserveAspectRatio).
+ */
+function svgUserCoordsFromClient(clientX: number, clientY: number, el: SVGSVGElement): { x: number; y: number } {
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  try {
+    const ctm = el.getScreenCTM();
+    if (ctm) {
+      const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+      return { x: clamp(p.x), y: clamp(p.y) };
+    }
+  } catch {
+    /* singular matrix — fall back */
+  }
   const r = el.getBoundingClientRect();
-  return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+  const w = r.width || 1;
+  const h = r.height || 1;
+  return {
+    x: clamp((clientX - r.left) / w),
+    y: clamp((clientY - r.top) / h),
+  };
+}
+
+function svgFrac(
+  e: Pick<React.MouseEvent<SVGSVGElement>, "clientX" | "clientY">,
+  el: SVGSVGElement,
+): { x: number; y: number } {
+  return svgUserCoordsFromClient(e.clientX, e.clientY, el);
+}
+
+/** Pick the system under `frac.y` when bands overlap: smallest vertical span wins (most specific row). */
+function systemAtFracY(systemInfo: SystemInfo[], fracY: number): SystemInfo | null {
+  const hits = systemInfo.filter((s) => fracY >= s.y0 && fracY <= s.y1);
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return hits[0]!;
+  return hits.reduce((best, s) => {
+    const span = s.y1 - s.y0;
+    const bestSpan = best.y1 - best.y0;
+    return span < bestSpan ? s : best;
+  });
 }
 
 // ─── SVG Overlay ─────────────────────────────────────────────────────────────
 
-function PageOverlay({
-  measures, allMeasures, editMode, activeTool, sheetMusicId, pageNumber,
-  onAddMeasures, onSetMeasures,
+export function PageOverlay({
+  measures, allMeasures, baselineMeasures, editMode, activeTool, sheetMusicId, pageNumber,
+  onSetMeasures,
 }: {
   measures: EditMeasure[];
   allMeasures: EditMeasure[];
+  baselineMeasures: EditMeasure[];
   editMode: boolean;
   activeTool: Tool;
   sheetMusicId: number;
   pageNumber: number;
-  onAddMeasures: (next: EditMeasure[]) => void;
-  onSetMeasures: (next: EditMeasure[]) => void;
+  onSetMeasures: SetMeasuresFn;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [hoveredSystem, setHoveredSystem] = useState<EditMeasure[] | null>(null);
+  /** TempIds for the row under the pointer (delete-system); same source as the red highlight. */
+  const deleteHoverTempIdsRef = useRef<readonly string[] | null>(null);
+  const [hoveredSystem, setHoveredSystem] = useState<SystemInfo | null>(null);
+  const [activeSystem, setActiveSystem] = useState<SystemInfo | null>(null);
+  const [hoverBoundaryX, setHoverBoundaryX] = useState<number | null>(null);
+  const [canDeleteBoundary, setCanDeleteBoundary] = useState(false);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
   const [detecting, setDetecting] = useState(false);
 
   const systems = groupIntoSystems(measures, pageNumber);
+  const baselineSystems = groupIntoSystems(baselineMeasures, pageNumber);
+  const systemInfo = buildSystemInfo(systems);
+  const baselineSystemInfo = buildSystemInfo(baselineSystems);
+  const barLabelById = useMemo(() => buildBarLabelMap(allMeasures), [allMeasures]);
 
   // cursor style per tool
   const cursorMap: Record<Tool, string> = {
-    "pointer": "default",
-    "add-barline": "crosshair",
-    "remove-bar": "not-allowed",
-    "delete-system": "not-allowed",
+    "barline-edit": "crosshair",
+    "delete-system": "pointer",
     "draw-system": "crosshair",
-    "movement": "cell",
   };
 
-  const handleMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!editMode || !svgRef.current) return;
-    if (activeTool === "draw-system") {
-      const frac = svgFrac(e, svgRef.current);
-      setDrawStart(frac);
+    const frac = svgUserCoordsFromClient(e.clientX, e.clientY, svgRef.current);
+
+    if (activeTool === "draw-system" && drawStart) {
       setDrawCurrent(frac);
+      return;
     }
+
+    if (activeTool === "delete-system") {
+      const sys = systemAtFracY(systemInfo, frac.y);
+      deleteHoverTempIdsRef.current = sys ? sys.measures.map((m) => m.tempId) : null;
+      setHoveredSystem(sys);
+      setActiveSystem(null);
+      setHoverBoundaryX(null);
+      setCanDeleteBoundary(false);
+      return;
+    }
+
+    if (activeTool !== "barline-edit") {
+      setActiveSystem(null);
+      setHoverBoundaryX(null);
+      setCanDeleteBoundary(false);
+      return;
+    }
+
+    const sys = systemAtFracY(systemInfo, frac.y);
+    setActiveSystem(sys);
+    if (!sys) {
+      setHoverBoundaryX(null);
+      setCanDeleteBoundary(false);
+      return;
+    }
+
+    const boundaries = systemBoundaries(sys);
+    if (boundaries.length > 0) {
+      let best: number | null = null;
+      let bestDist = Infinity;
+      for (const x of boundaries) {
+        const d = Math.abs(frac.x - x);
+        if (d < bestDist) {
+          bestDist = d;
+          best = x;
+        }
+      }
+      const nearBoundary = best !== null && bestDist <= 0.012;
+      setCanDeleteBoundary(nearBoundary);
+      setHoverBoundaryX(nearBoundary && best !== null ? best : frac.x);
+      return;
+    }
+    setCanDeleteBoundary(false);
+    setHoverBoundaryX(frac.x);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!editMode || !svgRef.current || activeTool !== "draw-system" || !drawStart) return;
-    setDrawCurrent(svgFrac(e, svgRef.current));
-  };
-
-  const handleMouseUp = async (e: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgPointerUp = async (e: React.PointerEvent<SVGSVGElement>) => {
     if (!editMode || !svgRef.current || activeTool !== "draw-system" || !drawStart || !drawCurrent) return;
     const region = {
       x: Math.min(drawStart.x, drawCurrent.x),
@@ -176,18 +339,23 @@ function PageOverlay({
       const data = await resp.json() as { boxes: BoundingBox[] };
       if (data.boxes?.length) {
         // Determine movement number: inherit from nearby existing measures
-        const nearbyMvt = allMeasures
+        const nearbyMvt = sortMeasures(allMeasures)
           .filter(m => m.pageNumber === pageNumber && m.boundingBox.y < region.y + region.h)
           .sort((a, b) => (b.boundingBox.y + b.boundingBox.h) - (a.boundingBox.y + a.boundingBox.h));
         const mvtNum = nearbyMvt[0]?.movementNumber ?? 1;
 
-        const newMeasures = data.boxes.map(box => ({
+        const detected = data.boxes.map(box => ({
           tempId: uid(),
           pageNumber,
           boundingBox: box,
           movementNumber: mvtNum,
         }));
-        onAddMeasures(newMeasures);
+
+        const retained = allMeasures.filter(m =>
+          !(m.pageNumber === pageNumber && shouldReplaceExistingInRegion(m.boundingBox, region))
+        );
+        const merged = sortMeasures(dedupeMeasures([...retained, ...detected]));
+        onSetMeasures(merged);
       }
     } catch (err) {
       console.error("detect-region error:", err);
@@ -196,106 +364,93 @@ function PageOverlay({
     }
   };
 
-  const handleMeasureClick = (e: React.MouseEvent, m: EditMeasure) => {
+  const handleSvgPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!editMode || !svgRef.current) return;
-    e.stopPropagation();
-
-    if (activeTool === "remove-bar") {
-      // Find siblings in same system to absorb the space
-      const sys = findSystem(m, systems) ?? [];
-      const sorted = [...sys].sort((a, b) => a.boundingBox.x - b.boundingBox.x);
-      const idx = sorted.indexOf(m);
-      const next = [...allMeasures];
-
-      if (idx > 0) {
-        // Extend left sibling's width
-        const leftM = sorted[idx - 1];
-        const li = next.findIndex(x => x.tempId === leftM.tempId);
-        if (li >= 0) {
-          next[li] = { ...next[li], boundingBox: { ...next[li].boundingBox, w: leftM.boundingBox.w + m.boundingBox.w } };
-        }
-      } else if (idx < sorted.length - 1) {
-        // Extend right sibling leftward
-        const rightM = sorted[idx + 1];
-        const ri = next.findIndex(x => x.tempId === rightM.tempId);
-        if (ri >= 0) {
-          next[ri] = { ...next[ri], boundingBox: { x: m.boundingBox.x, y: rightM.boundingBox.y, w: rightM.boundingBox.w + m.boundingBox.w, h: rightM.boundingBox.h } };
-        }
-      }
-      onSetMeasures(next.filter(x => x.tempId !== m.tempId));
-      return;
-    }
+    const el = svgRef.current;
 
     if (activeTool === "delete-system") {
-      const sys = findSystem(m, systems);
-      if (!sys) return;
-      const ids = new Set(sys.map(s => s.tempId));
-      onSetMeasures(allMeasures.filter(x => !ids.has(x.tempId)));
+      e.preventDefault();
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      onSetMeasures((prev) => {
+        const validIds = (ids: readonly string[] | null | undefined): readonly string[] | null => {
+          if (!ids?.length) return null;
+          return ids.every((id) => prev.some((m) => m.tempId === id)) ? ids : null;
+        };
+        const fromRef = validIds(deleteHoverTempIdsRef.current);
+        const fromState = validIds(hoveredSystem?.measures.map((m) => m.tempId));
+        const pageMeasures = prev.filter((m) => m.pageNumber === pageNumber);
+        const si = buildSystemInfo(groupIntoSystems(pageMeasures, pageNumber));
+        const frac = svgUserCoordsFromClient(clientX, clientY, el);
+        const fromPointer = validIds(systemAtFracY(si, frac.y)?.measures.map((m) => m.tempId));
+        const pick = fromRef ?? fromState ?? fromPointer;
+        if (import.meta.env.DEV) {
+          (window as unknown as { __lastScoreDeleteDebug?: unknown }).__lastScoreDeleteDebug = {
+            pick: pick ? [...pick] : null,
+            pickSource: fromRef ? "ref" : fromState ? "state" : fromPointer ? "pointer" : null,
+            frac,
+            rowBands: si.map((s) => ({ y0: s.y0, y1: s.y1, n: s.measures.length })),
+          };
+        }
+        if (!pick?.length) return prev;
+        return prev.filter((x) => !pick.includes(x.tempId));
+      });
+      deleteHoverTempIdsRef.current = null;
       return;
     }
 
-    if (activeTool === "movement") {
-      // Find global sort index of this measure
-      const sorted = [...allMeasures].sort((a, b) => {
-        if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-        if (a.boundingBox.y !== b.boundingBox.y) return a.boundingBox.y - b.boundingBox.y;
-        return a.boundingBox.x - b.boundingBox.x;
-      });
-      const mIdx = sorted.findIndex(x => x.tempId === m.tempId);
-      if (mIdx <= 0) return; // can't mark the first bar as new movement
-
-      // Determine new movement number: max movementNumber of bars before m + 1
-      const prevMax = Math.max(...sorted.slice(0, mIdx).map(x => x.movementNumber), 0);
-      const alreadyBoundary = m.movementNumber > sorted[mIdx - 1].movementNumber;
-
-      let updated: EditMeasure[];
-      if (alreadyBoundary) {
-        // Toggle off: merge this movement with the previous one
-        const oldMvt = m.movementNumber;
-        const prevMvt = sorted[mIdx - 1].movementNumber;
-        updated = allMeasures.map(x =>
-          x.movementNumber === oldMvt ? { ...x, movementNumber: prevMvt } : x
-        );
-      } else {
-        const newMvt = prevMax + 1;
-        // Reassign: m and all measures after m get newMvt (shift subsequent movements up)
-        const tempIdSet = new Set(sorted.slice(mIdx).map(x => x.tempId));
-        updated = allMeasures.map(x =>
-          tempIdSet.has(x.tempId) ? { ...x, movementNumber: x.movementNumber < newMvt ? newMvt : x.movementNumber + (newMvt - m.movementNumber) } : x
-        );
-        // Simpler: just bump every measure from mIdx onwards
-        updated = allMeasures.map(x => {
-          const si = sorted.findIndex(s => s.tempId === x.tempId);
-          if (si >= mIdx) return { ...x, movementNumber: prevMax + 1 + (x.movementNumber - m.movementNumber) };
-          return x;
-        });
-        // Even simpler and correct: all from mIdx onward get prevMax+1, keeping their relative distance
-        const base = m.movementNumber;
-        updated = allMeasures.map(x => {
-          const si = sorted.findIndex(s => s.tempId === x.tempId);
-          return si >= mIdx ? { ...x, movementNumber: prevMax + 1 + (x.movementNumber - base) } : x;
-        });
-      }
-      onSetMeasures(updated);
-      return;
+    if (activeTool === "draw-system") {
+      const frac = svgUserCoordsFromClient(e.clientX, e.clientY, el);
+      setDrawStart(frac);
+      setDrawCurrent(frac);
     }
   };
 
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!editMode || !svgRef.current) return;
-    if (activeTool !== "add-barline") return;
-
     const frac = svgFrac(e, svgRef.current);
-    const hit = hitMeasure(measures, frac.x, frac.y);
-    if (!hit) return;
+    if (activeTool === "barline-edit") {
+      const sys = systemAtFracY(systemInfo, frac.y);
+      if (!sys) return;
+      const boundaries = systemBoundaries(sys);
+      let bestIdx = -1;
+      let bestDist = Infinity;
+      for (let i = 0; i < boundaries.length; i++) {
+        const dist = Math.abs(frac.x - boundaries[i]!);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIdx = i;
+        }
+      }
+      const shouldDelete = bestIdx >= 0 && bestDist <= 0.012;
+      if (shouldDelete) {
+        const leftM = sys.measures[bestIdx]!;
+        const rightM = sys.measures[bestIdx + 1]!;
+        const merged: EditMeasure = {
+          tempId: uid(),
+          pageNumber,
+          movementNumber: leftM.movementNumber,
+          boundingBox: {
+            x: leftM.boundingBox.x,
+            y: Math.min(leftM.boundingBox.y, rightM.boundingBox.y),
+            w: (rightM.boundingBox.x + rightM.boundingBox.w) - leftM.boundingBox.x,
+            h: Math.max(leftM.boundingBox.h, rightM.boundingBox.h),
+          },
+        };
+        const kept = allMeasures.filter(mm => mm.tempId !== leftM.tempId && mm.tempId !== rightM.tempId);
+        onSetMeasures(sortMeasures([...kept, merged]));
+        return;
+      }
 
-    const { x, y, w, h } = hit.boundingBox;
-    const splitX = frac.x;
-    if (splitX <= x + 0.005 || splitX >= x + w - 0.005) return; // too close to edge
-
-    const leftBar: EditMeasure = { tempId: uid(), pageNumber, movementNumber: hit.movementNumber, boundingBox: { x, y, w: splitX - x, h } };
-    const rightBar: EditMeasure = { tempId: uid(), pageNumber, movementNumber: hit.movementNumber, boundingBox: { x: splitX, y, w: x + w - splitX, h } };
-    onSetMeasures(allMeasures.map(m => m.tempId === hit.tempId ? null : m).filter(Boolean).concat([leftBar, rightBar]) as EditMeasure[]);
+      const splitX = frac.x;
+      const hit = sys.measures.find(mm => splitX > mm.boundingBox.x + 0.005 && splitX < mm.boundingBox.x + mm.boundingBox.w - 0.005);
+      if (!hit) return;
+      const { x, y, w, h } = hit.boundingBox;
+      const leftBar: EditMeasure = { tempId: uid(), pageNumber, movementNumber: hit.movementNumber, boundingBox: { x, y, w: splitX - x, h } };
+      const rightBar: EditMeasure = { tempId: uid(), pageNumber, movementNumber: hit.movementNumber, boundingBox: { x: splitX, y, w: x + w - splitX, h } };
+      const kept = allMeasures.filter(mm => mm.tempId !== hit.tempId);
+      onSetMeasures(sortMeasures([...kept, leftBar, rightBar]));
+    }
   };
 
   const drawRect = drawStart && drawCurrent ? {
@@ -305,78 +460,169 @@ function PageOverlay({
     h: Math.abs(drawCurrent.y - drawStart.y),
   } : null;
 
+  const currentLineItems = systemInfo.flatMap((sys) => {
+    const mid = (sys.y0 + sys.y1) / 2;
+    return extractBarlineXs(sys).map((x) => ({
+      key: lineKey(mid, x),
+      x,
+      y0: sys.y0,
+      y1: sys.y1,
+    }));
+  });
+  const baselineLineItems = baselineSystemInfo.flatMap((sys) => {
+    const mid = (sys.y0 + sys.y1) / 2;
+    return extractBarlineXs(sys).map((x) => ({
+      key: lineKey(mid, x),
+      x,
+      y0: sys.y0,
+      y1: sys.y1,
+    }));
+  });
+  const currentKeys = new Set(currentLineItems.map(l => l.key));
+  const baselineKeys = new Set(baselineLineItems.map(l => l.key));
+  const addedLines = currentLineItems.filter(l => !baselineKeys.has(l.key));
+  const detectedLines = currentLineItems.filter(l => baselineKeys.has(l.key));
+  const removedLines = baselineLineItems.filter(l => !currentKeys.has(l.key));
+
   return (
     <svg
       ref={svgRef}
+      data-testid="score-overlay-svg"
       className="absolute inset-0 w-full h-full select-none"
       viewBox="0 0 1 1"
       preserveAspectRatio="none"
       style={{ cursor: editMode ? cursorMap[activeTool] : "default", userSelect: "none" }}
       onClick={handleSvgClick}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+      onPointerDown={handleSvgPointerDown}
+      onPointerMove={handleSvgPointerMove}
+      onPointerUp={handleSvgPointerUp}
+      onPointerLeave={() => {
+        deleteHoverTempIdsRef.current = null;
+        setActiveSystem(null);
+        setHoveredSystem(null);
+        setHoverBoundaryX(null);
+        setCanDeleteBoundary(false);
+      }}
     >
-      {measures.map(m => {
+      {/* Invisible hit targets for system-level actions */}
+      {measures.map((m) => {
         const { x, y, w, h } = m.boundingBox;
-        const hovered = hoveredId === m.tempId;
-        const inHovSys = hoveredSystem?.includes(m);
-        const isMovBoundary = (() => {
-          const sorted = [...allMeasures].sort((a, b) => {
-            if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
-            if (a.boundingBox.y !== b.boundingBox.y) return a.boundingBox.y - b.boundingBox.y;
-            return a.boundingBox.x - b.boundingBox.x;
-          });
-          const idx = sorted.findIndex(s => s.tempId === m.tempId);
-          return idx > 0 && sorted[idx].movementNumber > sorted[idx - 1].movementNumber;
-        })();
-
-        // Colour by movement
-        const mvtHue = m.movementNumber === 1 ? "99,102,241" :
-                       m.movementNumber === 2 ? "234,88,12" :
-                       m.movementNumber === 3 ? "21,128,61" : "168,85,247";
-
-        const fillAlpha = inHovSys && activeTool === "delete-system" ? 0.35 :
-                          hovered && editMode ? 0.30 : 0.10;
-        const strokeAlpha = hovered && editMode ? 0.9 : 0.5;
-
         return (
-          <g
+          <rect
             key={m.tempId}
-            onClick={e => handleMeasureClick(e, m)}
-            onMouseEnter={() => {
-              setHoveredId(m.tempId);
-              setHoveredSystem(activeTool === "delete-system" ? findSystem(m, systems) : null);
-            }}
-            onMouseLeave={() => { setHoveredId(null); setHoveredSystem(null); }}
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            fill="transparent"
+            stroke="none"
             style={{ pointerEvents: "all" }}
-          >
-            <rect
-              x={x} y={y} width={w} height={h}
-              fill={`rgba(${mvtHue},${fillAlpha})`}
-              stroke={`rgba(${mvtHue},${strokeAlpha})`}
-              strokeWidth="0.002"
-              rx="0.001"
-            />
-            {/* Movement boundary marker — left edge highlight */}
-            {isMovBoundary && (
-              <line x1={x} y1={y} x2={x} y2={y + h}
-                stroke={`rgba(${mvtHue},0.9)`} strokeWidth="0.005" />
-            )}
-            {/* Bar number label — small, top-left, above the box */}
-            <text
-              x={x + 0.004}
-              y={y - 0.006}
-              fontSize="0.012"
-              fill={`rgba(${mvtHue},0.85)`}
-              fontFamily="monospace"
-              style={{ pointerEvents: "none", userSelect: "none" }}
-            >
-              {barLabel(m, allMeasures)}
-            </text>
-          </g>
+          />
         );
       })}
+
+      {editMode && activeTool === "delete-system" && hoveredSystem && (
+        <rect
+          x={Math.min(...hoveredSystem.measures.map(mm => mm.boundingBox.x))}
+          y={hoveredSystem.y0}
+          width={Math.max(...hoveredSystem.measures.map(mm => mm.boundingBox.x + mm.boundingBox.w)) - Math.min(...hoveredSystem.measures.map(mm => mm.boundingBox.x))}
+          height={hoveredSystem.y1 - hoveredSystem.y0}
+          fill="rgba(220,38,38,0.12)"
+          stroke="rgba(220,38,38,0.45)"
+          strokeWidth="0.0025"
+          style={{ pointerEvents: "none" }}
+        />
+      )}
+
+      {/* Baseline/detected lines (blue in edit mode, neutral in view mode) */}
+      {detectedLines.map((l) => (
+        <line
+          key={`det-${l.key}`}
+          x1={l.x}
+          y1={l.y0}
+          x2={l.x}
+          y2={l.y1}
+          stroke={editMode ? "rgba(37,99,235,0.92)" : "rgba(59,130,246,0.72)"}
+          strokeWidth="0.0028"
+          style={{ pointerEvents: "none" }}
+        />
+      ))}
+      {/* Added lines (green in edit mode only; blue in view mode) */}
+      {addedLines.map((l) => (
+        <line
+          key={`add-${l.key}`}
+          x1={l.x}
+          y1={l.y0}
+          x2={l.x}
+          y2={l.y1}
+          stroke={editMode ? "rgba(22,163,74,0.95)" : "rgba(59,130,246,0.72)"}
+          strokeWidth="0.0033"
+          style={{ pointerEvents: "none" }}
+        />
+      ))}
+      {/* Removed baseline lines (red dashed, edit mode only; ephemeral) */}
+      {editMode && removedLines.map((l) => (
+        <line
+          key={`rm-${l.key}`}
+          x1={l.x}
+          y1={l.y0}
+          x2={l.x}
+          y2={l.y1}
+          stroke="rgba(220,38,38,0.9)"
+          strokeWidth="0.0028"
+          strokeDasharray="0.009 0.006"
+          style={{ pointerEvents: "none" }}
+        />
+      ))}
+
+      {editMode && activeTool === "barline-edit" && activeSystem && hoverBoundaryX !== null && (
+        <line
+          x1={hoverBoundaryX}
+          y1={activeSystem.y0}
+          x2={hoverBoundaryX}
+          y2={activeSystem.y1}
+          stroke={canDeleteBoundary ? "rgba(220,38,38,0.95)" : "rgba(22,163,74,0.95)"}
+          strokeWidth={canDeleteBoundary ? "0.004" : "0.0025"}
+          strokeDasharray={canDeleteBoundary ? undefined : "0.008 0.005"}
+          style={{ pointerEvents: "none" }}
+        />
+      )}
+
+      {/* Bar numbers above each system (compact blue pills) */}
+      {systemInfo.flatMap((sys) =>
+        sys.measures.map((m) => {
+          const label = barLabelById.get(m.tempId) ?? "";
+          if (!label) return null;
+          const x = m.boundingBox.x + m.boundingBox.w / 2;
+          const boxH = 0.015;
+          const boxW = Math.max(0.012, label.length * 0.0075 + 0.006);
+          const boxY = Math.max(0.001, sys.y0 - 0.022);
+          const textY = boxY + boxH * 0.72;
+          return (
+            <g key={`lbl-${m.tempId}`} style={{ pointerEvents: "none" }}>
+              <rect
+                x={x - boxW / 2}
+                y={boxY}
+                width={boxW}
+                height={boxH}
+                rx={0.0035}
+                ry={0.0035}
+                fill="rgba(37,99,235,0.95)"
+              />
+              <text
+                x={x}
+                y={textY}
+                textAnchor="middle"
+                fontSize="0.0105"
+                fontWeight="700"
+                fill="rgba(255,255,255,1)"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })
+      )}
 
       {/* Live draw-region preview */}
       {drawRect && (
@@ -400,17 +646,17 @@ function PageOverlay({
 // ─── Page viewer ──────────────────────────────────────────────────────────────
 
 function PageViewer({
-  page, zoom, allMeasures, editMode, activeTool, sheetMusicId,
-  onAddMeasures, onSetMeasures,
+  page, zoom, allMeasures, baselineMeasures, editMode, activeTool, sheetMusicId,
+  onSetMeasures,
 }: {
   page: ScorePage;
   zoom: number;
   allMeasures: EditMeasure[];
+  baselineMeasures: EditMeasure[];
   editMode: boolean;
   activeTool: Tool;
   sheetMusicId: number;
-  onAddMeasures: (next: EditMeasure[]) => void;
-  onSetMeasures: (next: EditMeasure[]) => void;
+  onSetMeasures: SetMeasuresFn;
 }) {
   const pageMeasures = allMeasures.filter(m => m.pageNumber === page.pageNumber);
   return (
@@ -428,11 +674,11 @@ function PageViewer({
         <PageOverlay
           measures={pageMeasures}
           allMeasures={allMeasures}
+          baselineMeasures={baselineMeasures}
           editMode={editMode}
           activeTool={activeTool}
           sheetMusicId={sheetMusicId}
           pageNumber={page.pageNumber}
-          onAddMeasures={onAddMeasures}
           onSetMeasures={onSetMeasures}
         />
       </div>
@@ -442,24 +688,20 @@ function PageViewer({
 
 // ─── Edit toolbar ─────────────────────────────────────────────────────────────
 
-const TOOLS: { id: Tool; icon: React.ReactNode; label: string; hint: string }[] = [
-  { id: "pointer",       icon: <MousePointer2 className="w-4 h-4" />,       label: "Pointer",        hint: "Hover bars to inspect. No edits." },
-  { id: "add-barline",   icon: <SplitSquareHorizontal className="w-4 h-4" />, label: "Add barline",  hint: "Click inside a bar to split it at that point." },
-  { id: "remove-bar",    icon: <X className="w-4 h-4" />,                   label: "Remove bar",     hint: "Click a bar to delete it (adjacent bars expand to fill)." },
+const TOOLS: { id: Exclude<Tool, "barline-edit">; icon: React.ReactNode; label: string; hint: string }[] = [
   { id: "delete-system", icon: <Trash2 className="w-4 h-4" />,              label: "Delete system",  hint: "Click any bar in a row to remove the entire system." },
   { id: "draw-system",   icon: <RectangleHorizontal className="w-4 h-4" />, label: "Add system",     hint: "Drag a rectangle around a missed system to detect bars in it." },
-  { id: "movement",      icon: <Milestone className="w-4 h-4" />,           label: "Mark movement",  hint: "Click a bar to mark it as the start of a new movement. Click again to remove." },
 ];
 
 function EditToolbar({ activeTool, onTool }: { activeTool: Tool; onTool: (t: Tool) => void }) {
   return (
     <div className="flex items-center gap-1 px-4 py-1.5 border-b border-border bg-muted/40 shrink-0">
-      <span className="text-xs text-muted-foreground mr-2 font-medium">Edit:</span>
+      <span className="text-xs text-muted-foreground mr-2 font-medium">Actions:</span>
       {TOOLS.map(t => (
         <button
           key={t.id}
           title={t.label}
-          onClick={() => onTool(t.id)}
+          onClick={() => onTool(activeTool === t.id ? "barline-edit" : t.id)}
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
             activeTool === t.id
@@ -483,10 +725,11 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [editMode, setEditMode] = useState(false);
-  const [activeTool, setActiveTool] = useState<Tool>("pointer");
+  const [activeTool, setActiveTool] = useState<Tool>("barline-edit");
 
   // Local editable measure list
   const [localMeasures, setLocalMeasures] = useState<EditMeasure[]>([]);
+  const [baselineMeasures, setBaselineMeasures] = useState<EditMeasure[]>([]);
   const [history, setHistory] = useState<EditMeasure[][]>([]); // undo stack
   const [isDirty, setIsDirty] = useState(false);
 
@@ -507,6 +750,7 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
       }))
     );
     setLocalMeasures(flat);
+    setBaselineMeasures(flat);
     setHistory([]);
     setIsDirty(false);
   }, [pages]);
@@ -542,13 +786,12 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
     setHistory(h => [...h.slice(-19), current]); // keep last 20
   }, []);
 
-  const handleSetMeasures = useCallback((next: EditMeasure[]) => {
-    setLocalMeasures(prev => { pushHistory(prev); return next; });
-    setIsDirty(true);
-  }, [pushHistory]);
-
-  const handleAddMeasures = useCallback((newMs: EditMeasure[]) => {
-    setLocalMeasures(prev => { pushHistory(prev); return [...prev, ...newMs]; });
+  const handleSetMeasures = useCallback<SetMeasuresFn>((next) => {
+    setLocalMeasures((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      pushHistory(prev);
+      return resolved;
+    });
     setIsDirty(true);
   }, [pushHistory]);
 
@@ -580,7 +823,10 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
 
   const totalPages = pages.length;
   const page = pages.find(p => p.pageNumber === currentPage);
-  const activeHint = TOOLS.find(t => t.id === activeTool)?.hint ?? "";
+  const activeHint =
+    activeTool === "barline-edit"
+      ? "Hover in a system: green line adds a barline, red line deletes one. Click to apply."
+      : (TOOLS.find(t => t.id === activeTool)?.hint ?? "");
   const mvtCount = new Set(localMeasures.map(m => m.movementNumber)).size;
 
   return (
@@ -588,7 +834,7 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-card shrink-0">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Review detected bars</p>
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Review detected barlines</p>
           <p className="font-serif text-lg font-semibold truncate">{pieceTitle}</p>
         </div>
 
@@ -623,7 +869,7 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
             variant={editMode ? "default" : "outline"}
             size="sm"
             className="gap-1.5"
-            onClick={() => { setEditMode(e => !e); setActiveTool("pointer"); }}
+            onClick={() => { setEditMode(e => !e); setActiveTool("barline-edit"); }}
           >
             <Pencil className="w-3.5 h-3.5" />
             {editMode ? "Editing" : "Edit"}
@@ -691,10 +937,10 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
               page={page}
               zoom={zoom}
               allMeasures={localMeasures}
+              baselineMeasures={baselineMeasures}
               editMode={editMode}
               activeTool={activeTool}
               sheetMusicId={sheetMusicId}
-              onAddMeasures={handleAddMeasures}
               onSetMeasures={handleSetMeasures}
             />
           ) : null}
@@ -704,7 +950,7 @@ export function ScoreReviewModal({ sheetMusicId, totalMeasures, pieceTitle, onCo
       {/* ── Footer ── */}
       <div className="flex items-center justify-between px-5 py-3 border-t border-border bg-card shrink-0">
         <p className="text-xs text-muted-foreground max-w-sm">
-          {editMode ? activeHint : "Hover bars to see numbers. Toggle Edit to make corrections."}
+          {editMode ? activeHint : "Hover barlines. Toggle Edit to make corrections."}
         </p>
         <div className="flex items-center gap-3">
           {saveMutation.isError && (

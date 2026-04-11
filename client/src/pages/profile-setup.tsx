@@ -346,7 +346,7 @@ export default function ProfileSetup() {
         });
       }
 
-      setLocation("/profile");
+      setLocation("/home");
     } catch (error) {
       console.error("Failed to save profile:", error);
     } finally {

@@ -1,15 +1,41 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { MILESTONE_TYPES } from "@shared/schema";
+import { MILESTONE_TYPES, type SessionSection } from "@shared/schema";
 import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import express from "express";
-
 const uploadsDir = path.join(process.cwd(), "uploads", "sheet-music");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+function getWarmupTasks(instr: string): string[] {
+  if (instr.includes("piano")) {
+    return ["Scales (2 octaves, hands separately)", "Arpeggios", "Hanon exercises (2–3)"];
+  } else if (instr.includes("violin") || instr.includes("viola") || instr.includes("cello")) {
+    return ["Long tones (open strings)", "Scales (1 octave, slow bow)", "Shifting exercises"];
+  } else if (instr.includes("guitar")) {
+    return ["Chromatic warm-up", "Major scale patterns", "Arpeggios (p-i-m-a)"];
+  } else if (instr.includes("voice") || instr.includes("vocal")) {
+    return ["Lip trills (5-note scale)", "Humming (descending 5ths)", "Vowel exercise on [a]"];
+  } else {
+    return ["Long tones or sustained notes", "Scales (slow, full range)", "Technical exercise of choice"];
+  }
+}
+
+function getPracticeTasks(start: number, end: number): string[] {
+  const tasks: string[] = [];
+  const chunkSize = Math.max(2, Math.floor((end - start + 1) / 3));
+  for (let s = start; s <= end; s += chunkSize) {
+    const e = Math.min(s + chunkSize - 1, end);
+    const label = s === e ? `m. ${s}` : `mm. ${s}–${e}`;
+    tasks.push(`${label}, hands separately ♩=46`);
+    tasks.push(`${label}, hands together ♩=52`);
+  }
+  tasks.push(`Play mm. ${start}–${end} through`);
+  return tasks;
+}
 
 const upload = multer({
   dest: uploadsDir,
@@ -22,6 +48,17 @@ const upload = multer({
 
 /** In-memory processing progress: sheetMusicId → { page, total } */
 const processingProgress = new Map<number, { page: number; total: number }>();
+
+/** DB may store absolute paths from older crops; the client needs `/uploads/...` URLs. */
+function measureImageUrlForClient(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  const s = stored.trim();
+  if (s.startsWith("/uploads/")) return s;
+  const forward = s.replace(/\\/g, "/");
+  const idx = forward.toLowerCase().indexOf("/uploads/");
+  if (idx >= 0) return forward.slice(idx);
+  return null;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -371,9 +408,12 @@ export async function registerRoutes(
   // Look up plan by its own ID
   app.get("/api/learning-plans/:planId", async (req, res) => {
     try {
-      const planId = parseInt(req.params.planId);
+      const userId = req.headers["x-user-id"] as string | undefined;
+      const planId = parseInt(req.params.planId, 10);
       const plan = await storage.getLearningPlanById(planId);
-      res.json(plan || null);
+      if (!plan) return res.json(null);
+      if (userId && plan.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+      res.json(plan);
     } catch {
       res.status(500).json({ error: "Failed to get learning plan" });
     }
@@ -401,6 +441,20 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/learning-plans/:id", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const ok = await storage.deleteLearningPlan(id, userId);
+      if (!ok) return res.status(404).json({ error: "Learning plan not found" });
+      res.status(204).end();
+    } catch {
+      res.status(500).json({ error: "Failed to delete learning plan" });
+    }
+  });
+
   // ── Sheet Music ──────────────────────────────────────────────────────────
 
   app.post("/api/sheet-music/upload", upload.single("pdf"), async (req, res) => {
@@ -418,57 +472,102 @@ export async function registerRoutes(
         processingStatus: "pending",
       });
 
-      // Immediately kick off bar detection in the background
       const smId = record.id;
-      import("./scorebars/index.js").then(async ({ ScorebarService }) => {
-        try {
-          await storage.updateSheetMusicStatus(smId, "processing");
-          processingProgress.set(smId, { page: 0, total: 0 });
-          const pagesDir = path.join(process.cwd(), "uploads", "pages", String(smId));
-          const service = new ScorebarService({
-            pagesDir,
-            onProgress: (page, total) => {
-              processingProgress.set(smId, { page, total });
-            },
-          });
-          const result = await service.processFile(record.fileUrl);
-          await storage.saveMeasures(toInsertMeasures(smId, result.measures));
-          await storage.updateSheetMusicStatus(smId, "ready", result.pageCount);
-          processingProgress.delete(smId);
-          const plan = await storage.getLearningPlanBySheetMusic(smId);
-          if (plan) {
-            await storage.updateLearningPlan(plan.id, { totalMeasures: result.measures.length });
-          }
-        } catch (err) {
-          console.error("ScoreBars processing failed:", err);
-          await storage.updateSheetMusicStatus(smId, "failed");
-          processingProgress.delete(smId);
+      let pageCount: number | null = null;
+      try {
+        const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
+        const n = await getPdfPageCountForPath(record.fileUrl);
+        if (n > 0) {
+          pageCount = n;
+          await storage.updateSheetMusicStatus(smId, "pending", n);
         }
-      }).catch(console.error);
+      } catch (e) {
+        console.warn("Could not count PDF pages at upload:", e);
+      }
 
-      res.status(201).json({ sheetMusicId: record.id });
+      res.status(201).json({ sheetMusicId: smId, pageCount });
     } catch (err) {
       console.error("Upload route error:", err);
       res.status(500).json({ error: "Failed to upload sheet music" });
     }
   });
 
-  app.post("/api/sheet-music/:id/process", async (req, res) => {
+  app.get("/api/sheet-music/:id/pdf-meta", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const userId = req.headers["x-user-id"] as string | undefined;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
       const record = await storage.getSheetMusic(id);
       if (!record) return res.status(404).json({ error: "Sheet music not found" });
+      if (record.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+      const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
+      const pageCount = await getPdfPageCountForPath(record.fileUrl);
+      if (pageCount <= 0) {
+        return res.status(422).json({ error: "Could not read PDF page count" });
+      }
+      res.json({ pageCount });
+    } catch {
+      res.status(500).json({ error: "Failed to read PDF" });
+    }
+  });
+
+  app.post("/api/sheet-music/:id/process", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string | undefined;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const record = await storage.getSheetMusic(id);
+      if (!record) return res.status(404).json({ error: "Sheet music not found" });
+      if (record.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+      const body = req.body as { firstPage?: number; lastPage?: number };
+      const { getPdfPageCountForPath } = await import("./scorebars/pdf-processor.js");
+      let pdfTotal = record.pageCount ?? (await getPdfPageCountForPath(record.fileUrl));
+      if (pdfTotal <= 0) {
+        pdfTotal = await getPdfPageCountForPath(record.fileUrl);
+      }
+      if (pdfTotal <= 0) {
+        return res.status(422).json({ error: "Could not determine PDF length" });
+      }
+
+      let firstPage = typeof body.firstPage === "number" && Number.isFinite(body.firstPage) ? Math.floor(body.firstPage) : 1;
+      let lastPage =
+        typeof body.lastPage === "number" && Number.isFinite(body.lastPage) ? Math.floor(body.lastPage) : pdfTotal;
+      firstPage = Math.max(1, Math.min(firstPage, pdfTotal));
+      lastPage = Math.max(firstPage, Math.min(lastPage, pdfTotal));
 
       await storage.updateSheetMusicStatus(id, "processing");
 
-      // Fire-and-forget: process asynchronously
+      const pagesDir = path.join(process.cwd(), "uploads", "pages", String(id));
+      const measuresOutputDir = path.join(process.cwd(), "uploads", "measures", String(id));
+      try {
+        if (fs.existsSync(pagesDir)) fs.rmSync(pagesDir, { recursive: true });
+        if (fs.existsSync(measuresOutputDir)) fs.rmSync(measuresOutputDir, { recursive: true });
+      } catch (e) {
+        console.warn("Could not clear prior score outputs:", e);
+      }
+      await storage.clearMeasuresForSheetMusic(id);
+
+      const pageRange = { firstPdfPage: firstPage, lastPdfPage: lastPage };
+
       import("./scorebars/index.js").then(async ({ ScorebarService }) => {
         try {
-          const service = new ScorebarService();
-          const result = await service.processFile(record.fileUrl);
+          processingProgress.set(id, { page: 0, total: 0 });
+          if (!fs.existsSync(pagesDir)) fs.mkdirSync(pagesDir, { recursive: true });
+          const service = new ScorebarService({
+            pagesDir,
+            renderDpi: 220,
+            onProgress: (page, total) => {
+              processingProgress.set(id, { page, total });
+            },
+          });
+          const result = await service.processFile(record.fileUrl, pageRange);
           const savedMeasures = await storage.saveMeasures(toInsertMeasures(id, result.measures));
-          await storage.updateSheetMusicStatus(id, "done", result.pageCount);
-          // Auto-update learning plan total measures if one exists
+          await storage.updateSheetMusicStatus(id, "ready", result.pageCount);
+          processingProgress.delete(id);
           const plan = await storage.getLearningPlanBySheetMusic(id);
           if (plan) {
             await storage.updateLearningPlan(plan.id, { totalMeasures: savedMeasures.length });
@@ -476,10 +575,11 @@ export async function registerRoutes(
         } catch (err) {
           console.error("ScoreBars processing failed:", err);
           await storage.updateSheetMusicStatus(id, "failed");
+          processingProgress.delete(id);
         }
       }).catch(console.error);
 
-      res.json({ status: "processing" });
+      res.json({ status: "processing", firstPage, lastPage });
     } catch {
       res.status(500).json({ error: "Failed to start processing" });
     }
@@ -551,7 +651,12 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const measureList = await storage.getMeasures(id);
-      res.json(measureList);
+      res.json(
+        measureList.map((m) => ({
+          ...m,
+          imageUrl: measureImageUrlForClient(m.imageUrl ?? null),
+        })),
+      );
     } catch {
       res.status(500).json({ error: "Failed to get measures" });
     }
@@ -594,8 +699,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Page image not found" });
       }
       const imageBuffer = fs.readFileSync(pageImagePath);
-      const pageWidth  = imageBuffer.readUInt32BE(16);
-      const pageHeight = imageBuffer.readUInt32BE(20);
+      const { loadImage } = await import("canvas");
+      const img = await loadImage(imageBuffer);
+      const pageWidth = img.width;
+      const pageHeight = img.height;
 
       const { BarDetector } = await import("./scorebars/bar-detector.js");
       const detector = new BarDetector();
@@ -630,9 +737,24 @@ export async function registerRoutes(
         return a.boundingBox.x - b.boundingBox.x;
       });
 
-      const insertRows = sorted.map((m, i) => ({
+      const uniquePages = Array.from(new Set(sorted.map((m) => m.pageNumber))).sort((a, b) => a - b);
+      for (const p of uniquePages) {
+        const pagePath = path.join(process.cwd(), "uploads", "pages", String(id), `page-${p}.png`);
+        if (!fs.existsSync(pagePath)) {
+          return res.status(400).json({ error: `Page image missing for page ${p}` });
+        }
+      }
+
+      const measuresLegacyDir = path.join(process.cwd(), "uploads", "measures", String(id));
+      try {
+        if (fs.existsSync(measuresLegacyDir)) fs.rmSync(measuresLegacyDir, { recursive: true });
+      } catch (e) {
+        console.warn("Could not remove legacy measure crops:", e);
+      }
+
+      const insertRows = sorted.map((m, index) => ({
         sheetMusicId: id,
-        measureNumber: i + 1,
+        measureNumber: index + 1,
         pageNumber: m.pageNumber,
         boundingBox: m.boundingBox,
         movementNumber: m.movementNumber,
@@ -673,7 +795,7 @@ export async function registerRoutes(
 
   app.post("/api/learning-plans/:planId/generate-lessons", async (req, res) => {
     try {
-      const planId = parseInt(req.params.planId);
+      const planId = parseInt(req.params.planId, 10);
       const plan = await storage.getLearningPlanById(planId);
       if (!plan) return res.status(404).json({ error: "Plan not found" });
 
@@ -684,36 +806,80 @@ export async function registerRoutes(
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const target = new Date(targetCompletionDate);
-      const totalDays = Math.max(1, Math.round((target.getTime() - today.getTime()) / 86400000));
+      const totalDays = Math.max(1, Math.ceil((target.getTime() - today.getTime()) / 86400000));
 
-      // How many measures to assign per day (at least 1)
-      const measuresPerDay = totalMeasures > 0 ? Math.ceil(totalMeasures / totalDays) : 1;
+      await storage.deleteLessonDaysForPlan(planId);
 
-      const days: Array<{
+      // Look up piece info for task generation
+      const entry = await storage.getRepertoireEntryById(plan.repertoireEntryId);
+      const piece = entry ? await storage.getPieceById(entry.pieceId) : undefined;
+      const userProfile = await storage.getUserProfile(plan.userId);
+      const instrument = (userProfile?.instrument ?? piece?.instrument ?? "Piano").toLowerCase();
+      const practiceMins = plan.dailyPracticeMinutes ?? 30;
+      const warmupMins = Math.min(5, Math.floor(practiceMins * 0.2));
+      const practiceSectionMins = practiceMins - warmupMins;
+
+      const buildTasks = (start: number, end: number): SessionSection[] => {
+        const warmupTasks = getWarmupTasks(instrument);
+        const practiceTasks = getPracticeTasks(start, end);
+        return [
+          { type: "warmup", label: "Warmup", durationMin: warmupMins, tasks: warmupTasks.map((t) => ({ text: t })) },
+          { type: "piece_practice", label: "Piece Practice", durationMin: practiceSectionMins, tasks: practiceTasks.map((t) => ({ text: t })) },
+        ];
+      };
+
+      type DayRow = {
         learningPlanId: number;
         scheduledDate: string;
         measureStart: number;
         measureEnd: number;
-        status: "pending";
-      }> = [];
+        status: "upcoming";
+        tasks: SessionSection[];
+      };
 
-      let measureCursor = 1;
-      for (let i = 0; i < totalDays; i++) {
-        const d = new Date(today);
-        d.setDate(d.getDate() + i);
-        const dateStr = d.toISOString().split("T")[0];
-        const start = measureCursor;
-        const end = totalMeasures > 0 ? Math.min(measureCursor + measuresPerDay - 1, totalMeasures) : measuresPerDay;
-        days.push({ learningPlanId: planId, scheduledDate: dateStr, measureStart: start, measureEnd: end, status: "pending" });
-        if (totalMeasures > 0) {
-          measureCursor = end + 1;
-          if (measureCursor > totalMeasures) break;
-        } else {
-          measureCursor += measuresPerDay;
+      const rows: DayRow[] = [];
+
+      if (totalMeasures <= 0) {
+        for (let i = 0; i < totalDays; i++) {
+          const d = new Date(today);
+          d.setDate(d.getDate() + i);
+          rows.push({
+            learningPlanId: planId,
+            scheduledDate: d.toISOString().split("T")[0],
+            measureStart: 1,
+            measureEnd: 1,
+            status: "upcoming",
+            tasks: buildTasks(1, 1),
+          });
+        }
+      } else {
+        const base = Math.floor(totalMeasures / totalDays);
+        let extra = totalMeasures % totalDays;
+        let cursor = 1;
+        let dayIndex = 0;
+        while (cursor <= totalMeasures && dayIndex < totalDays) {
+          const n = base + (extra > 0 ? 1 : 0);
+          if (extra > 0) extra--;
+          if (n <= 0) break;
+          const start = cursor;
+          const end = Math.min(cursor + n - 1, totalMeasures);
+          const d = new Date(today);
+          d.setDate(d.getDate() + dayIndex);
+          rows.push({
+            learningPlanId: planId,
+            scheduledDate: d.toISOString().split("T")[0],
+            measureStart: start,
+            measureEnd: end,
+            status: "upcoming",
+            tasks: buildTasks(start, end),
+          });
+          cursor = end + 1;
+          dayIndex++;
         }
       }
 
-      const created = await storage.createLessonDays(days);
+      const created = await storage.createLessonDays(rows);
+      await storage.updateLearningPlan(planId, { status: "active" });
       res.status(201).json({ lessonDays: created.length });
     } catch (err) {
       console.error("generate-lessons error:", err);
@@ -740,6 +906,21 @@ export async function registerRoutes(
       res.json(updated);
     } catch {
       res.status(500).json({ error: "Failed to update lesson" });
+    }
+  });
+
+  /** Lesson day + plan + piece context for the practice session screen (auth: plan owner). */
+  app.get("/api/lessons/:id/session", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string | undefined;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid lesson id" });
+      const bundle = await storage.getLessonSessionBundle(id, userId);
+      if (!bundle) return res.status(404).json({ error: "Lesson not found" });
+      res.json(bundle);
+    } catch {
+      res.status(500).json({ error: "Failed to load session" });
     }
   });
 
@@ -783,12 +964,29 @@ export async function registerRoutes(
 
   app.put("/api/learning-plans/:planId/progress/:measureNumber", async (req, res) => {
     try {
-      const planId = parseInt(req.params.planId);
-      const measureNumber = parseInt(req.params.measureNumber);
+      const planId = parseInt(req.params.planId, 10);
+      const measureNumber = parseInt(req.params.measureNumber, 10);
       const userId = (req.headers["x-user-id"] as string) || req.body.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
-      const updated = await storage.upsertMeasureProgress({ planId, measureId: measureNumber, userId, ...req.body });
+      const plan = await storage.getLearningPlanById(planId);
+      if (!plan) return res.status(404).json({ error: "Plan not found" });
+      const sheetId = plan.sheetMusicId;
+      if (sheetId == null) {
+        return res.status(400).json({ error: "Plan has no sheet music; cannot record bar progress" });
+      }
+      const measureList = await storage.getMeasures(sheetId);
+      const measureRow = measureList.find((m) => m.measureNumber === measureNumber);
+      if (!measureRow) {
+        return res.status(404).json({ error: `No measure ${measureNumber} in this score` });
+      }
+
+      const updated = await storage.upsertMeasureProgress({
+        planId,
+        measureId: measureRow.id,
+        userId,
+        ...req.body,
+      });
 
       // Auto-trigger milestones based on progress thresholds (fire-and-forget)
       storage.getLearningPlanById(planId).then(async (plan) => {
@@ -924,6 +1122,121 @@ export async function registerRoutes(
       res.json(results);
     } catch {
       res.status(500).json({ error: "Failed to search" });
+    }
+  });
+
+  // ── Community Scores ───────────────────────────────────────────────────────
+
+  /**
+   * GET /api/community-scores?pieceId=:id[&movementId=:mid]
+   * Returns the single community score for the given (piece, movement) scope.
+   * Omitting movementId (or passing "null") matches whole-piece scores.
+   */
+  app.get("/api/community-scores", async (req, res) => {
+    const pieceId = parseInt(req.query.pieceId as string, 10);
+    if (!pieceId || isNaN(pieceId)) return res.status(400).json({ error: "pieceId required" });
+    const movementIdRaw = req.query.movementId as string | undefined;
+    const movementId = movementIdRaw && movementIdRaw !== "null"
+      ? parseInt(movementIdRaw, 10)
+      : null;
+    try {
+      const score = await storage.getCommunityScoreByPiece(pieceId, movementId);
+      if (!score) return res.status(404).json(null);
+      const totalMeasures = await storage.getMeasureCount(score.sheetMusicId);
+      res.json({ ...score, totalMeasures });
+    } catch {
+      res.status(500).json({ error: "Failed to fetch community score" });
+    }
+  });
+
+  /**
+   * GET /api/community-scores/piece/:pieceId
+   * Returns all community scores for a piece across all movement scopes,
+   * with movementName joined in. Used by the piece detail page.
+   */
+  app.get("/api/community-scores/piece/:pieceId", async (req, res) => {
+    const pieceId = parseInt(req.params.pieceId, 10);
+    if (isNaN(pieceId)) return res.status(400).json({ error: "Invalid pieceId" });
+    try {
+      const scores = await storage.getAllCommunityScoresForPiece(pieceId);
+      const withCounts = await Promise.all(scores.map(async (s) => {
+        const totalMeasures = await storage.getMeasureCount(s.sheetMusicId);
+        return { ...s, totalMeasures };
+      }));
+      res.json(withCounts);
+    } catch {
+      res.status(500).json({ error: "Failed to fetch community scores" });
+    }
+  });
+
+  /** POST /api/community-scores — submit a completed score analysis to the community */
+  app.post("/api/community-scores", async (req, res) => {
+    const userId = req.headers["x-user-id"] as string;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const { sheetMusicId, description, movementId } = req.body as {
+      sheetMusicId: number;
+      description?: string;
+      movementId?: number | null;
+    };
+    if (!sheetMusicId) return res.status(400).json({ error: "sheetMusicId required" });
+    try {
+      const sm = await storage.getSheetMusic(sheetMusicId);
+      if (!sm) return res.status(404).json({ error: "Sheet music not found" });
+      if (sm.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+      if (sm.processingStatus !== "done" && sm.processingStatus !== "ready") {
+        return res.status(400).json({ error: "Bar analysis not complete" });
+      }
+      // If bars were detected but not yet finalised, confirm them now so the
+      // sheet music doesn't need to go through the full learning-plan wizard first.
+      if (sm.processingStatus === "ready") {
+        await storage.confirmMeasures(sheetMusicId);
+      }
+      if (!sm.pieceId) return res.status(400).json({ error: "Sheet music has no associated piece" });
+      const resolvedMovementId = movementId ?? null;
+      const existing = await storage.getCommunityScoreByPiece(sm.pieceId, resolvedMovementId);
+      if (existing) return res.status(409).json({ error: "A community score already exists for this scope" });
+      const created = await storage.createCommunityScore({
+        pieceId: sm.pieceId,
+        movementId: resolvedMovementId,
+        sheetMusicId,
+        submittedByUserId: userId,
+        description: description ?? null,
+      });
+      const totalMeasures = await storage.getMeasureCount(sheetMusicId);
+      res.status(201).json({ ...created, totalMeasures });
+    } catch {
+      res.status(500).json({ error: "Failed to create community score" });
+    }
+  });
+
+  /** POST /api/community-scores/:id/use — increment download count when a user adopts a community score */
+  app.post("/api/community-scores/:id/use", async (req, res) => {
+    const userId = req.headers["x-user-id"] as string;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      await storage.incrementCommunityScoreDownloads(id);
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: "Failed to record usage" });
+    }
+  });
+
+  /** DELETE /api/community-scores/:id — only the submitter can delete */
+  app.delete("/api/community-scores/:id", async (req, res) => {
+    const userId = req.headers["x-user-id"] as string;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    try {
+      const score = await storage.getCommunityScoreById(id);
+      if (!score) return res.status(404).json({ error: "Not found" });
+      if (score.submittedByUserId !== userId) return res.status(403).json({ error: "Forbidden" });
+      await storage.deleteCommunityScore(id);
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: "Failed to delete community score" });
     }
   });
 

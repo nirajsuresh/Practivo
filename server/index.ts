@@ -122,6 +122,8 @@ app.use((req, res, next) => {
       uploaded_at timestamp DEFAULT now()
     )`);
 
+    await db.execute(sql`ALTER TABLE learning_plans ADD COLUMN IF NOT EXISTS sheet_music_id integer REFERENCES sheet_music(id)`);
+
     await db.execute(sql`CREATE TABLE IF NOT EXISTS measures (
       id serial PRIMARY KEY,
       sheet_music_id integer NOT NULL REFERENCES sheet_music(id),

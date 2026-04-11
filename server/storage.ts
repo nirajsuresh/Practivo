@@ -12,12 +12,13 @@ import {
   type Measure, type InsertMeasure,
   type LessonDay, type InsertLessonDay,
   type MeasureProgress, type InsertMeasureProgress,
+  type CommunityScore, type InsertCommunityScore,
   users, composers, pieces, movements, repertoireEntries, userProfiles,
   pieceAnalyses, pieceMilestones,
-  learningPlans, sheetMusic, measures, lessonDays, measureProgress,
+  learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, sql, ne } from "drizzle-orm";
+import { eq, ilike, and, desc, sql, ne, inArray, isNull } from "drizzle-orm";
 
 const CANONICAL_REPERTOIRE_STATUSES = [
   "Want to learn",
@@ -87,6 +88,7 @@ export interface IStorage {
     movementOrderByPiece: Record<number, number[]>;
   }>;
   createRepertoireEntry(entry: InsertRepertoireEntry): Promise<RepertoireEntry>;
+  getRepertoireEntryById(id: number): Promise<RepertoireEntry | undefined>;
   updateRepertoireEntry(id: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry | undefined>;
   updateRepertoireByPiece(userId: string, pieceId: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry[]>;
   deleteRepertoireEntry(id: number): Promise<boolean>;
@@ -124,6 +126,7 @@ export interface IStorage {
   getLearningPlanBySheetMusic(sheetMusicId: number): Promise<LearningPlan | undefined>;
   createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan>;
   updateLearningPlan(id: number, updates: Partial<InsertLearningPlan>): Promise<LearningPlan | undefined>;
+  deleteLearningPlan(id: number, userId: string): Promise<boolean>;
 
   // ── Sheet Music ──────────────────────────────────────────────────────────
   createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic>;
@@ -133,18 +136,37 @@ export interface IStorage {
   replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
   getMeasures(sheetMusicId: number): Promise<Measure[]>;
   getMeasureCount(sheetMusicId: number): Promise<number>;
+  clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void>;
   updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined>;
   confirmMeasures(sheetMusicId: number): Promise<void>;
 
   // ── Lesson Days ──────────────────────────────────────────────────────────
   getLessonDays(learningPlanId: number): Promise<LessonDay[]>;
   getLessonDay(learningPlanId: number, date: string): Promise<LessonDay | undefined>;
+  getLessonSessionBundle(
+    lessonId: number,
+    userId: string,
+  ): Promise<{
+    lesson: LessonDay;
+    plan: LearningPlan;
+    pieceTitle: string;
+    composerName: string;
+  } | null>;
   createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]>;
+  deleteLessonDaysForPlan(learningPlanId: number): Promise<void>;
   updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined>;
 
   // ── Measure Progress ─────────────────────────────────────────────────────
   getMeasureProgress(learningPlanId: number): Promise<MeasureProgress[]>;
   upsertMeasureProgress(data: { planId: number; measureId: number; userId: string } & Partial<InsertMeasureProgress>): Promise<MeasureProgress>;
+
+  // ── Community Scores ─────────────────────────────────────────────────────
+  getCommunityScoreById(id: number): Promise<CommunityScore | undefined>;
+  getCommunityScoreByPiece(pieceId: number, movementId?: number | null): Promise<CommunityScore | undefined>;
+  getAllCommunityScoresForPiece(pieceId: number): Promise<CommunityScore[]>;
+  createCommunityScore(data: InsertCommunityScore): Promise<CommunityScore>;
+  incrementCommunityScoreDownloads(id: number): Promise<void>;
+  deleteCommunityScore(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -433,6 +455,11 @@ export class DatabaseStorage implements IStorage {
     }
     const [newEntry] = await db.insert(repertoireEntries).values(entry).returning();
     return newEntry;
+  }
+
+  async getRepertoireEntryById(id: number): Promise<RepertoireEntry | undefined> {
+    const [row] = await db.select().from(repertoireEntries).where(eq(repertoireEntries.id, id));
+    return row;
   }
 
   async updateRepertoireEntry(id: number, updates: Partial<InsertRepertoireEntry>): Promise<RepertoireEntry | undefined> {
@@ -740,6 +767,17 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async deleteLearningPlan(id: number, userId: string): Promise<boolean> {
+    const plan = await this.getLearningPlanById(id);
+    if (!plan || plan.userId !== userId) return false;
+    await db.transaction(async (tx) => {
+      await tx.delete(measureProgress).where(eq(measureProgress.learningPlanId, id));
+      await tx.delete(lessonDays).where(eq(lessonDays.learningPlanId, id));
+      await tx.delete(learningPlans).where(eq(learningPlans.id, id));
+    });
+    return true;
+  }
+
   // ── Sheet Music ──────────────────────────────────────────────────────────
 
   async createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic> {
@@ -784,6 +822,14 @@ export class DatabaseStorage implements IStorage {
     return result?.count ?? 0;
   }
 
+  async clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void> {
+    const rows = await db.select({ id: measures.id }).from(measures).where(eq(measures.sheetMusicId, sheetMusicId));
+    const ids = rows.map((r) => r.id);
+    if (ids.length === 0) return;
+    await db.delete(measureProgress).where(inArray(measureProgress.measureId, ids));
+    await db.delete(measures).where(eq(measures.sheetMusicId, sheetMusicId));
+  }
+
   async updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined> {
     const [updated] = await db.update(measures).set(updates).where(eq(measures.id, id)).returning();
     return updated;
@@ -808,9 +854,45 @@ export class DatabaseStorage implements IStorage {
     return lesson;
   }
 
+  async getLessonSessionBundle(
+    lessonId: number,
+    userId: string,
+  ): Promise<{
+    lesson: LessonDay;
+    plan: LearningPlan;
+    pieceTitle: string;
+    composerName: string;
+    dayIndex: number;
+  } | null> {
+    const [lesson] = await db.select().from(lessonDays).where(eq(lessonDays.id, lessonId));
+    if (!lesson) return null;
+    const plan = await this.getLearningPlanById(lesson.learningPlanId);
+    if (!plan || plan.userId !== userId) return null;
+    const [ctx] = await db
+      .select({ pieceTitle: pieces.title, composerName: composers.name })
+      .from(repertoireEntries)
+      .innerJoin(pieces, eq(repertoireEntries.pieceId, pieces.id))
+      .innerJoin(composers, eq(repertoireEntries.composerId, composers.id))
+      .where(eq(repertoireEntries.id, plan.repertoireEntryId))
+      .limit(1);
+    if (!ctx) return null;
+    // Compute 1-based day index by counting lessons scheduled before this one
+    const allLessons = await db
+      .select({ id: lessonDays.id, scheduledDate: lessonDays.scheduledDate })
+      .from(lessonDays)
+      .where(eq(lessonDays.learningPlanId, lesson.learningPlanId))
+      .orderBy(lessonDays.scheduledDate);
+    const dayIndex = allLessons.findIndex((l) => l.id === lessonId) + 1;
+    return { lesson, plan, pieceTitle: ctx.pieceTitle, composerName: ctx.composerName, dayIndex };
+  }
+
   async createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]> {
     if (days.length === 0) return [];
     return db.insert(lessonDays).values(days).returning();
+  }
+
+  async deleteLessonDaysForPlan(learningPlanId: number): Promise<void> {
+    await db.delete(lessonDays).where(eq(lessonDays.learningPlanId, learningPlanId));
   }
 
   async updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined> {
@@ -836,6 +918,40 @@ export class DatabaseStorage implements IStorage {
       .values({ learningPlanId: planId, measureId, userId, ...rest })
       .returning();
     return created;
+  }
+
+  // ── Community Scores ─────────────────────────────────────────────────────
+
+  async getCommunityScoreById(id: number): Promise<CommunityScore | undefined> {
+    const [row] = await db.select().from(communityScores).where(eq(communityScores.id, id));
+    return row;
+  }
+
+  async getCommunityScoreByPiece(pieceId: number, movementId?: number | null): Promise<CommunityScore | undefined> {
+    const conditions = movementId != null
+      ? and(eq(communityScores.pieceId, pieceId), eq(communityScores.movementId, movementId))
+      : and(eq(communityScores.pieceId, pieceId), isNull(communityScores.movementId));
+    const [row] = await db.select().from(communityScores).where(conditions);
+    return row;
+  }
+
+  async getAllCommunityScoresForPiece(pieceId: number): Promise<CommunityScore[]> {
+    return db.select().from(communityScores).where(eq(communityScores.pieceId, pieceId));
+  }
+
+  async createCommunityScore(data: InsertCommunityScore): Promise<CommunityScore> {
+    const [row] = await db.insert(communityScores).values(data).returning();
+    return row;
+  }
+
+  async incrementCommunityScoreDownloads(id: number): Promise<void> {
+    await db.update(communityScores)
+      .set({ downloadCount: sql`${communityScores.downloadCount} + 1` })
+      .where(eq(communityScores.id, id));
+  }
+
+  async deleteCommunityScore(id: number): Promise<void> {
+    await db.delete(communityScores).where(eq(communityScores.id, id));
   }
 }
 

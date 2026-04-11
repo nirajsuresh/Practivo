@@ -18,7 +18,7 @@ export function toInsertMeasures(
     measureNumber: m.measureNumber,
     pageNumber: m.pageNumber,
     boundingBox: m.boundingBox as any,
-    imageUrl: m.imageUrl,
+    imageUrl: m.imageUrl ?? null,
     userCorrected: false,
     confirmedAt: null,
   }));

@@ -57,109 +57,125 @@
   --font-serif: "Fraunces", "Playfair Display", serif;
 }
 
-/* Vibrant brand theme */
+/*
+ * Light-first Réperto palette (hex → HSL)
+ * Ivory #F4F1EA · Secondary #E9E5DC · Divider #D6D1C7
+ * Text #1C1C1A / #5C5A54 / #8A877F · Gold #DCCAA6 / #EADDC8 / #C8B388 · Sage #729E8F
+ * Dark rails #0F0F0E / #181817 (used in .dark)
+ */
 :root {
-  --background: 312 18% 94%;
-  --foreground: 196 54% 17%;
+  --background: 43 28% 94%;
+  --foreground: 60 5% 11%;
 
-  --card: 0 0% 100%;
-  --card-foreground: 196 54% 17%;
+  --card: 42 22% 89%;
+  --card-foreground: 60 5% 11%;
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 196 54% 17%;
+  --popover: 43 28% 94%;
+  --popover-foreground: 60 5% 11%;
 
-  --primary: 196 54% 17%;
-  --primary-foreground: 312 18% 94%;
+  --primary: 43 38% 74%;
+  --primary-foreground: 60 5% 11%;
 
-  --secondary: 181 38% 90%;
-  --secondary-foreground: 196 54% 17%;
+  --secondary: 42 22% 89%;
+  --secondary-foreground: 60 5% 11%;
 
-  --muted: 314 15% 88%;
-  --muted-foreground: 196 26% 36%;
+  --muted: 42 18% 86%;
+  --muted-foreground: 42 5% 45%;
 
-  --accent: 35 84% 54%;
-  --accent-foreground: 196 54% 17%;
+  --accent: 44 36% 82%;
+  --accent-foreground: 60 5% 11%;
 
-  --destructive: 2 73% 38%;
-  --destructive-foreground: 0 0% 100%;
+  --destructive: 0 72% 40%;
+  --destructive-foreground: 43 28% 98%;
 
-  --border: 190 25% 77%;
-  --input: 190 25% 77%;
-  --ring: 181 81% 31%;
+  --border: 40 16% 81%;
+  --input: 40 16% 81%;
+  --ring: 43 32% 68%;
 
   --radius: 0.5rem;
 
-  --chart-1: 181 81% 31%;
-  --chart-2: 35 84% 54%;
-  --chart-3: 2 73% 38%;
-  --chart-4: 196 54% 17%;
-  --chart-5: 315 10% 84%;
+  --chart-1: 43 38% 74%;
+  --chart-2: 44 36% 82%;
+  --chart-3: 158 19% 53%;
+  --chart-4: 42 5% 45%;
+  --chart-5: 0 65% 45%;
 
-  --sidebar: 315 24% 92%;
-  --sidebar-foreground: 196 54% 17%;
-  --sidebar-primary: 196 54% 17%;
-  --sidebar-primary-foreground: 312 18% 94%;
-  --sidebar-accent: 181 38% 90%;
-  --sidebar-accent-foreground: 196 54% 17%;
-  --sidebar-border: 190 25% 77%;
-  --sidebar-ring: 181 81% 31%;
+  --sidebar: 42 22% 89%;
+  --sidebar-foreground: 60 5% 11%;
+  --sidebar-primary: 43 38% 74%;
+  --sidebar-primary-foreground: 60 5% 11%;
+  --sidebar-accent: 42 18% 86%;
+  --sidebar-accent-foreground: 60 5% 11%;
+  --sidebar-border: 40 16% 81%;
+  --sidebar-ring: 43 32% 68%;
 
-  /* Extended brand semantics */
-  --brand-logo: 18 51% 66%;
-  --success: 181 81% 31%;
-  --warning: 35 84% 54%;
-  --danger: 2 73% 38%;
-  --surface-strong: 196 54% 17%;
-  --surface-soft: 315 24% 92%;
+  --brand-logo: 43 34% 68%;
+  --success: 158 19% 53%;
+  --warning: 43 38% 74%;
+  --danger: 0 72% 40%;
+  --surface-strong: 60 5% 11%;
+  --surface-soft: 42 22% 89%;
 }
 
 .dark {
-  --background: 196 44% 10%;
-  --foreground: 315 14% 88%;
+  --background: 60 4% 6%;
+  --foreground: 43 28% 94%;
 
-  --card: 196 42% 13%;
-  --card-foreground: 315 14% 88%;
+  --card: 0 0% 9%;
+  --card-foreground: 43 28% 94%;
 
-  --popover: 196 42% 13%;
-  --popover-foreground: 315 14% 88%;
+  --popover: 0 0% 9%;
+  --popover-foreground: 43 28% 94%;
 
-  --primary: 315 14% 88%;
-  --primary-foreground: 196 54% 17%;
+  --primary: 43 36% 68%;
+  --primary-foreground: 60 5% 11%;
 
-  --secondary: 194 30% 22%;
-  --secondary-foreground: 315 14% 88%;
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 43 28% 94%;
 
-  --muted: 194 30% 20%;
-  --muted-foreground: 312 12% 68%;
+  --muted: 0 0% 14%;
+  --muted-foreground: 40 8% 60%;
 
-  --accent: 35 84% 54%;
-  --accent-foreground: 196 54% 17%;
+  --accent: 44 32% 76%;
+  --accent-foreground: 60 5% 11%;
 
-  --destructive: 2 63% 44%;
-  --destructive-foreground: 315 14% 88%;
+  --destructive: 0 58% 48%;
+  --destructive-foreground: 43 28% 98%;
 
-  --border: 194 26% 26%;
-  --input: 194 26% 26%;
-  --ring: 181 68% 42%;
-  
-  --sidebar: 196 44% 11%;
-  --sidebar-foreground: 315 14% 88%;
-  --sidebar-primary: 315 14% 88%;
-  --sidebar-primary-foreground: 196 54% 17%;
-  --sidebar-accent: 194 30% 20%;
-  --sidebar-accent-foreground: 315 14% 88%;
-  --sidebar-border: 194 26% 26%;
-  --sidebar-ring: 181 68% 42%;
+  --border: 40 6% 22%;
+  --input: 40 6% 22%;
+  --ring: 43 30% 62%;
 
-  --brand-logo: 18 51% 66%;
-  --success: 181 68% 42%;
-  --warning: 35 84% 54%;
-  --danger: 2 63% 44%;
-  --surface-strong: 196 44% 10%;
-  --surface-soft: 194 30% 20%;
+  --chart-1: 43 36% 68%;
+  --chart-2: 44 32% 76%;
+  --chart-3: 158 22% 48%;
+  --chart-4: 40 8% 60%;
+  --chart-5: 0 52% 48%;
+
+  --sidebar: 0 0% 9%;
+  --sidebar-foreground: 43 28% 94%;
+  --sidebar-primary: 43 36% 68%;
+  --sidebar-primary-foreground: 60 5% 11%;
+  --sidebar-accent: 0 0% 14%;
+  --sidebar-accent-foreground: 43 28% 94%;
+  --sidebar-border: 40 6% 22%;
+  --sidebar-ring: 43 30% 62%;
+
+  --brand-logo: 43 34% 72%;
+  --success: 158 22% 48%;
+  --warning: 43 36% 68%;
+  --danger: 0 58% 48%;
+  --surface-strong: 43 28% 94%;
+  --surface-soft: 0 0% 14%;
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
   * {
     @apply border-border;
   }
@@ -167,9 +183,9 @@
     @apply font-sans antialiased bg-background text-foreground leading-relaxed;
   }
   h1 {
-    @apply font-serif tracking-tight text-primary font-semibold;
+    @apply font-serif tracking-tight text-foreground font-semibold;
   }
   h2, h3, h4, h5, h6 {
-    @apply font-sans tracking-tight text-primary font-semibold;
+    @apply font-sans tracking-tight text-foreground font-semibold;
   }
 }

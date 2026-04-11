@@ -18,7 +18,8 @@ export interface DetectedMeasure {
   measureNumber: number; // sequential 1..N across the entire score
   pageNumber: number;    // 1-indexed
   boundingBox: BoundingBox;
-  imageUrl: string;      // path to cropped bar image written to disk
+  /** Legacy cropped PNG path; always null for new processing (geometry lives in boundingBox + page). */
+  imageUrl: string | null;
 }
 
 /** A saved full-page image produced during processing. */
@@ -36,12 +37,12 @@ export interface ProcessResult {
 
 /** Options accepted by ScorebarService constructor */
 export interface ScorebarOptions {
-  /** Directory to write cropped bar images. Defaults to uploads/measures/. */
-  outputDir?: string;
   /** Directory to write full-page PNG images (for the review UI). */
   pagesDir?: string;
   /** DPI to render PDF pages at. Higher = more accurate detection. Default 150. */
   renderDpi?: number;
   /** Called after each page finishes processing. */
   onProgress?: (page: number, total: number) => void;
+  /** Max parallel pdftoppm page renders (default: 2–4). */
+  pdfRenderConcurrency?: number;
 }

@@ -129,23 +129,7 @@ export const insertPieceAnalysisSchema = createInsertSchema(pieceAnalyses).omit(
 export type InsertPieceAnalysis = z.infer<typeof insertPieceAnalysisSchema>;
 export type PieceAnalysis = typeof pieceAnalyses.$inferSelect;
 
-// ── Learning Plan Tables ────────────────────────────────────────────────────
-
-export const learningPlans = pgTable("learning_plans", {
-  id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  repertoireEntryId: integer("repertoire_entry_id").notNull().references(() => repertoireEntries.id),
-  dailyPracticeMinutes: integer("daily_practice_minutes").notNull().default(30),
-  targetCompletionDate: text("target_completion_date"), // YYYY-MM-DD
-  totalMeasures: integer("total_measures"), // populated after sheet music processed
-  status: text("status").notNull().default("setup"), // setup | active | paused | completed
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const insertLearningPlanSchema = createInsertSchema(learningPlans).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertLearningPlan = z.infer<typeof insertLearningPlanSchema>;
-export type LearningPlan = typeof learningPlans.$inferSelect;
+// ── Sheet music (declared before learning_plans FK) ─────────────────────────
 
 export const sheetMusic = pgTable("sheet_music", {
   id: serial("id").primaryKey(),
@@ -161,6 +145,26 @@ export const sheetMusic = pgTable("sheet_music", {
 export const insertSheetMusicSchema = createInsertSchema(sheetMusic).omit({ id: true, uploadedAt: true });
 export type InsertSheetMusic = z.infer<typeof insertSheetMusicSchema>;
 export type SheetMusic = typeof sheetMusic.$inferSelect;
+
+// ── Learning Plan Tables ────────────────────────────────────────────────────
+
+export const learningPlans = pgTable("learning_plans", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  repertoireEntryId: integer("repertoire_entry_id").notNull().references(() => repertoireEntries.id),
+  /** Sheet music used for this plan (bars, thumbnails); set when plan is created from the wizard */
+  sheetMusicId: integer("sheet_music_id").references(() => sheetMusic.id),
+  dailyPracticeMinutes: integer("daily_practice_minutes").notNull().default(30),
+  targetCompletionDate: text("target_completion_date"), // YYYY-MM-DD
+  totalMeasures: integer("total_measures"), // populated after sheet music processed
+  status: text("status").notNull().default("setup"), // setup | active | paused | completed
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLearningPlanSchema = createInsertSchema(learningPlans).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLearningPlan = z.infer<typeof insertLearningPlanSchema>;
+export type LearningPlan = typeof learningPlans.$inferSelect;
 
 export const measures = pgTable("measures", {
   id: serial("id").primaryKey(),
@@ -187,11 +191,42 @@ export const lessonDays = pgTable("lesson_days", {
   status: text("status").notNull().default("upcoming"), // upcoming | active | completed | skipped
   userNotes: text("user_notes"),
   completedAt: timestamp("completed_at"),
+  /** Structured session plan: array of sections each with tasks */
+  tasks: jsonb("tasks").$type<SessionSection[]>(),
 });
+
+export type SessionTask = { text: string; tag?: string };
+export type SessionSection = {
+  type: string;        // e.g. "warmup" | "piece_practice" | "sight_reading"
+  label: string;       // display label
+  durationMin?: number;
+  tasks: SessionTask[];
+};
 
 export const insertLessonDaySchema = createInsertSchema(lessonDays).omit({ id: true });
 export type InsertLessonDay = z.infer<typeof insertLessonDaySchema>;
 export type LessonDay = typeof lessonDays.$inferSelect;
+
+// ── Community Scores ─────────────────────────────────────────────────────────
+// One canonical community-contributed bar analysis per (piece, movement) scope.
+// movementId = null means "whole piece"; movementId set means a specific movement.
+
+export const communityScores = pgTable("community_scores", {
+  id: serial("id").primaryKey(),
+  pieceId: integer("piece_id").notNull().references(() => pieces.id),
+  movementId: integer("movement_id").references(() => movements.id),
+  sheetMusicId: integer("sheet_music_id").notNull().references(() => sheetMusic.id),
+  submittedByUserId: varchar("submitted_by_user_id", { length: 100 })
+    .notNull()
+    .references(() => users.id),
+  submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+  description: text("description"),
+  downloadCount: integer("download_count").default(0).notNull(),
+});
+
+export const insertCommunityScoreSchema = createInsertSchema(communityScores).omit({ id: true, submittedAt: true });
+export type InsertCommunityScore = z.infer<typeof insertCommunityScoreSchema>;
+export type CommunityScore = typeof communityScores.$inferSelect;
 
 export const measureProgress = pgTable("measure_progress", {
   id: serial("id").primaryKey(),

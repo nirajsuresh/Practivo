@@ -2,10 +2,12 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
 import {
-  MapPin, Edit2, Music2, Award, X, ExternalLink, ChevronDown, ChevronUp,
-  Layers, Music, BarChart3, BookOpen, Zap, Users, ArrowUpRight, Flag, CheckCircle2,
-  SplitSquareHorizontal, Merge,
+  Edit2, Music2, X, ExternalLink, ChevronDown, ChevronUp,
+  Layers, Music, BookOpen, ArrowUpRight, Flag, CheckCircle2,
+  SplitSquareHorizontal, Merge, Calendar, Clock, ArrowRight, Trash2, Upload,
+  GraduationCap,
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -15,12 +17,11 @@ import { AddPieceDialog, type NewPieceData } from "@/components/add-piece-dialog
 import { EditMovementsDialog } from "@/components/edit-movements-dialog";
 import { MilestoneTimeline } from "@/components/milestone-timeline";
 import { LearningPlanWizard } from "@/components/learning-plan-wizard";
-import { DailyLessonCard, StartPlanButton } from "@/components/daily-lesson-card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { ContributeScoreWizard } from "@/components/contribute-score-wizard";
+import { DailyLessonCard } from "@/components/daily-lesson-card";
 import { cn, toComposerImageUrl } from "@/lib/utils";
 import { getStatusColor, STATUSES, type RepertoireStatus } from "@/lib/status-colors";
-import { getProgressColor, ERA_DOT, HIGHLIGHT } from "@/lib/palette";
+import { getProgressColor, HIGHLIGHT } from "@/lib/palette";
 import { Link, useLocation } from "wouter";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import {
@@ -30,8 +31,9 @@ import {
   SortableContext, arrayMove, horizontalListSortingStrategy, useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -53,21 +55,13 @@ const COMPOSER_ERA_MAP: Record<string, string> = {
   Medtner: "Romantic", Mussorgsky: "Romantic", Balakirev: "Romantic",
 };
 
-const ERA_GRADIENT: Record<string, string> = {
-  Baroque:       "from-amber-700 to-amber-950",
-  Classical:     "from-sky-600 to-sky-900",
-  Romantic:      "from-rose-700 to-rose-950",
-  Impressionist: "from-teal-600 to-teal-900",
-  Modern:        "from-violet-700 to-violet-950",
-  Other:         "from-stone-600 to-stone-900",
-};
-
+const COMPOSER_COVER_GOLD = "#DCCAA6";
+const COMPOSER_GOLD_GRADIENT = "from-[#EADDC8] to-[#C8B388]";
 
 const STATUS_PROGRESS: Record<string, number> = {
   "Want to learn": 0, "Up next": 12, "In Progress": 50,
   "Maintaining": 100, "Resting": 0,
 };
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -155,13 +149,13 @@ function textColorForBackground(hex: string): string {
   const normalized = cleaned.length === 3
     ? cleaned.split("").map((c) => `${c}${c}`).join("")
     : cleaned;
-  if (normalized.length !== 6) return "#111111";
+  if (normalized.length !== 6) return "#1C1C1A";
   const r = Number.parseInt(normalized.slice(0, 2), 16);
   const g = Number.parseInt(normalized.slice(2, 4), 16);
   const b = Number.parseInt(normalized.slice(4, 6), 16);
-  if ([r, g, b].some((n) => Number.isNaN(n))) return "#111111";
+  if ([r, g, b].some((n) => Number.isNaN(n))) return "#1C1C1A";
   const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-  return luminance > 0.56 ? "#111111" : "#F8FAFC";
+  return luminance > 0.56 ? "#1C1C1A" : "#F4F1EA";
 }
 
 function toYear(value: unknown): number | null {
@@ -218,9 +212,6 @@ function groupByComposer(raw: any[], movementOrderByPiece?: Record<number, numbe
       });
     }
   }
-  // piece.everMilestone and piece.performedCount come directly from the SQL
-  // (now filtered to movement_id IS NULL), so piece-level flair is independent
-  // of individual movement milestones. Movement-level flair is in m.everMilestone.
   const orderByPiece = movementOrderByPiece ?? {};
   for (const piece of Array.from(pieceMap.values())) {
     const order = orderByPiece[piece.pieceId];
@@ -238,13 +229,13 @@ function groupByComposer(raw: any[], movementOrderByPiece?: Record<number, numbe
   const composerMap = new Map<number, ComposerGroup>();
   for (const piece of Array.from(pieceMap.values())) {
     if (!composerMap.has(piece.composerId)) {
-    const meta = composerMeta.get(piece.composerId);
-    composerMap.set(piece.composerId, {
-      composerName: piece.composerName, composerId: piece.composerId,
-      era: getEra(piece.composerName), pieces: [],
-      imageUrl: meta?.imageUrl ?? null, period: meta?.period ?? null,
-      birthYear: meta?.birthYear ?? null, deathYear: meta?.deathYear ?? null,
-          learningCount: 0, startedCount: 0, inProgressCount: 0, completedCount: 0, learnedCount: 0, totalCount: 0,
+      const meta = composerMeta.get(piece.composerId);
+      composerMap.set(piece.composerId, {
+        composerName: piece.composerName, composerId: piece.composerId,
+        era: getEra(piece.composerName), pieces: [],
+        imageUrl: meta?.imageUrl ?? null, period: meta?.period ?? null,
+        birthYear: meta?.birthYear ?? null, deathYear: meta?.deathYear ?? null,
+        learningCount: 0, startedCount: 0, inProgressCount: 0, completedCount: 0, learnedCount: 0, totalCount: 0,
       });
     }
     const group = composerMap.get(piece.composerId)!;
@@ -277,7 +268,6 @@ function toEntryRow(e: any): EntryRow {
   };
 }
 
-/** Build table rows: one per piece when merged, one per entry when piece is split */
 function buildTableRows(raw: any[], allPieces: PieceEntry[]): TableRowItem[] {
   const byPiece = new Map<number, any[]>();
   for (const e of raw) {
@@ -306,6 +296,159 @@ function buildImslpUrl(title: string, composerName: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ActivePlanCard — one card per in-progress learning plan
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ActivePlanCard({ entryId, pieceTitle, composerName }: {
+  entryId: number;
+  pieceTitle: string;
+  composerName: string;
+}) {
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [confirmDeletePlan, setConfirmDeletePlan] = useState(false);
+
+  const { data: plan } = useQuery<{ id: number; dailyPracticeMinutes: number; targetCompletionDate: string; totalMeasures: number; status: string } | null>({
+    queryKey: [`/api/learning-plans/entry/${entryId}`],
+    staleTime: 60_000,
+  });
+
+  const { data: progress } = useQuery<{ completedLessons: number; totalLessons: number; learnedMeasures: number; totalMeasures: number }>({
+    queryKey: [`/api/learning-plans/${plan?.id}/progress`],
+    enabled: !!plan?.id,
+    staleTime: 30_000,
+  });
+
+  const { data: lessons } = useQuery<Array<{ id: number; status: string; scheduledDate: string }>>({
+    queryKey: [`/api/learning-plans/${plan?.id}/lessons`],
+    enabled: !!plan?.id,
+    staleTime: 30_000,
+  });
+
+  const deletePlan = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/learning-plans/${id}`);
+    },
+    onSuccess: (_data, id) => {
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${id}/today`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${id}/progress`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${id}/lessons`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${id}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/entry/${entryId}`] });
+      setConfirmDeletePlan(false);
+      toast({ title: "Learning plan deleted" });
+    },
+    onError: () => {
+      toast({ title: "Couldn't delete plan", variant: "destructive" });
+    },
+  });
+
+  if (!plan) return null;
+
+  const nextLesson = lessons?.find(l => l.status !== "completed");
+  const completedLessons = progress?.completedLessons ?? 0;
+  const totalLessons = progress?.totalLessons ?? 0;
+  const pct = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = plan.targetCompletionDate ? new Date(plan.targetCompletionDate) : null;
+  const daysLeft = target ? Math.ceil((target.getTime() - today.getTime()) / 86400000) : null;
+
+  return (
+    <Card className="border border-border bg-card shadow-sm hover:shadow-md transition-shadow">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider truncate">{composerName}</p>
+            <h3 className="font-serif text-lg font-semibold leading-tight mt-0.5 line-clamp-1">{pieceTitle}</h3>
+          </div>
+          <div className="shrink-0 flex items-center gap-1">
+          {daysLeft !== null && (
+            <span className={cn(
+              "shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1",
+              daysLeft < 0 ? "bg-destructive/10 text-destructive" :
+              daysLeft <= 7 ? "bg-amber-100 text-amber-700" :
+              "bg-muted text-muted-foreground"
+            )}>
+              <Calendar className="w-3 h-3" />
+              {daysLeft < 0 ? "Overdue" : daysLeft === 0 ? "Due today" : `${daysLeft}d left`}
+            </span>
+          )}
+            <button
+              type="button"
+              onClick={() => setConfirmDeletePlan(true)}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete learning plan"
+              aria-label="Delete learning plan"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <AlertDialog open={confirmDeletePlan} onOpenChange={setConfirmDeletePlan}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this learning plan?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Remove the schedule and progress for &ldquo;{pieceTitle}&rdquo;. The piece stays in repertoire. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => deletePlan.mutate(plan.id)}
+                disabled={deletePlan.isPending}
+              >
+                {deletePlan.isPending ? "Deleting…" : "Delete plan"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <div className="mb-3">
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+            <span>{completedLessons} of {totalLessons} sessions</span>
+            <span>{pct}%</span>
+          </div>
+          <Progress value={pct} className="h-1.5" />
+        </div>
+
+        {plan.dailyPracticeMinutes && (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1 mb-3">
+            <Clock className="w-3 h-3" />
+            {plan.dailyPracticeMinutes} min/day
+          </p>
+        )}
+
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1 h-8 text-xs gap-1"
+            onClick={() => navigate(`/plan/${plan.id}`)}
+          >
+            View Plan
+          </Button>
+          {nextLesson && (
+            <Button
+              size="sm"
+              className="flex-1 h-8 text-xs gap-1 bg-primary"
+              onClick={() => navigate(`/session/${nextLesson.id}`)}
+            >
+              Next Session <ArrowRight className="w-3 h-3" />
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ComposerBook card
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -314,9 +457,7 @@ function ComposerBook({ group, isActive, onClick }: {
   isActive: boolean;
   onClick: () => void;
 }) {
-  const periodColor = ERA_DOT[group.period ?? ""] ?? ERA_DOT[group.era] ?? ERA_DOT.Other;
-  const coverTextColor = textColorForBackground(periodColor);
-  const fallbackEra = group.era in ERA_GRADIENT ? group.era : "Other";
+  const coverTextColor = textColorForBackground(COMPOSER_COVER_GOLD);
   const initials = group.composerName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
   const learnedPct = group.totalCount > 0 ? Math.round((group.learnedCount / group.totalCount) * 100) : 0;
   const learnedBarColor = getProgressColor(learnedPct);
@@ -336,77 +477,49 @@ function ComposerBook({ group, isActive, onClick }: {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
       className={cn(
-        "relative shrink-0 w-[176px] rounded-[30px] transition-all duration-200 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer select-none hover:-translate-y-1",
+        "relative shrink-0 w-[148px] rounded-[22px] transition-all duration-200 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer select-none hover:-translate-y-1",
         isActive && "-translate-y-1"
       )}
     >
-      {/* Static page stack behind each book */}
-      <div className="pointer-events-none absolute inset-0 rounded-[30px] border-2 border-black/70 bg-[#f4efe4] translate-x-2 translate-y-1.5" aria-hidden />
-      <div className="pointer-events-none absolute inset-0 rounded-[30px] border-2 border-black/70 bg-[#f8f3e8] translate-x-1 translate-y-0.5" aria-hidden />
-
-      {/* Main cover */}
+      <div className="pointer-events-none absolute inset-0 rounded-[22px] border-2 border-[#D6D1C7] bg-[#E9E5DC] translate-x-1.5 translate-y-1" aria-hidden />
+      <div className="pointer-events-none absolute inset-0 rounded-[22px] border-2 border-[#D6D1C7] bg-[#F0EBE2] translate-x-0.5 translate-y-px" aria-hidden />
       <div
         className={cn(
-          "relative rounded-[30px] border-2 border-black/90 shadow-lg overflow-hidden",
+          "relative rounded-[22px] border-2 border-[#1C1C1A]/20 shadow-lg overflow-hidden",
           isActive && "ring-2 ring-primary shadow-xl"
         )}
-        style={{ backgroundColor: periodColor }}
+        style={{ backgroundColor: COMPOSER_COVER_GOLD }}
       >
-        {/* Period spine accent */}
-        <div className="absolute left-0 top-0 bottom-0 w-2 bg-black/25" aria-hidden />
-
-        <div className="relative min-h-[272px] px-4 pt-4 pb-3">
+        <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#C8B388]/45" aria-hidden />
+        <div className="relative px-3 pt-3 pb-2">
           <div className="absolute inset-0 opacity-20 bg-[radial-gradient(ellipse_at_top,_white,_transparent)]" />
-          <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/15 to-transparent" />
-
+          <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/15 to-transparent" />
           <div className="relative z-10">
-            <p
-              className="font-serif text-[26px] leading-none tracking-tight pr-6 whitespace-nowrap"
-              style={{ color: coverTextColor }}
-            >
-              {lastName}
-            </p>
-            <p
-              className="text-[11px] uppercase tracking-[0.18em] mt-1 truncate"
-              style={{ color: coverTextColor, opacity: 0.84 }}
-            >
-              {subtitleLabel}
-            </p>
+            <p className="font-serif text-[20px] leading-none tracking-tight pr-4 whitespace-nowrap" style={{ color: coverTextColor }}>{lastName}</p>
+            <p className="text-[9px] uppercase tracking-[0.16em] mt-0.5 truncate" style={{ color: coverTextColor, opacity: 0.84 }}>{subtitleLabel}</p>
           </div>
-
-          <div className="relative z-10 mt-3 mx-1 h-[148px] rounded-[2px] border-2 border-black/80 overflow-hidden bg-black/10">
-            <div className={cn("absolute inset-0 flex items-center justify-center bg-gradient-to-b", ERA_GRADIENT[fallbackEra])}>
-              <span className="relative font-serif text-4xl font-bold text-white/90 drop-shadow-md">{initials}</span>
+          <div className="relative z-10 mt-2 flex justify-center">
+            <div className="relative h-[64px] w-[64px] shrink-0 rounded-[2px] border-2 border-[#1C1C1A]/25 overflow-hidden bg-black/5">
+              <div className={cn("absolute inset-0 flex items-center justify-center bg-gradient-to-b", COMPOSER_GOLD_GRADIENT)}>
+                <span className="relative font-serif text-2xl font-bold text-white/90 drop-shadow-md">{initials}</span>
+              </div>
+              {resolvedImageUrl && (
+                <img src={resolvedImageUrl} alt={group.composerName} className="absolute inset-0 w-full h-full object-cover object-top" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              )}
             </div>
-            {resolvedImageUrl && (
-              <img
-                src={resolvedImageUrl}
-                alt={group.composerName}
-                className="absolute inset-0 w-full h-full object-cover object-top"
-                referrerPolicy="no-referrer"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
-            )}
           </div>
-
-          <div className="relative z-10 mt-3">
-            <div className="flex items-center justify-between text-[10px] font-semibold">
+          <div className="relative z-10 mt-2">
+            <div className="flex items-center justify-between text-[9px] font-semibold">
               <span style={{ color: coverTextColor, opacity: 0.9 }}>Learned</span>
               <span style={{ color: coverTextColor, opacity: 0.9 }}>{group.learnedCount}/{group.totalCount} ({learnedPct}%)</span>
             </div>
-            <div className="mt-1 h-1.5 rounded-full bg-black/20 overflow-hidden">
+            <div className="mt-0.5 h-1 rounded-full bg-black/20 overflow-hidden">
               <div className="h-full transition-all" style={{ width: `${learnedPct}%`, backgroundColor: learnedBarColor }} />
             </div>
-            <div className="flex items-center gap-1.5 mt-2">
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold" style={{ color: coverTextColor, opacity: 0.9 }}>
-                <Flag className="w-3 h-3" />
-                {group.startedCount}
-              </span>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold" style={{ color: coverTextColor, opacity: 0.9 }}>
-                <CheckCircle2 className="w-3 h-3" />
-                {group.completedCount}
-              </span>
-              <span className="text-[10px] font-semibold ml-auto" style={{ color: coverTextColor, opacity: 0.9 }}>{group.totalCount} pcs</span>
+            <div className="flex items-center gap-1 mt-1">
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold" style={{ color: coverTextColor, opacity: 0.9 }}><Flag className="w-2.5 h-2.5" />{group.startedCount}</span>
+              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold" style={{ color: coverTextColor, opacity: 0.9 }}><CheckCircle2 className="w-2.5 h-2.5" />{group.completedCount}</span>
+              <span className="text-[9px] font-semibold ml-auto" style={{ color: coverTextColor, opacity: 0.9 }}>{group.totalCount} pcs</span>
             </div>
           </div>
         </div>
@@ -415,33 +528,17 @@ function ComposerBook({ group, isActive, onClick }: {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// SortableComposerBook — drag-and-drop wrapper
-// ─────────────────────────────────────────────────────────────────────────────
-
 function SortableComposerBook({ group, isActive, onClick }: {
   group: ComposerGroup;
   isActive: boolean;
   onClick: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: group.composerId,
-  });
-
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: group.composerId });
   return (
     <div
       ref={setNodeRef}
-      style={{
-        // CSS.Translate avoids the scale artifact that CSS.Transform adds during drag
-        transform: CSS.Translate.toString(transform),
-        // Skip transition while actively dragging so the card follows the cursor instantly
-        transition: isDragging ? undefined : transition,
-      }}
-      className={cn(
-        "touch-none cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-40 z-50",
-      )}
+      style={{ transform: CSS.Translate.toString(transform), transition: isDragging ? undefined : transition }}
+      className={cn("touch-none cursor-grab active:cursor-grabbing", isDragging && "opacity-40 z-50")}
       {...attributes}
       {...listeners}
     >
@@ -450,17 +547,17 @@ function SortableComposerBook({ group, isActive, onClick }: {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 // ComposerSidePane
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PieceThumbnail({ pieceTitle, era }: { pieceTitle: string; era: string }) {
-  const g = ERA_GRADIENT[era] ?? ERA_GRADIENT.Other;
+function PieceThumbnail({ pieceTitle }: { pieceTitle: string }) {
   return (
-    <div className={cn("w-14 h-[72px] rounded shrink-0 relative overflow-hidden flex items-center justify-center bg-gradient-to-b shadow-sm", g)}>
-      <div className="absolute inset-x-1.5 space-y-[4px]">
+    <div className={cn("w-12 h-12 rounded shrink-0 relative overflow-hidden flex items-center justify-center bg-gradient-to-b shadow-sm", COMPOSER_GOLD_GRADIENT)}>
+      <div className="absolute inset-x-1 space-y-[3px]">
         {[0,1,2,3,4].map(i => <div key={i} className="h-px bg-white/20" />)}
       </div>
-      <span className="relative font-serif text-xl font-bold text-white/80">{pieceTitle[0]}</span>
+      <span className="relative font-serif text-lg font-bold text-white/80">{pieceTitle[0]}</span>
     </div>
   );
 }
@@ -500,32 +597,18 @@ function ComposerSidePane({ group, items, onClose, onOpenItem, onStatusChange, o
 
   return (
     <>
-      {/* Backdrop */}
       <div className="fixed inset-0 bg-black/25 z-40 backdrop-blur-[1px]" onClick={onClose} />
-      {/* Pane */}
       <div className="fixed right-0 top-0 bottom-0 w-[460px] bg-background border-l border-border z-50 overflow-y-auto shadow-2xl flex flex-col">
-
-        {/* Header */}
-        <div className={cn("bg-gradient-to-b shrink-0 px-6 pt-8 pb-6", ERA_GRADIENT[group.era] ?? ERA_GRADIENT.Other)}>
+        <div className={cn("bg-gradient-to-b shrink-0 px-6 pt-8 pb-6", COMPOSER_GOLD_GRADIENT)}>
           <div className="flex items-start justify-between mb-3">
             <div>
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white uppercase tracking-wider">
-                {group.era}
-              </span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/20 text-white uppercase tracking-wider">{group.era}</span>
             </div>
             <div className="flex items-center gap-1">
-              <Link
-                href={`/composer/${group.composerId}`}
-                onClick={onClose}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 transition-colors text-white text-[11px] font-medium"
-                title={`Open ${group.composerName}'s community page`}
-              >
-                <ArrowUpRight className="w-3 h-3" />
-                Composer page
+              <Link href={`/composer/${group.composerId}`} onClick={onClose} className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 transition-colors text-white text-[11px] font-medium">
+                <ArrowUpRight className="w-3 h-3" />Composer page
               </Link>
-              <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors">
-                <X className="w-4 h-4 text-white" />
-              </button>
+              <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X className="w-4 h-4 text-white" /></button>
             </div>
           </div>
           <h2 className="font-serif text-3xl font-bold text-white leading-tight">{group.composerName}</h2>
@@ -535,12 +618,8 @@ function ComposerSidePane({ group, items, onClose, onOpenItem, onStatusChange, o
             <span><span className="text-white font-semibold">{group.completedCount}</span> completed</span>
           </div>
         </div>
-
-        {/* Piece list (one card per piece when merged, one per movement when split) */}
         <div className="flex-1 p-5 space-y-3">
-          {sorted.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-8">No pieces yet.</p>
-          )}
+          {sorted.length === 0 && <p className="text-sm text-muted-foreground text-center py-8">No pieces yet.</p>}
           {sorted.map((item) => {
             const key = getItemKey(item);
             const isPiece = item.kind === "piece";
@@ -553,152 +632,59 @@ function ComposerSidePane({ group, items, onClose, onOpenItem, onStatusChange, o
             const everMilestone = isPiece ? piece!.everMilestone : entry!.everMilestone;
             const pieceId = isPiece ? piece!.pieceId : entry!.pieceId;
             const composerName = isPiece ? piece!.composerName : entry!.composerName;
-            const era = group.era;
             return (
-              <div
-                key={key}
-                className={cn(
-                  "flex gap-3 p-3 rounded-xl border hover:bg-muted/30 transition-colors group relative overflow-hidden",
-                  performedCount > 0 && HIGHLIGHT.performedRow,
-                  everMilestone === "completed" && HIGHLIGHT.learnedRow,
-                  !everMilestone && performedCount === 0 && "border-border"
-                )}
-              >
-                {everMilestone && (
-                  <div
-                    className={cn(
-                      "absolute left-0 top-0 bottom-0 w-1.5",
-                      performedCount > 0 ? HIGHLIGHT.performedEdge : HIGHLIGHT.learnedEdge
-                    )}
-                    aria-hidden
-                  />
-                )}
-                <PieceThumbnail pieceTitle={isPiece ? piece!.pieceTitle : entry!.pieceTitle} era={era} />
-
+              <div key={key} className={cn("flex gap-3 p-3 rounded-xl border hover:bg-muted/30 transition-colors group relative overflow-hidden", performedCount > 0 && HIGHLIGHT.performedRow, everMilestone === "completed" && HIGHLIGHT.learnedRow, !everMilestone && performedCount === 0 && "border-border")}>
+                {everMilestone && <div className={cn("absolute left-0 top-0 bottom-0 w-1.5", performedCount > 0 ? HIGHLIGHT.performedEdge : HIGHLIGHT.learnedEdge)} aria-hidden />}
+                <PieceThumbnail pieceTitle={isPiece ? piece!.pieceTitle : entry!.pieceTitle} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <div className="flex items-start gap-1.5 min-w-0">
-                      {performedCount > 0 && (
-                        <Music2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-destructive" />
-                      )}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onOpenItem(item); }}
-                        className="text-left"
-                      >
-                        <p className="text-sm font-semibold leading-snug hover:text-primary transition-colors cursor-pointer line-clamp-2">
-                          {title}
-                        </p>
+                      {performedCount > 0 && <Music2 className={cn("w-3.5 h-3.5 shrink-0 mt-0.5", HIGHLIGHT.performedMusicIcon)} />}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); onOpenItem(item); }} className="text-left">
+                        <p className="text-sm font-semibold leading-snug hover:text-primary transition-colors cursor-pointer line-clamp-2">{title}</p>
                       </button>
                     </div>
                     {everMilestone && (
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>
-                          Learned
-                        </span>
-                        {performedCount > 0 && (
-                          <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>
-                            {performedCount > 1 ? `Performed x${performedCount}` : "Performed"}
-                          </span>
-                        )}
+                        <span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>Learned</span>
+                        {performedCount > 0 && <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>{performedCount > 1 ? `Performed x${performedCount}` : "Performed"}</span>}
                       </div>
                     )}
-                    <button
-                      onClick={() => setConfirmRemoveItem(item)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-destructive shrink-0"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+                    <button onClick={() => setConfirmRemoveItem(item)} className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 text-muted-foreground hover:text-[#1C1C1A] shrink-0"><X className="w-3.5 h-3.5" /></button>
                   </div>
-
-                  <Select
-                    value={status}
-                    onValueChange={(val) => {
-                      setLocalStatuses(prev => ({ ...prev, [key]: val }));
-                      onStatusChange(item, val);
-                    }}
-                  >
-                    <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-auto max-w-[180px]", getStatusColor(status as RepertoireStatus))}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
-                    </SelectContent>
+                  <Select value={status} onValueChange={(val) => { setLocalStatuses(prev => ({ ...prev, [key]: val })); onStatusChange(item, val); }}>
+                    <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-auto max-w-[180px]", getStatusColor(status as RepertoireStatus))}><SelectValue /></SelectTrigger>
+                    <SelectContent>{ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent>
                   </Select>
-
                   <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${prog}%`,
-                        backgroundColor: getProgressColor(prog),
-                      }}
-                    />
+                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${prog}%`, backgroundColor: getProgressColor(prog) }} />
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-0.5">{prog}% of journey</p>
-
                   {isPiece && piece!.movements.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      {piece!.movements.slice(0, 4).map((m, i) => (
-                        <span key={i} className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground truncate max-w-[120px]">
-                          {m.name}
-                        </span>
-                      ))}
-                      {piece!.movements.length > 4 && (
-                        <span className="text-[10px] text-muted-foreground">+{piece!.movements.length - 4}</span>
-                      )}
+                      {piece!.movements.slice(0, 4).map((m, i) => <span key={i} className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground truncate max-w-[120px]">{m.name}</span>)}
+                      {piece!.movements.length > 4 && <span className="text-[10px] text-muted-foreground">+{piece!.movements.length - 4}</span>}
                     </div>
                   )}
-
                   <div className="flex items-center gap-2 mt-2">
-                    <a
-                      href={buildImslpUrl(isPiece ? piece!.pieceTitle : entry!.pieceTitle, composerName)}
-                      target="_blank" rel="noopener noreferrer"
-                      className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-                    >
-                      <ExternalLink className="w-2.5 h-2.5" /> IMSLP
-                    </a>
-                    {pieceId != null && Number.isInteger(pieceId) && (
-                      <Link href={`/piece/${pieceId}`} onClick={onClose} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors">
-                        <ArrowUpRight className="w-2.5 h-2.5" /> Open piece page
-                      </Link>
-                    )}
-                    {isPiece && piece!.movements.length > 0 && (
-                      <button
-                        onClick={() => onEditMovements(piece!.pieceId)}
-                        className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-                      >
-                        <Layers className="w-2.5 h-2.5" /> Movements
-                      </button>
-                    )}
+                    <a href={buildImslpUrl(isPiece ? piece!.pieceTitle : entry!.pieceTitle, composerName)} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><ExternalLink className="w-2.5 h-2.5" /> IMSLP</a>
+                    {pieceId != null && Number.isInteger(pieceId) && <Link href={`/piece/${pieceId}`} onClick={onClose} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><ArrowUpRight className="w-2.5 h-2.5" /> Open piece page</Link>}
+                    {isPiece && piece!.movements.length > 0 && <button onClick={() => onEditMovements(piece!.pieceId)} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><Layers className="w-2.5 h-2.5" /> Movements</button>}
                   </div>
                 </div>
               </div>
             );
           })}
         </div>
-
-        {/* Confirm remove */}
         <AlertDialog open={confirmRemoveItem !== null} onOpenChange={(open) => { if (!open) setConfirmRemoveItem(null); }}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Remove from repertoire?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {confirmRemoveItem?.kind === "entry"
-                  ? "Remove this movement from your repertoire? This cannot be undone."
-                  : "This will remove the piece from your repertoire. This cannot be undone."}
-              </AlertDialogDescription>
+              <AlertDialogDescription>{confirmRemoveItem?.kind === "entry" ? "Remove this movement from your repertoire? This cannot be undone." : "This will remove the piece from your repertoire. This cannot be undone."}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={async () => {
-                  if (confirmRemoveItem) await onRemove(confirmRemoveItem);
-                  setConfirmRemoveItem(null);
-                  onClose();
-                }}
-              >Remove</AlertDialogAction>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={async () => { if (confirmRemoveItem) await onRemove(confirmRemoveItem); setConfirmRemoveItem(null); onClose(); }}>Remove</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -708,7 +694,7 @@ function ComposerSidePane({ group, items, onClose, onOpenItem, onStatusChange, o
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Learning Table row
+// Repertoire Table rows
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TableRow({ piece, expanded, onToggleExpand, onOpenPiece, onStatusChange, onRemove, onEditMovements, onSplit }: {
@@ -730,117 +716,48 @@ function TableRow({ piece, expanded, onToggleExpand, onOpenPiece, onStatusChange
     <tr
       role="button"
       tabIndex={0}
-      className={cn(
-        "group border-b border-border/50 transition-colors cursor-pointer relative",
-        piece.performedCount > 0 ? HIGHLIGHT.performedRow : piece.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "hover:bg-muted/20"
-      )}
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onOpenPiece(piece);
-      }}
+      className={cn("group border-b border-border/50 transition-colors cursor-pointer relative", piece.performedCount > 0 ? HIGHLIGHT.performedRow : piece.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "hover:bg-muted/20")}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenPiece(piece); }}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpenPiece(piece); } }}
     >
-      {/* Piece */}
-      <td className={cn(
-        "py-3 pl-4 pr-2",
-        piece.performedCount > 0 && `border-l-[4px] ${HIGHLIGHT.performedBorder}`,
-        piece.everMilestone === "completed" && `border-l-[4px] ${HIGHLIGHT.learnedBorder}`
-      )}>
+      <td className={cn("py-3 pl-4 pr-2", piece.performedCount > 0 && `border-l-[4px] ${HIGHLIGHT.performedBorder}`, piece.everMilestone === "completed" && `border-l-[4px] ${HIGHLIGHT.learnedBorder}`)}>
         <div className="flex flex-wrap items-center gap-1.5">
           {hasMovements && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
-              className="p-0.5 rounded hover:bg-muted/50 -m-0.5"
-              aria-label={expanded ? "Collapse movements" : "Expand movements"}
-            >
+            <button type="button" onClick={(e) => { e.stopPropagation(); onToggleExpand(); }} className="p-0.5 rounded hover:bg-muted/50 -m-0.5" aria-label={expanded ? "Collapse movements" : "Expand movements"}>
               {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
             </button>
           )}
-          {piece.performedCount > 0 && (
-            <Music2 className="w-3.5 h-3.5 shrink-0 text-destructive" />
-          )}
-          <span className="text-sm font-medium hover:text-primary transition-colors line-clamp-1">
-            {piece.pieceTitle}
-          </span>
+          {piece.performedCount > 0 && <Music2 className={cn("w-3.5 h-3.5 shrink-0", HIGHLIGHT.performedMusicIcon)} />}
+          <span className="text-sm font-medium hover:text-primary transition-colors line-clamp-1">{piece.pieceTitle}</span>
           {piece.everMilestone && (
             <>
-            <span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>
-              Learned
-            </span>
-            {piece.performedCount > 0 && (
-              <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>
-                {piece.performedCount > 1 ? `Performed x${piece.performedCount}` : "Performed"}
-              </span>
-            )}
+              <span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>Learned</span>
+              {piece.performedCount > 0 && <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>{piece.performedCount > 1 ? `Performed x${piece.performedCount}` : "Performed"}</span>}
             </>
           )}
         </div>
-        {hasMovements && !expanded && (
-          <p className="text-[10px] text-muted-foreground mt-0.5">{piece.movements.length} movements</p>
-        )}
+        {hasMovements && !expanded && <p className="text-[10px] text-muted-foreground mt-0.5">{piece.movements.length} movements</p>}
       </td>
-
-      {/* Composer */}
-      <td className="py-3 px-2">
-        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">{piece.composerName}</span>
-      </td>
-
-      {/* Status */}
+      <td className="py-3 px-2"><span className="text-xs font-medium text-muted-foreground whitespace-nowrap">{piece.composerName}</span></td>
       <td className="py-3 px-2">
         <div onClick={(e) => e.stopPropagation()}>
-        <Select value={status} onValueChange={(val) => { setStatus(val as RepertoireStatus); onStatusChange(piece.pieceId, val); }}>
-          <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-[160px]", getStatusColor(status))}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
+          <Select value={status} onValueChange={(val) => { setStatus(val as RepertoireStatus); onStatusChange(piece.pieceId, val); }}>
+            <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-[160px]", getStatusColor(status))}><SelectValue /></SelectTrigger>
+            <SelectContent>{ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent>
+          </Select>
         </div>
       </td>
-
-      {/* Progress */}
       <td className="py-3 px-2 w-28">
         <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full"
-            style={{
-              width: `${STATUS_PROGRESS[status] ?? 0}%`,
-              backgroundColor: getProgressColor(STATUS_PROGRESS[status] ?? 0),
-            }}
-          />
+          <div className="h-full rounded-full" style={{ width: `${STATUS_PROGRESS[status] ?? 0}%`, backgroundColor: getProgressColor(STATUS_PROGRESS[status] ?? 0) }} />
         </div>
       </td>
-
-      {/* Started */}
+      <td className="py-3 px-2"><span className="text-xs text-muted-foreground whitespace-nowrap">{piece.startedDate ? new Date(piece.startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}</span></td>
       <td className="py-3 px-2">
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {piece.startedDate ? new Date(piece.startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}
-        </span>
+        <a href={buildImslpUrl(piece.pieceTitle, piece.composerName)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 transition-colors whitespace-nowrap"><ExternalLink className="w-2.5 h-2.5" /> Score</a>
       </td>
-
-      {/* IMSLP */}
-      <td className="py-3 px-2">
-        <a
-          href={buildImslpUrl(piece.pieceTitle, piece.composerName)}
-          target="_blank" rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 transition-colors whitespace-nowrap"
-        >
-          <ExternalLink className="w-2.5 h-2.5" /> Score
-        </a>
-      </td>
-
-      {/* Remove */}
       <td className="py-3 pr-4 pl-2">
-        <button
-          onClick={(e) => { e.stopPropagation(); setConfirmRemove(true); }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive rounded"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(true); }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-[#1C1C1A] rounded"><X className="w-3.5 h-3.5" /></button>
         <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -849,9 +766,7 @@ function TableRow({ piece, expanded, onToggleExpand, onOpenPiece, onStatusChange
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => onRemove(piece.pieceId)}>
-                Remove
-              </AlertDialogAction>
+              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => onRemove(piece.pieceId)}>Remove</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -862,59 +777,24 @@ function TableRow({ piece, expanded, onToggleExpand, onOpenPiece, onStatusChange
         {piece.movements.map((m) => {
           const mPerformed = m.performedCount ?? 0;
           return (
-          <tr key={m.entryId} className={cn(
-            "border-b border-border/30 hover:bg-muted/10",
-            mPerformed > 0 ? HIGHLIGHT.performedRow : m.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "bg-muted/5"
-          )}>
-            <td className={cn(
-              "py-2 pl-4 pr-2",
-              mPerformed > 0 && `border-l-[3px] ${HIGHLIGHT.performedBorder}`,
-              m.everMilestone === "completed" && mPerformed === 0 && `border-l-[3px] ${HIGHLIGHT.learnedBorder}`,
-            )}>
-              <div className="flex items-center gap-1.5 pl-8">
-                {mPerformed > 0 && <Music2 className="w-3 h-3 shrink-0 text-destructive" />}
-                <span className="text-xs text-muted-foreground">{m.name}</span>
-                {m.everMilestone && (
-                  <span className={cn("inline-flex items-center text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full", HIGHLIGHT.learnedPill)}>
-                    Learned
-                  </span>
-                )}
-                {mPerformed > 0 && (
-                  <span className={cn("inline-flex items-center text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full", HIGHLIGHT.performedPill)}>
-                    {mPerformed > 1 ? `Performed ×${mPerformed}` : "Performed"}
-                  </span>
-                )}
-              </div>
-            </td>
-            <td className="py-2 px-2 text-xs text-muted-foreground">—</td>
-            <td className="py-2 px-2" />
-            <td className="py-2 px-2" />
-            <td className="py-2 px-2" />
-            <td className="py-2 px-2" />
-            <td className="py-2 pr-4 pl-2" />
-          </tr>
+            <tr key={m.entryId} className={cn("border-b border-border/30 hover:bg-muted/10", mPerformed > 0 ? HIGHLIGHT.performedRow : m.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "bg-muted/5")}>
+              <td className={cn("py-2 pl-4 pr-2", mPerformed > 0 && `border-l-[3px] ${HIGHLIGHT.performedBorder}`, m.everMilestone === "completed" && mPerformed === 0 && `border-l-[3px] ${HIGHLIGHT.learnedBorder}`)}>
+                <div className="flex items-center gap-1.5 pl-8">
+                  {mPerformed > 0 && <Music2 className={cn("w-3 h-3 shrink-0", HIGHLIGHT.performedMusicIcon)} />}
+                  <span className="text-xs text-muted-foreground">{m.name}</span>
+                  {m.everMilestone && <span className={cn("inline-flex items-center text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full", HIGHLIGHT.learnedPill)}>Learned</span>}
+                  {mPerformed > 0 && <span className={cn("inline-flex items-center text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full", HIGHLIGHT.performedPill)}>{mPerformed > 1 ? `Performed ×${mPerformed}` : "Performed"}</span>}
+                </div>
+              </td>
+              <td className="py-2 px-2 text-xs text-muted-foreground">—</td>
+              <td className="py-2 px-2" /><td className="py-2 px-2" /><td className="py-2 px-2" /><td className="py-2 px-2" /><td className="py-2 pr-4 pl-2" />
+            </tr>
           );
         })}
         <tr className="border-b border-border/30 bg-muted/5">
           <td colSpan={7} className="py-2 pl-8 pr-4 flex flex-wrap items-center gap-3">
-            {onEditMovements && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onEditMovements(); }}
-                className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-              >
-                <Edit2 className="w-3 h-3" /> Edit movements
-              </button>
-            )}
-            {onSplit && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onSplit(); }}
-                className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-              >
-                <SplitSquareHorizontal className="w-3 h-3" /> Split into separate pieces
-              </button>
-            )}
+            {onEditMovements && <button type="button" onClick={(e) => { e.stopPropagation(); onEditMovements(); }} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><Edit2 className="w-3 h-3" /> Edit movements</button>}
+            {onSplit && <button type="button" onClick={(e) => { e.stopPropagation(); onSplit(); }} className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><SplitSquareHorizontal className="w-3 h-3" /> Split into separate pieces</button>}
           </td>
         </tr>
       </>
@@ -933,113 +813,32 @@ function TableRowEntry({ entry, onOpenEntry, onStatusChange, onRemove, onRejoin 
   const [status, setStatus] = useState(entry.status);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const displayTitle = entry.movementName ? `${entry.pieceTitle} — ${entry.movementName}` : entry.pieceTitle;
-
   return (
-    <tr
-      role="button"
-      tabIndex={0}
-      className={cn(
-        "group border-b border-border/50 transition-colors cursor-pointer relative",
-        entry.performedCount > 0 ? HIGHLIGHT.performedRow : entry.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "hover:bg-muted/20"
-      )}
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onOpenEntry(entry);
-      }}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpenEntry(entry); } }}
-    >
-      <td className={cn(
-        "py-3 pl-4 pr-2",
-        entry.performedCount > 0 && `border-l-[4px] ${HIGHLIGHT.performedBorder}`,
-        entry.everMilestone === "completed" && `border-l-[4px] ${HIGHLIGHT.learnedBorder}`
-      )}>
+    <tr role="button" tabIndex={0} className={cn("group border-b border-border/50 transition-colors cursor-pointer relative", entry.performedCount > 0 ? HIGHLIGHT.performedRow : entry.everMilestone === "completed" ? HIGHLIGHT.learnedRow : "hover:bg-muted/20")} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenEntry(entry); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); onOpenEntry(entry); } }}>
+      <td className={cn("py-3 pl-4 pr-2", entry.performedCount > 0 && `border-l-[4px] ${HIGHLIGHT.performedBorder}`, entry.everMilestone === "completed" && `border-l-[4px] ${HIGHLIGHT.learnedBorder}`)}>
         <div className="flex flex-wrap items-center gap-1.5">
-          {entry.performedCount > 0 && (
-            <Music2 className="w-3.5 h-3.5 shrink-0 text-destructive" />
-          )}
-          <span className="text-sm font-medium hover:text-primary transition-colors line-clamp-1">
-            {displayTitle}
-          </span>
-          {entry.everMilestone && (
-            <>
-              <span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>
-                Learned
-              </span>
-              {entry.performedCount > 0 && (
-                <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>
-                  {entry.performedCount > 1 ? `Performed x${entry.performedCount}` : "Performed"}
-                </span>
-              )}
-            </>
-          )}
+          {entry.performedCount > 0 && <Music2 className={cn("w-3.5 h-3.5 shrink-0", HIGHLIGHT.performedMusicIcon)} />}
+          <span className="text-sm font-medium hover:text-primary transition-colors line-clamp-1">{displayTitle}</span>
+          {entry.everMilestone && (<><span className={cn("inline-flex w-fit min-w-[84px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.learnedPill)}>Learned</span>{entry.performedCount > 0 && <span className={cn("inline-flex w-fit min-w-[108px] justify-center items-center gap-1 text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full shadow-sm whitespace-nowrap", HIGHLIGHT.performedPill)}>{entry.performedCount > 1 ? `Performed x${entry.performedCount}` : "Performed"}</span>}</>)}
         </div>
       </td>
-      <td className="py-3 px-2">
-        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">{entry.composerName}</span>
-      </td>
+      <td className="py-3 px-2"><span className="text-xs font-medium text-muted-foreground whitespace-nowrap">{entry.composerName}</span></td>
       <td className="py-3 px-2" onClick={(e) => e.stopPropagation()}>
         <Select value={status} onValueChange={(val) => { setStatus(val as RepertoireStatus); onStatusChange(entry.entryId, val); }}>
-          <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-[160px]", getStatusColor(status))}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
-          </SelectContent>
+          <SelectTrigger className={cn("h-7 text-xs font-medium border-none shadow-none focus:ring-0 px-2 w-[160px]", getStatusColor(status))}><SelectValue /></SelectTrigger>
+          <SelectContent>{ALL_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent>
         </Select>
       </td>
-      <td className="py-3 px-2 w-28">
-        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full"
-            style={{
-              width: `${STATUS_PROGRESS[status] ?? 0}%`,
-              backgroundColor: getProgressColor(STATUS_PROGRESS[status] ?? 0),
-            }}
-          />
-        </div>
-      </td>
-      <td className="py-3 px-2">
-        <span className="text-xs text-muted-foreground whitespace-nowrap">
-          {entry.startedDate ? new Date(entry.startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}
-        </span>
-      </td>
-      <td className="py-3 px-2">
-        <a
-          href={buildImslpUrl(entry.pieceTitle, entry.composerName)}
-          target="_blank" rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 transition-colors whitespace-nowrap"
-        >
-          <ExternalLink className="w-2.5 h-2.5" /> Score
-        </a>
-      </td>
+      <td className="py-3 px-2 w-28"><div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${STATUS_PROGRESS[status] ?? 0}%`, backgroundColor: getProgressColor(STATUS_PROGRESS[status] ?? 0) }} /></div></td>
+      <td className="py-3 px-2"><span className="text-xs text-muted-foreground whitespace-nowrap">{entry.startedDate ? new Date(entry.startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}</span></td>
+      <td className="py-3 px-2"><a href={buildImslpUrl(entry.pieceTitle, entry.composerName)} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 transition-colors whitespace-nowrap"><ExternalLink className="w-2.5 h-2.5" /> Score</a></td>
       <td className="py-3 pr-4 pl-2 flex items-center gap-1">
-        <button
-          onClick={(e) => { e.stopPropagation(); onRejoin(entry.pieceId); }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-primary rounded text-[10px] flex items-center gap-0.5"
-          title="Rejoin with other movements"
-        >
-          <Merge className="w-3 h-3" /> Rejoin
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); setConfirmRemove(true); }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-destructive rounded"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        <button onClick={(e) => { e.stopPropagation(); onRejoin(entry.pieceId); }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-primary rounded text-[10px] flex items-center gap-0.5" title="Rejoin with other movements"><Merge className="w-3 h-3" /> Rejoin</button>
+        <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(true); }} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-muted-foreground hover:text-[#1C1C1A] rounded"><X className="w-3.5 h-3.5" /></button>
         <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
           <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove from repertoire?</AlertDialogTitle>
-              <AlertDialogDescription>Remove this movement from your repertoire? This cannot be undone.</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => onRemove(entry.entryId)}>
-                Remove
-              </AlertDialogAction>
-            </AlertDialogFooter>
+            <AlertDialogHeader><AlertDialogTitle>Remove from repertoire?</AlertDialogTitle><AlertDialogDescription>Remove this movement from your repertoire? This cannot be undone.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => onRemove(entry.entryId)}>Remove</AlertDialogAction></AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </td>
@@ -1047,24 +846,24 @@ function TableRowEntry({ entry, onOpenEntry, onStatusChange, onRemove, onRejoin 
   );
 }
 
-function PieceJourneySidePane({
-  row,
-  milestones,
-  userId,
-  onClose,
-}: {
+// ─────────────────────────────────────────────────────────────────────────────
+// PieceJourneySidePane — click-through from table row
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PieceJourneySidePane({ row, milestones, userId, onClose }: {
   row: TableRowItem;
   milestones: any[];
   userId: string;
   onClose: () => void;
 }) {
+  const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [activePlanId, setActivePlanId] = useState<number | null>(null);
+  const [contributeOpen, setContributeOpen] = useState(false);
 
   const piece = row?.kind === "piece" ? row.piece : null;
   const entry = row?.kind === "entry" ? row.entry : null;
 
-  // Ensure we have valid data before rendering
   if (!piece && !entry) return null;
 
   const composerName = piece?.composerName ?? entry?.composerName ?? "Unknown";
@@ -1075,20 +874,31 @@ function PieceJourneySidePane({
   const currentCycle = piece?.currentCycle ?? entry?.currentCycle ?? 1;
   const pieceId = piece?.pieceId ?? entry?.pieceId;
   const primaryEntryId = piece?.primaryEntryId ?? entry?.entryId;
-  const movementId = entry?.movementId ?? undefined;
+  // For a movement entry, scope community scores to that movement.
+  // For a piece row, scope to null (whole piece).
+  const movementId: number | null = entry?.movementId ?? null;
   const prog = STATUS_PROGRESS[status] ?? 0;
 
-  // Guard against missing pieceId
-  if (!pieceId) {
-    console.warn("PieceJourneySidePane: missing pieceId", { piece, entry });
-    return null;
-  }
+  if (!pieceId) return null;
 
-  // Check for existing learning plan
+  const communityScoreUrl = `/api/community-scores?pieceId=${pieceId}${movementId != null ? `&movementId=${movementId}` : ""}`;
+
   const { data: existingPlan } = useQuery<{ id: number } | null>({
     queryKey: [`/api/learning-plans/entry/${primaryEntryId}`],
     enabled: !!primaryEntryId,
     staleTime: 30_000,
+  });
+
+  const { data: communityScore } = useQuery<{ id: number } | null>({
+    queryKey: [communityScoreUrl],
+    queryFn: async () => {
+      const res = await fetch(communityScoreUrl);
+      if (res.status === 404) return null;
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!pieceId,
+    staleTime: 60_000,
   });
 
   return (
@@ -1101,89 +911,58 @@ function PieceJourneySidePane({
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{composerName}</p>
               <h2 className="font-serif text-2xl leading-tight">{displayTitle}</h2>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-full hover:bg-muted transition-colors">
-              <X className="w-4 h-4 text-muted-foreground" />
-            </button>
+            <button onClick={onClose} className="p-1.5 rounded-full hover:bg-muted transition-colors"><X className="w-4 h-4 text-muted-foreground" /></button>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-lg border border-border bg-card px-2.5 py-2">
-              <p className="text-muted-foreground">Status</p>
-              <p className="font-medium mt-0.5">{status}</p>
-            </div>
-            <div className="rounded-lg border border-border bg-card px-2.5 py-2">
-              <p className="text-muted-foreground">Started</p>
-              <p className="font-medium mt-0.5">{startedDate ? new Date(startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}</p>
-            </div>
+            <div className="rounded-lg border border-border bg-card px-2.5 py-2"><p className="text-muted-foreground">Status</p><p className="font-medium mt-0.5">{status}</p></div>
+            <div className="rounded-lg border border-border bg-card px-2.5 py-2"><p className="text-muted-foreground">Started</p><p className="font-medium mt-0.5">{startedDate ? new Date(startedDate).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—"}</p></div>
           </div>
           <div className="mt-3">
-            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-              <span>Progress</span>
-              <span>{prog}%</span>
-            </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${prog}%`, backgroundColor: getProgressColor(prog) }} />
-            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground mb-1"><span>Progress</span><span>{prog}%</span></div>
+            <div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${prog}%`, backgroundColor: getProgressColor(prog) }} /></div>
           </div>
           <div className="mt-4 flex items-center gap-2">
-            <a
-              href={buildImslpUrl(pieceTitle, composerName)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"
-            >
-              <ExternalLink className="w-3 h-3" /> Score
-            </a>
-            {pieceId != null && Number.isInteger(pieceId) && (
-              <Link href={`/piece/${pieceId}`} onClick={onClose} className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors">
-                <ArrowUpRight className="w-3 h-3" /> Open piece page
-              </Link>
-            )}
+            <a href={buildImslpUrl(pieceTitle, composerName)} target="_blank" rel="noopener noreferrer" className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><ExternalLink className="w-3 h-3" /> Score</a>
+            {pieceId != null && Number.isInteger(pieceId) && <Link href={`/piece/${pieceId}`} onClick={onClose} className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors"><ArrowUpRight className="w-3 h-3" /> Open piece page</Link>}
           </div>
         </div>
 
         <div className="p-5">
           <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">Learning Journey</h3>
-          <MilestoneTimeline
-            milestones={milestones}
-            movements={piece?.movements}
-            currentCycle={currentCycle}
-            pieceId={pieceId}
-            userId={userId}
-            repertoireEntryId={primaryEntryId}
-            movementId={movementId}
-            editable={!!userId}
-          />
+          <MilestoneTimeline milestones={milestones} movements={piece?.movements} currentCycle={currentCycle} pieceId={pieceId} userId={userId} repertoireEntryId={primaryEntryId} movementId={movementId} editable={!!userId} />
         </div>
 
-        {/* ── Learning Plan ─────────────────────────────────────────────── */}
         <div className="p-5 border-t border-border">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Learning Plan</h3>
-            {!existingPlan && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1"
-                onClick={() => setWizardOpen(true)}
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                Start plan
-              </Button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {/* Contribute score button — only when no community score exists yet */}
+              {!communityScore && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs gap-1 text-[#729E8F] hover:text-[#5a7f72] hover:bg-[#729E8F]/10"
+                  onClick={() => setContributeOpen(true)}
+                  title="Contribute your bar analysis to the community"
+                >
+                  <Upload className="w-3.5 h-3.5" /> Contribute score
+                </Button>
+              )}
+              {existingPlan ? (
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => { onClose(); navigate(`/plan/${existingPlan.id}`); }}>
+                  <BookOpen className="w-3.5 h-3.5" /> View full plan
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setWizardOpen(true)}>
+                  <BookOpen className="w-3.5 h-3.5" /> Start plan
+                </Button>
+              )}
+            </div>
           </div>
-
           {existingPlan ? (
-            <DailyLessonCard
-              planId={existingPlan.id}
-              pieceTitle={pieceTitle}
-              composerName={composerName}
-              pieceId={pieceId}
-              userId={userId}
-            />
+            <DailyLessonCard planId={existingPlan.id} repertoireEntryId={primaryEntryId} pieceTitle={pieceTitle} composerName={composerName} pieceId={pieceId} userId={userId} />
           ) : (
-            <p className="text-xs text-muted-foreground">
-              Create a structured day-by-day schedule to learn this piece.
-            </p>
+            <p className="text-xs text-muted-foreground">Create a structured day-by-day schedule to learn this piece.</p>
           )}
         </div>
       </aside>
@@ -1193,28 +972,44 @@ function PieceJourneySidePane({
           open={wizardOpen}
           onOpenChange={setWizardOpen}
           repertoireEntryId={primaryEntryId}
+          pieceId={pieceId}
+          movementId={movementId}
           pieceTitle={pieceTitle}
           userId={userId}
+          onPlanCreated={(pid) => {
+            onClose();
+            navigate(`/plan/${pid}`);
+          }}
         />
       )}
+
+      {/* Standalone contribute-score wizard (no learning plan created) */}
+      <ContributeScoreWizard
+        open={contributeOpen}
+        onOpenChange={setContributeOpen}
+        pieceId={pieceId}
+        movementId={movementId}
+        pieceTitle={pieceTitle}
+        userId={userId}
+        onContributed={() => {
+          // Invalidate so the side pane hides the button AND the wizard shows the card
+          queryClient.invalidateQueries({ queryKey: [communityScoreUrl] });
+          setContributeOpen(false);
+        }}
+      />
     </>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main ProfilePage
+// Main HomePage
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function ProfilePage() {
+export default function HomePage() {
   const [, navigate] = useLocation();
   const userId = localStorage.getItem("userId");
 
   useEffect(() => { if (!userId) navigate("/auth"); }, [userId, navigate]);
-
-  const { data: profile, isLoading: profileLoading } = useQuery({
-    queryKey: [`/api/users/${userId}/profile`],
-    enabled: !!userId,
-  });
 
   const { data: rawRepertoire } = useQuery<any[] | { entries: any[]; movementOrderByPiece: Record<number, number[]> }>({
     queryKey: [`/api/repertoire/${userId}`],
@@ -1229,7 +1024,7 @@ export default function ProfilePage() {
 
   const queryClient = useQueryClient();
 
-  // ── Composer order (persisted to localStorage) ────────────────────────────
+  // ── Composer order ────────────────────────────────────────────────────────
   const [composerOrder, setComposerOrder] = useState<number[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -1259,25 +1054,19 @@ export default function ProfilePage() {
   const [expandedPieceIds, setExpandedPieceIds] = useState<Set<number>>(() => new Set());
   const [tableExpanded, setTableExpanded] = useState(false);
   const [tableFilter, setTableFilter] = useState<"all" | "active" | "maintaining">("all");
-  // ── Derived data ──────────────────────────────────────────────────────────
 
-  const composerGroups = useMemo(() =>
-    groupByComposer(repertoireEntries, movementOrderByPiece), [repertoireEntries, movementOrderByPiece]);
+  const composerGroups = useMemo(() => groupByComposer(repertoireEntries, movementOrderByPiece), [repertoireEntries, movementOrderByPiece]);
 
-  // sortedGroups mirrors composerGroups but respects the user-defined drag order.
-  // When composerGroups changes (data refresh), merge new groups in while preserving order.
   const [sortedGroups, setSortedGroups] = useState<ComposerGroup[]>([]);
   useEffect(() => {
     if (composerGroups.length === 0) { setSortedGroups([]); return; }
-    setSortedGroups(prev => {
+    setSortedGroups(() => {
       const orderMap = new Map(composerOrder.map((id, i) => [id, i]));
-      // start with the saved order, filling in fresh data
-      const merged = [...composerGroups].sort((a, b) => {
+      return [...composerGroups].sort((a, b) => {
         const ai = orderMap.has(a.composerId) ? orderMap.get(a.composerId)! : 9999;
         const bi = orderMap.has(b.composerId) ? orderMap.get(b.composerId)! : 9999;
         return ai - bi;
       });
-      return merged;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [composerGroups]);
@@ -1288,17 +1077,12 @@ export default function ProfilePage() {
     if (refreshed) setActivePaneComposer(refreshed);
   }, [sortedGroups, activePaneComposer]);
 
-  const allPieces = useMemo(() =>
-    composerGroups.flatMap(g => g.pieces), [composerGroups]);
-
-  const tableRows = useMemo(() =>
-    buildTableRows(repertoireEntries, allPieces), [repertoireEntries, allPieces]);
+  const allPieces = useMemo(() => composerGroups.flatMap(g => g.pieces), [composerGroups]);
+  const tableRows = useMemo(() => buildTableRows(repertoireEntries, allPieces), [repertoireEntries, allPieces]);
 
   const filteredTableRows = useMemo(() => {
-    const withStatus = (item: TableRowItem) =>
-      item.kind === "piece" ? item.piece.status : item.entry.status;
-    const getTitle = (item: TableRowItem) =>
-      item.kind === "piece" ? item.piece.pieceTitle : (item.entry.movementName ? `${item.entry.pieceTitle} — ${item.entry.movementName}` : item.entry.pieceTitle);
+    const withStatus = (item: TableRowItem) => item.kind === "piece" ? item.piece.status : item.entry.status;
+    const getTitle = (item: TableRowItem) => item.kind === "piece" ? item.piece.pieceTitle : (item.entry.movementName ? `${item.entry.pieceTitle} — ${item.entry.movementName}` : item.entry.pieceTitle);
     let list = [...tableRows];
     if (tableFilter === "active") list = list.filter((item) => ACTIVE_STATUSES.has(withStatus(item)));
     if (tableFilter === "maintaining") list = list.filter((item) => withStatus(item) === "Maintaining");
@@ -1313,7 +1097,6 @@ export default function ProfilePage() {
 
   const [activeRow, setActiveRow] = useState<TableRowItem | null>(null);
 
-  // Derive the active piece and entry, refreshing from latest data
   const activePiece = useMemo(() => {
     if (!activeRow || activeRow.kind !== "piece") return null;
     return allPieces.find((p) => p.pieceId === activeRow.piece.pieceId) ?? activeRow.piece;
@@ -1325,25 +1108,18 @@ export default function ProfilePage() {
     return entry ? toEntryRow(entry) : activeRow.entry;
   }, [activeRow, repertoireEntries]);
 
-  // For whole pieces (multi-movement), fetch all milestones including per-movement ones
   const isMultiMovementPiece = activePiece && activePiece.movements.some(m => m.movementId != null);
   const { data: activePieceMilestones = [] } = useQuery<any[]>({
-    queryKey: [
-      `/api/milestones/${userId}/${activePiece?.pieceId ?? activeEntry?.pieceId}`,
-      activeEntry?.movementId ?? (isMultiMovementPiece ? "all-movements" : "whole"),
-    ],
+    queryKey: [`/api/milestones/${userId}/${activePiece?.pieceId ?? activeEntry?.pieceId}`, activeEntry?.movementId ?? (isMultiMovementPiece ? "all-movements" : "whole")],
     queryFn: async () => {
       const pieceId = activePiece?.pieceId ?? activeEntry?.pieceId;
       if (!pieceId || !userId) return [];
       let url: string;
       if (activeEntry?.movementId != null) {
-        // Single movement (split view): fetch just that movement's milestones
         url = `/api/milestones/${userId}/${pieceId}?movementId=${activeEntry.movementId}`;
       } else if (isMultiMovementPiece) {
-        // Whole multi-movement piece: fetch all milestones including movement-specific ones
         url = `/api/milestones/${userId}/${pieceId}?allMovements=true`;
       } else {
-        // Single-movement piece: fetch piece-level milestones
         url = `/api/milestones/${userId}/${pieceId}`;
       }
       const r = await fetch(url);
@@ -1355,35 +1131,16 @@ export default function ProfilePage() {
     staleTime: 0,
   });
 
-  const stats = useMemo(() => {
-    const total = allPieces.length;
-    const active = allPieces.filter(p => ACTIVE_STATUSES.has(p.status)).length;
-    const ready = allPieces.filter(p => p.status === "Maintaining").length;
-    return { total, active, ready };
-  }, [allPieces]);
-
-  const profileData = profile as any;
-  const displayName = profileData?.displayName || "Profile";
-  const instrument  = profileData?.instrument || "";
-  const level       = profileData?.level || "";
-  const location    = profileData?.location || "";
-  const bio         = profileData?.bio || "";
-  const avatarUrl   = profileData?.avatarUrl || "avatar-8";
-  const isTempotown = String(displayName).trim().toLowerCase() === "tempotown";
-
-
-  const eraData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const g of composerGroups) counts[g.era] = (counts[g.era] ?? 0) + g.totalCount;
-    return Object.entries(counts).map(([era, count]) => ({ era, count }));
-  }, [composerGroups]);
+  // ── In-progress entries with plans ──────────────────────────────────────
+  const inProgressEntries = useMemo(() =>
+    repertoireEntries.filter((e: any) => e.status === "In Progress"),
+  [repertoireEntries]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleStatusChange = async (pieceId: number, newStatus: string) => {
     await apiRequest("PATCH", `/api/repertoire/piece/${pieceId}`, { status: newStatus });
     queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
-    queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
   };
 
   const handleRemove = async (pieceId: number) => {
@@ -1400,7 +1157,6 @@ export default function ProfilePage() {
   const handleEntryStatusChange = async (entryId: number, newStatus: string) => {
     await apiRequest("PATCH", `/api/repertoire/${entryId}`, { status: newStatus });
     queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
-    queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
   };
 
   const handleEntryRemove = async (entryId: number) => {
@@ -1432,7 +1188,6 @@ export default function ProfilePage() {
         await apiRequest("POST", "/api/repertoire", { userId, composerId: piece.composerId, pieceId: piece.pieceId, status: piece.status, startedDate });
       }
       queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/activity/${userId}`] });
     } catch (err) { console.error("Failed to add piece:", err); }
   };
 
@@ -1450,51 +1205,49 @@ export default function ProfilePage() {
   return (
     <Layout>
       <div className="min-h-screen bg-background pb-20">
+        <div className="container mx-auto px-6 xl:px-8 py-8">
+          <div className="mx-auto w-full max-w-7xl space-y-10">
 
-        {/* ── HERO ──────────────────────────────────────────── */}
-        <div className="bg-black text-primary-foreground">
-          <div className="container mx-auto px-6 xl:px-8 max-w-[1760px] pt-6 pb-10">
-            <div className="flex flex-col sm:flex-row items-start gap-8">
-              <div className="shrink-0 w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shadow-2xl border border-primary-foreground/30 bg-primary-foreground/20 flex items-center justify-center">
-                <span className="text-3xl font-bold text-primary-foreground/80">
-                  {displayName?.charAt(0)?.toUpperCase() ?? "?"}
-                </span>
-              </div>
-              <div className="flex-1 min-w-0 pt-1">
-                {profileLoading
-                  ? <Skeleton className="h-10 w-52 mb-3 bg-primary-foreground/20" />
-                  : <h1 className="font-serif text-4xl sm:text-5xl font-bold text-primary-foreground leading-tight mb-2" data-testid="text-display-name">{displayName}</h1>}
-                <div className="flex flex-wrap items-center gap-3 mb-3 text-primary-foreground/75 text-sm">
-                  {instrument && <span className="font-medium">{instrument}{level && ` · ${level}`}</span>}
-                  {location && <span className="flex items-center gap-1 text-primary-foreground/60"><MapPin className="w-3 h-3" />{location}</span>}
-                </div>
-                {bio && <p className="text-primary-foreground/65 text-sm leading-relaxed max-w-2xl mb-4" data-testid="text-bio">{bio}</p>}
-                <div className="flex flex-wrap items-center gap-5">
-                  <Button variant="outline" size="sm" className="border-primary-foreground/45 text-primary-foreground hover:bg-primary-foreground/10 gap-1.5">
-                    <Edit2 className="w-3.5 h-3.5" /> Edit Profile
-                  </Button>
-                  <div className="flex items-center gap-5 text-sm">
-                    {[
-                      { val: sortedGroups.length, label: "composers" },
-                      { val: stats.total,           label: "pieces" },
-                      { val: stats.active,          label: "active" },
-                      { val: stats.ready,           label: "maintaining" },
-                    ].map(({ val, label }) => (
-                      <span key={label} className="text-primary-foreground/70">
-                        <span className="font-bold text-primary-foreground mr-1">{val}</span>{label}
-                      </span>
-                    ))}
+              {/* ── ACTIVE LEARNING PLANS (same column as library — not the top app bar) ── */}
+              {inProgressEntries.length > 0 && (
+                <section aria-labelledby="active-plans-heading">
+                  <div className="rounded-2xl border border-[#C8B388]/45 bg-card shadow-sm overflow-hidden ring-1 ring-[#C8B388]/15">
+                    <div className="px-5 sm:px-6 py-4 sm:py-5 border-b border-border/60 bg-gradient-to-r from-[#DCCAA6]/20 via-[#F4F1EA] to-background">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C8B388]/25 text-[#5c4a28]">
+                            <GraduationCap className="w-4 h-4" aria-hidden />
+                          </span>
+                          <h2 id="active-plans-heading" className="text-xs font-bold uppercase tracking-widest text-foreground">
+                            Active learning plans
+                          </h2>
+                        </div>
+                        <span className="text-xs font-medium text-muted-foreground tabular-nums rounded-full bg-background/80 border border-border/60 px-2.5 py-0.5">
+                          {inProgressEntries.length} in progress
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-2 max-w-2xl leading-snug">
+                        Continue structured practice for these pieces — open a plan for today&apos;s session or to adjust your schedule.
+                      </p>
+                    </div>
+                    <div className="p-5 sm:p-6 bg-muted/10">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {inProgressEntries.map((entry: any) => {
+                          const piece = allPieces.find(p => p.pieceId === entry.pieceId);
+                          return (
+                            <ActivePlanCard
+                              key={entry.id}
+                              entryId={entry.id}
+                              pieceTitle={entry.pieceTitle ?? piece?.pieceTitle ?? "Untitled"}
+                              composerName={entry.composerName ?? piece?.composerName ?? ""}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ── MAIN CONTENT ──────────────────────────────────── */}
-        <div className="container mx-auto px-6 xl:px-8 max-w-[1760px] py-8">
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-            <div className="lg:col-span-3 space-y-10">
+                </section>
+              )}
 
               {/* ── COMPOSER LIBRARY ──────────────────────────── */}
               <section>
@@ -1516,19 +1269,14 @@ export default function ProfilePage() {
                   </div>
                 ) : (
                   <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleComposerDragEnd}>
-                    <SortableContext
-                      items={sortedGroups.map(g => g.composerId)}
-                      strategy={horizontalListSortingStrategy}
-                    >
+                    <SortableContext items={sortedGroups.map(g => g.composerId)} strategy={horizontalListSortingStrategy}>
                       <div className="flex gap-4 overflow-x-auto pb-3 scrollbar-none -mx-1 px-1">
                         {sortedGroups.map(group => (
                           <SortableComposerBook
                             key={group.composerId}
                             group={group}
                             isActive={activePaneComposer?.composerId === group.composerId}
-                            onClick={() => setActivePaneComposer(
-                              activePaneComposer?.composerId === group.composerId ? null : group
-                            )}
+                            onClick={() => setActivePaneComposer(activePaneComposer?.composerId === group.composerId ? null : group)}
                           />
                         ))}
                       </div>
@@ -1537,7 +1285,7 @@ export default function ProfilePage() {
                 )}
               </section>
 
-              {/* Learning Table */}
+              {/* ── REPERTOIRE TABLE ──────────────────────────── */}
               <section>
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
@@ -1545,16 +1293,12 @@ export default function ProfilePage() {
                     <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Repertoire</h2>
                     <span className="text-xs text-muted-foreground/50">{filteredTableRows.length} pieces</span>
                   </div>
-                  {/* Filter tabs */}
                   <div className="flex gap-1">
                     {(["all", "active", "maintaining"] as const).map(f => (
                       <button
                         key={f}
                         onClick={() => setTableFilter(f)}
-                        className={cn(
-                          "text-xs px-3 py-1.5 rounded-full font-medium transition-colors capitalize",
-                          tableFilter === f ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
-                        )}
+                        className={cn("text-xs px-3 py-1.5 rounded-full font-medium transition-colors capitalize", tableFilter === f ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80")}
                       >
                         {f === "maintaining" ? "Maintaining" : f === "active" ? "Active" : "All"}
                       </button>
@@ -1577,9 +1321,7 @@ export default function ProfilePage() {
                     </thead>
                     <tbody>
                       {visibleTableRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">No pieces match this filter.</td>
-                        </tr>
+                        <tr><td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">No pieces match this filter.</td></tr>
                       ) : visibleTableRows.map((row) =>
                         row.kind === "piece" ? (
                           <TableRow
@@ -1592,10 +1334,7 @@ export default function ProfilePage() {
                               else next.add(row.piece.pieceId);
                               return next;
                             })}
-                            onOpenPiece={(selectedPiece) => {
-                              setActivePaneComposer(null);
-                              setActiveRow({ kind: "piece", piece: selectedPiece });
-                            }}
+                            onOpenPiece={(selectedPiece) => { setActivePaneComposer(null); setActiveRow({ kind: "piece", piece: selectedPiece }); }}
                             onStatusChange={handleStatusChange}
                             onRemove={handleRemove}
                             onEditMovements={row.piece.movements.length > 0 ? () => setEditMovementsPieceId(row.piece.pieceId) : undefined}
@@ -1605,10 +1344,7 @@ export default function ProfilePage() {
                           <TableRowEntry
                             key={`e-${row.entry.entryId}`}
                             entry={row.entry}
-                            onOpenEntry={(entry) => {
-                              setActivePaneComposer(null);
-                              setActiveRow({ kind: "entry", entry });
-                            }}
+                            onOpenEntry={(entry) => { setActivePaneComposer(null); setActiveRow({ kind: "entry", entry }); }}
                             onStatusChange={handleEntryStatusChange}
                             onRemove={handleEntryRemove}
                             onRejoin={handleRejoin}
@@ -1617,82 +1353,21 @@ export default function ProfilePage() {
                       )}
                     </tbody>
                   </table>
-
                   {filteredTableRows.length > 8 && (
                     <div className="border-t border-border/50 px-4 py-2.5 bg-muted/20">
-                      <button
-                        onClick={() => setTableExpanded(e => !e)}
-                        className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-                      >
+                      <button onClick={() => setTableExpanded(e => !e)} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
                         {tableExpanded ? <><ChevronUp className="w-3.5 h-3.5" /> Show less</> : <><ChevronDown className="w-3.5 h-3.5" /> Show all {filteredTableRows.length} pieces</>}
                       </button>
                     </div>
                   )}
                 </div>
               </section>
-            </div>
-
-            {/* Right rail: analytics */}
-            <section className="space-y-5 lg:col-span-1">
-
-              {/* Analytics (1/3) */}
-              <div className="space-y-5">
-                {/* KPI row */}
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { val: sortedGroups.length, label: "Composers", icon: Users },
-                    { val: stats.active,          label: "Active",    icon: Zap },
-                    { val: stats.total > 0 ? `${Math.round((stats.ready / stats.total) * 100)}%` : "0%", label: "Completion", icon: BarChart3 },
-                  ].map(({ val, label, icon: Icon }) => (
-                    <div key={label} className="rounded-xl border border-border bg-card p-3 text-center shadow-sm">
-                      <p className="text-xl font-bold tabular-nums leading-none">{val}</p>
-                      <p className="text-[10px] text-muted-foreground mt-1">{label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Era distribution */}
-                {eraData.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
-                      <Zap className="w-3.5 h-3.5" /> Era distribution
-                    </h3>
-                    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                      <div className="flex items-center gap-4">
-                        <ResponsiveContainer width={110} height={110}>
-                          <PieChart>
-                            <Pie data={eraData} dataKey="count" nameKey="era" cx="50%" cy="50%"
-                              innerRadius={30} outerRadius={50} paddingAngle={2}>
-                              {eraData.map(({ era }) => (
-                              <Cell key={era} fill={ERA_DOT[era] ?? ERA_DOT.Other} />
-                              ))}
-                            </Pie>
-                            <Tooltip formatter={(v: number, name: string) => [`${v} pieces`, name]} contentStyle={{ fontSize: 11, padding: "4px 8px" }} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div className="flex-1 space-y-1.5">
-                          {eraData.map(({ era, count }) => (
-                            <div key={era} className="flex items-center gap-2">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: ERA_DOT[era] ?? ERA_DOT.Other }} />
-                              <span className="text-xs text-muted-foreground flex-1 truncate">{era}</span>
-                              <span className="text-xs font-semibold">{count}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
           </div>
         </div>
 
         {/* ── COMPOSER SIDE PANE ────────────────────────────── */}
         {activePaneComposer && (() => {
-          const composerDisplayItems = tableRows.filter(
-            (row) => (row.kind === "piece" ? row.piece.composerId : row.entry.composerId) === activePaneComposer.composerId
-          );
+          const composerDisplayItems = tableRows.filter(row => (row.kind === "piece" ? row.piece.composerId : row.entry.composerId) === activePaneComposer.composerId);
           return (
             <ComposerSidePane
               group={activePaneComposer}
@@ -1706,15 +1381,9 @@ export default function ProfilePage() {
           );
         })()}
         {activeRow && userId && (activePiece || activeEntry) && (
-          <PieceJourneySidePane
-            row={activeRow}
-            milestones={activePieceMilestones}
-            userId={userId}
-            onClose={() => setActiveRow(null)}
-          />
+          <PieceJourneySidePane row={activeRow} milestones={activePieceMilestones} userId={userId} onClose={() => setActiveRow(null)} />
         )}
 
-        {/* ── DIALOGS ───────────────────────────────────────── */}
         {editMovementsPieceId !== null && userId && (
           <EditMovementsDialog
             open={true}

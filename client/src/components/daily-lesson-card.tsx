@@ -7,8 +7,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   CheckCircle2, ChevronRight, Music2, Flame, CalendarDays,
-  BookOpen, ChevronDown, ChevronUp, Loader2,
+  BookOpen, ChevronDown, ChevronUp, Loader2, Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getStatusColor } from "@/lib/status-colors";
@@ -21,7 +25,7 @@ interface LessonDay {
   scheduledDate: string;
   measureStart: number;
   measureEnd: number;
-  status: "pending" | "completed" | "skipped";
+  status: "upcoming" | "active" | "pending" | "completed" | "skipped";
   userNotes: string | null;
   completedAt: string | null;
 }
@@ -47,6 +51,8 @@ interface PlanProgress {
 
 interface DailyLessonCardProps {
   planId: number;
+  /** Repertoire entry this plan belongs to — used to invalidate after delete */
+  repertoireEntryId: number;
   pieceTitle: string;
   composerName: string;
   pieceId: number;
@@ -56,12 +62,13 @@ interface DailyLessonCardProps {
 }
 
 export function DailyLessonCard({
-  planId, pieceTitle, composerName, pieceId, userId, onLessonComplete,
+  planId, repertoireEntryId, pieceTitle, composerName, pieceId, userId, onLessonComplete,
 }: DailyLessonCardProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState("");
+  const [confirmDeletePlan, setConfirmDeletePlan] = useState(false);
 
   const { data: today, isLoading: loadingToday } = useQuery<LessonDay | null>({
     queryKey: [`/api/learning-plans/${planId}/today`],
@@ -107,6 +114,24 @@ export function DailyLessonCard({
     },
   });
 
+  const deletePlan = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/learning-plans/${planId}`);
+    },
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${planId}/today`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${planId}/progress`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${planId}/lessons`] });
+      queryClient.removeQueries({ queryKey: [`/api/learning-plans/${planId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/entry/${repertoireEntryId}`] });
+      setConfirmDeletePlan(false);
+      toast({ title: "Learning plan deleted" });
+    },
+    onError: () => {
+      toast({ title: "Couldn't delete plan", variant: "destructive" });
+    },
+  });
+
   if (loadingToday) {
     return (
       <div className="rounded-xl border bg-card p-4 space-y-3">
@@ -142,7 +167,7 @@ export function DailyLessonCard({
             <p className="font-semibold text-sm truncate">{pieceTitle}</p>
             <p className="text-xs text-muted-foreground">{composerName}</p>
           </div>
-          <div className="shrink-0 flex items-center gap-2">
+          <div className="shrink-0 flex items-center gap-1">
             {(progress?.streakDays ?? 0) > 0 && (
               <div className="flex items-center gap-1 text-orange-500">
                 <Flame className="w-4 h-4" />
@@ -152,9 +177,39 @@ export function DailyLessonCard({
             {today?.status === "completed" && (
               <CheckCircle2 className="w-4 h-4 text-primary" />
             )}
+            <button
+              type="button"
+              onClick={() => setConfirmDeletePlan(true)}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Delete learning plan"
+              aria-label="Delete learning plan"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
+
+      <AlertDialog open={confirmDeletePlan} onOpenChange={setConfirmDeletePlan}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this learning plan?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove the schedule and progress for &ldquo;{pieceTitle}&rdquo;. Your piece stays in repertoire; only the plan is deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deletePlan.mutate()}
+              disabled={deletePlan.isPending}
+            >
+              {deletePlan.isPending ? "Deleting…" : "Delete plan"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Progress bar */}
       <div className="px-4 pb-3 space-y-1.5">

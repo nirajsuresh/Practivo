@@ -1,154 +1,84 @@
-/**
- * Bar (measure) boundary detector.
- *
- * Detects horizontal staff systems and vertical barlines from a rendered
- * page image using a projection-based approach (no ML required).
- *
- * Algorithm:
- *   1. Convert image to grayscale
- *   2. Binarise (Otsu threshold approximation)
- *   3. Horizontal projection → locate staff systems (dense black rows)
- *   4. Within each system, vertical projection → locate barlines (dense black cols)
- *   5. Pairs of adjacent barlines define a measure bounding box
- *
- * No imports from Reperto application code.
- */
-
 import type { BoundingBox } from "./types.js";
 import { createCanvas, loadImage } from "canvas";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { spawnSync } from "child_process";
 
 export class BarDetector {
-  /**
-   * Detect measure bounding boxes from a rendered page image buffer (PNG).
-   * Returns boxes as fractions of page dimensions.
-   */
-  async detectBars(imageBuffer: Buffer, width: number, height: number): Promise<BoundingBox[]> {
-    const image = await loadImage(imageBuffer);
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(image, 0, 0);
-    const { data } = ctx.getImageData(0, 0, width, height);
+  private readonly pythonCmd: string;
+  private readonly pythonScript: string;
 
-    // Grayscale + binarise
-    const binary = new Uint8Array(width * height);
-    for (let i = 0; i < width * height; i++) {
-      const r = data[i * 4];
-      const g = data[i * 4 + 1];
-      const b = data[i * 4 + 2];
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      binary[i] = gray < 128 ? 1 : 0; // 1 = black pixel
-    }
+  constructor() {
+    this.pythonScript = path.join(process.cwd(), "server", "scorebars", "detect_bars.py");
+    this.pythonCmd = this.resolvePythonCmd();
+  }
 
-    // Horizontal projection: count black pixels per row
-    const hProj = new Float32Array(height);
-    for (let y = 0; y < height; y++) {
-      let count = 0;
-      for (let x = 0; x < width; x++) {
-        count += binary[y * width + x];
-      }
-      hProj[y] = count / width;
-    }
-
-    // Find staff system row bands (rows with many black pixels)
-    const STAFF_THRESH = 0.02;
-    const systems = this.findBands(hProj, STAFF_THRESH, height * 0.05);
-
-    const boxes: BoundingBox[] = [];
-
-    for (const [sysTop, sysBottom] of systems) {
-      // Vertical projection within this system band
-      const vProj = new Float32Array(width);
-      const bandH = sysBottom - sysTop;
-      for (let x = 0; x < width; x++) {
-        let count = 0;
-        for (let y = sysTop; y < sysBottom; y++) {
-          count += binary[y * width + x];
-        }
-        vProj[x] = count / bandH;
-      }
-
-      // Find barline columns (dense vertical black runs)
-      const BARLINE_THRESH = 0.6;
-      const barlines = this.findBarlinePositions(vProj, BARLINE_THRESH);
-
-      // Pair adjacent barlines into measure boxes
-      for (let i = 0; i < barlines.length - 1; i++) {
-        const left = barlines[i] / width;
-        const right = barlines[i + 1] / width;
-        const top = sysTop / height;
-        const bottom = sysBottom / height;
-        const w = right - left;
-        const h = bottom - top;
-        // Filter out very thin slivers (likely double barlines)
-        if (w > 0.02) {
-          boxes.push({ x: left, y: top, w, h });
-        }
-      }
-    }
-
-    // Fallback: if no bars detected, return whole-page placeholder boxes
-    if (boxes.length === 0) {
+  async detectBars(imageBuffer: Buffer, _width: number, _height: number): Promise<BoundingBox[]> {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scorebars-"));
+    try {
+      const imagePath = path.join(tmpDir, "page.png");
+      fs.writeFileSync(imagePath, imageBuffer);
+      const raw = this.runPython([imagePath]);
+      const parsed = this.parseSingle(raw);
+      return this.normalizeBoxes(parsed);
+    } catch (error) {
+      console.warn("[scorebars] Python detector failed, using fallback grid:", error);
       return this.fallbackGrid(4);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-
-    return boxes;
   }
 
-  /**
-   * Find contiguous bands in a 1D projection where value > threshold,
-   * returning [start, end] pairs, ignoring bands smaller than minSize.
-   */
-  private findBands(proj: Float32Array, threshold: number, minSize: number): [number, number][] {
-    const bands: [number, number][] = [];
-    let inBand = false;
-    let start = 0;
-    for (let i = 0; i < proj.length; i++) {
-      if (!inBand && proj[i] > threshold) {
-        inBand = true;
-        start = i;
-      } else if (inBand && proj[i] <= threshold) {
-        inBand = false;
-        if (i - start >= minSize) {
-          // Add a small margin around the system
-          bands.push([Math.max(0, start - 5), Math.min(proj.length - 1, i + 5)]);
-        }
+  async detectBarsForPages(
+    pages: Array<{ pageNumber: number; imageBuffer: Buffer; width: number; height: number }>,
+  ): Promise<Map<number, BoundingBox[]>> {
+    if (pages.length === 0) {
+      return new Map();
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "scorebars-"));
+    try {
+      const imagePaths: string[] = [];
+      const pathToPage = new Map<string, number>();
+      for (const page of pages) {
+        const imagePath = path.join(tmpDir, `page-${page.pageNumber}.png`);
+        fs.writeFileSync(imagePath, page.imageBuffer);
+        imagePaths.push(imagePath);
+        pathToPage.set(imagePath, page.pageNumber);
       }
-    }
-    return bands;
-  }
 
-  /**
-   * Find x-positions of barlines from a vertical projection.
-   * Returns pixel x-coordinates of detected barline centres.
-   */
-  private findBarlinePositions(vProj: Float32Array, threshold: number): number[] {
-    const positions: number[] = [];
-    let inBarline = false;
-    let start = 0;
-    for (let x = 0; x < vProj.length; x++) {
-      if (!inBarline && vProj[x] > threshold) {
-        inBarline = true;
-        start = x;
-      } else if (inBarline && vProj[x] <= threshold) {
-        inBarline = false;
-        positions.push(Math.floor((start + x) / 2));
+      const raw = this.runPython(imagePaths);
+      const parsed = this.parseBatch(raw);
+      const out = new Map<number, BoundingBox[]>();
+      for (const page of pages) {
+        out.set(page.pageNumber, this.fallbackGrid(4));
       }
+
+      for (const [imagePath, value] of Object.entries(parsed)) {
+        const pageNumber = pathToPage.get(imagePath);
+        if (pageNumber === undefined) continue;
+        out.set(pageNumber, this.normalizeBoxes(value));
+      }
+      return out;
+    } catch (error) {
+      console.warn("[scorebars] Python batch detector failed, using fallback grid:", error);
+      const out = new Map<number, BoundingBox[]>();
+      for (const page of pages) {
+        out.set(page.pageNumber, this.fallbackGrid(4));
+      }
+      return out;
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
-    return positions;
   }
 
-  /**
-   * Detect bars within a specific sub-region of a page image.
-   * @param region  Bounding box in page-fraction coords (0–1) defining the sub-region.
-   * @returns       Bounding boxes in FULL-PAGE fraction coords.
-   */
   async detectBarsInRegion(
     imageBuffer: Buffer,
     pageWidth: number,
     pageHeight: number,
     region: BoundingBox,
   ): Promise<BoundingBox[]> {
-    // 1. Load and crop the page to the region
     const image = await loadImage(imageBuffer);
     const rx = Math.floor(region.x * pageWidth);
     const ry = Math.floor(region.y * pageHeight);
@@ -160,10 +90,8 @@ export class BarDetector {
     cropCtx.drawImage(image, rx, ry, rw, rh, 0, 0, rw, rh);
     const cropBuffer = cropCanvas.toBuffer("image/png");
 
-    // 2. Run detection on the cropped image
     const localBoxes = await this.detectBars(cropBuffer, rw, rh);
 
-    // 3. Translate from region-local fractions → full-page fractions
     return localBoxes.map(b => ({
       x: region.x + b.x * region.w,
       y: region.y + b.y * region.h,
@@ -172,12 +100,100 @@ export class BarDetector {
     }));
   }
 
-  /** Return a simple N-column grid as fallback when detection fails. */
+  private resolvePythonCmd(): string {
+    const fromEnv = process.env.SCOREBARS_PYTHON?.trim();
+    if (fromEnv) return fromEnv;
+    const localVenv = path.join(process.cwd(), "server", "scorebars", ".venv", "bin", "python");
+    if (fs.existsSync(localVenv)) return localVenv;
+    return "python3";
+  }
+
+  private runPython(imagePaths: string[]): string {
+    if (!fs.existsSync(this.pythonScript)) {
+      throw new Error(`Detector script not found: ${this.pythonScript}`);
+    }
+    const proc = spawnSync(this.pythonCmd, [this.pythonScript, ...imagePaths], {
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: 60_000,
+      env: { ...process.env },
+    });
+    if (proc.error) throw proc.error;
+    if (proc.status !== 0) {
+      const stderr = (proc.stderr || "").trim();
+      const stdout = (proc.stdout || "").trim();
+      throw new Error(stderr || stdout || `Python exited with code ${proc.status}`);
+    }
+    return (proc.stdout || "").trim();
+  }
+
+  private parseSingle(raw: string): unknown[] {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object" && "error" in parsed) {
+      throw new Error(String((parsed as { error: unknown }).error));
+    }
+    throw new Error("Unexpected Python output for single image");
+  }
+
+  private parseBatch(raw: string): Record<string, unknown[]> {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Unexpected Python output for batch images");
+    }
+    if ("error" in parsed) {
+      throw new Error(String((parsed as { error: unknown }).error));
+    }
+    return parsed as Record<string, unknown[]>;
+  }
+
+  private normalizeBoxes(raw: unknown[]): BoundingBox[] {
+    const boxes: BoundingBox[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const box = item as { x?: unknown; y?: unknown; w?: unknown; h?: unknown };
+      if (
+        typeof box.x !== "number" ||
+        typeof box.y !== "number" ||
+        typeof box.w !== "number" ||
+        typeof box.h !== "number"
+      ) {
+        continue;
+      }
+      const normalized = this.normalizeBox({ x: box.x, y: box.y, w: box.w, h: box.h });
+      if (normalized.w > 0.003 && normalized.h > 0.02) {
+        boxes.push(normalized);
+      }
+    }
+    if (boxes.length === 0) {
+      return this.fallbackGrid(4);
+    }
+    boxes.sort((a, b) => (Math.abs(a.y - b.y) > 0.01 ? a.y - b.y : a.x - b.x));
+    return boxes;
+  }
+
+  private normalizeBox(box: BoundingBox): BoundingBox {
+    const x = Number.isFinite(box.x) ? box.x : 0;
+    const y = Number.isFinite(box.y) ? box.y : 0;
+    const w = Number.isFinite(box.w) ? box.w : 0;
+    const h = Number.isFinite(box.h) ? box.h : 0;
+    const x0 = Math.min(1, Math.max(0, x));
+    const y0 = Math.min(1, Math.max(0, y));
+    const x1 = Math.min(1, Math.max(0, x0 + Math.max(0, w)));
+    const y1 = Math.min(1, Math.max(0, y0 + Math.max(0, h)));
+    return {
+      x: x0,
+      y: y0,
+      w: Math.max(0, x1 - x0),
+      h: Math.max(0, y1 - y0),
+    };
+  }
+
   private fallbackGrid(cols: number): BoundingBox[] {
     const boxes: BoundingBox[] = [];
-    const w = 1 / cols;
+    const cellWidth = 1 / cols;
     for (let i = 0; i < cols; i++) {
-      boxes.push({ x: i * w, y: 0.1, w, h: 0.8 });
+      boxes.push({ x: i * cellWidth, y: 0.1, w: cellWidth, h: 0.8 });
     }
     return boxes;
   }

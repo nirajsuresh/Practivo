@@ -14,58 +14,64 @@
 import type { ProcessResult, ScorebarOptions } from "./types.js";
 import { PdfProcessor } from "./pdf-processor.js";
 import { BarDetector } from "./bar-detector.js";
-import { ImageCrop } from "./image-crop.js";
-import path from "path";
-import fs from "fs";
 
 export { type ProcessResult, type DetectedMeasure, type BoundingBox, type ScorebarOptions } from "./types.js";
 
 export class ScorebarService {
-  private outputDir: string;
   private pagesDir?: string;
   private renderDpi: number;
   private onProgress?: (page: number, total: number) => void;
+  private pdfRenderConcurrency?: number;
 
   constructor(opts: ScorebarOptions = {}) {
-    this.outputDir = opts.outputDir ?? path.join(process.cwd(), "uploads", "measures");
     this.pagesDir = opts.pagesDir;
-    this.renderDpi = opts.renderDpi ?? 150;
+    this.renderDpi = opts.renderDpi ?? 220;
     this.onProgress = opts.onProgress;
-    if (!fs.existsSync(this.outputDir)) {
-      fs.mkdirSync(this.outputDir, { recursive: true });
-    }
+    this.pdfRenderConcurrency = opts.pdfRenderConcurrency;
   }
 
   /**
    * Process a PDF file and return detected measures.
-   * This is the only public method — the sole integration surface.
+   * @param pageRange Inclusive 1-based pages in the **source PDF**; omit to use the whole file.
+   *        Internal page numbers in results are always 1…K for the selected excerpt.
    */
-  async processFile(pdfPath: string): Promise<ProcessResult> {
+  async processFile(
+    pdfPath: string,
+    pageRange?: { firstPdfPage: number; lastPdfPage: number },
+  ): Promise<ProcessResult> {
     const processor = new PdfProcessor({
       dpi: this.renderDpi,
       pagesDir: this.pagesDir,
       onProgress: this.onProgress,
+      renderConcurrency: this.pdfRenderConcurrency,
     });
-    const pages = await processor.renderPages(pdfPath);
+    const pages = await processor.renderPages(pdfPath, pageRange);
 
     const detector = new BarDetector();
-    const cropper = new ImageCrop(this.outputDir);
 
     const allMeasures = [];
     let measureNumber = 1;
+    const boxesByPage = await detector.detectBarsForPages(pages);
 
     for (const page of pages) {
-      const boxes = await detector.detectBars(page.imageBuffer, page.width, page.height);
-      for (const box of boxes) {
-        const imageUrl = await cropper.crop(page.imageBuffer, page.width, page.height, box, measureNumber);
+      const boxes = boxesByPage.get(page.pageNumber) ?? [];
+      if (boxes.length === 0) {
+        this.onProgress?.(page.pageNumber, pages.length);
+        continue;
+      }
+
+      const startMn = measureNumber;
+      for (let j = 0; j < boxes.length; j++) {
+        const box = boxes[j]!;
         allMeasures.push({
-          measureNumber,
+          measureNumber: startMn + j,
           pageNumber: page.pageNumber,
           boundingBox: box,
-          imageUrl,
+          imageUrl: null,
         });
-        measureNumber++;
       }
+      measureNumber += boxes.length;
+      this.onProgress?.(page.pageNumber, pages.length);
     }
 
     return {

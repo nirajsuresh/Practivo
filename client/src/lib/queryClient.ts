@@ -7,7 +7,7 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const userId = localStorage.getItem("userId");
   return userId ? { "x-user-id": userId } : {};
 }

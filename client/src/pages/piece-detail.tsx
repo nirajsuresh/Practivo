@@ -1,8 +1,13 @@
+import { useState } from "react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, ExternalLink, Music2, BookOpen, Plus, ChevronRight } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ArrowLeft, ExternalLink, Music2, BookOpen, Plus, ChevronRight, Users, Trash2 } from "lucide-react";
 import { Link, useParams, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -42,6 +47,18 @@ interface RepertoireEntry {
   status: string;
 }
 
+interface CommunityScoreRow {
+  id: number;
+  pieceId: number;
+  movementId: number | null;
+  sheetMusicId: number;
+  submittedByUserId: string;
+  submittedAt: string;
+  description: string | null;
+  downloadCount: number;
+  totalMeasures: number;
+}
+
 const DIFFICULTY_COLORS: Record<string, string> = {
   Beginner:     "bg-green-100 text-green-800",
   Intermediate: "bg-yellow-100 text-yellow-800",
@@ -76,6 +93,26 @@ export default function PieceDetailPage() {
   const { data: analysis } = useQuery<{ analysis: string; wikiUrl: string | null }>({
     queryKey: [`/api/pieces/${pieceId}/analysis`],
     enabled: !!pieceId,
+  });
+
+  const { data: communityScores = [], isLoading: scoresLoading } = useQuery<CommunityScoreRow[]>({
+    queryKey: [`/api/community-scores/piece/${pieceId}`],
+    enabled: !!pieceId,
+  });
+
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  const deleteScore = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/community-scores/${id}`),
+    onSuccess: () => {
+      // Invalidate both the piece-level list and any scoped queries in the side pane / wizards
+      queryClient.invalidateQueries({ queryKey: ["/api/community-scores"], exact: false });
+      setConfirmDeleteId(null);
+      toast({ title: "Score removed", description: "The community score has been deleted." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not delete", description: err.message, variant: "destructive" });
+    },
   });
 
   const { data: repertoireData } = useQuery<{ entries: RepertoireEntry[] }>({
@@ -223,6 +260,84 @@ export default function PieceDetailPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Community Scores */}
+        {(scoresLoading || communityScores.length > 0) && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-muted-foreground" />
+              <h2 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                Community Scores
+              </h2>
+            </div>
+
+            {scoresLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-14 w-full rounded-lg" />
+                <Skeleton className="h-14 w-full rounded-lg" />
+              </div>
+            ) : (
+              <>
+              <div className="divide-y divide-border rounded-lg border overflow-hidden">
+                {communityScores.map((score) => {
+                  const movementName = score.movementId != null
+                    ? movements.find((m) => m.id === score.movementId)?.name ?? `Movement ${score.movementId}`
+                    : null;
+                  const isOwner = score.submittedByUserId === userId;
+                  return (
+                    <div key={score.id} className="flex items-center gap-3 px-4 py-3 bg-background hover:bg-muted/20 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {movementName ?? "Whole piece"}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {score.totalMeasures} bars
+                          {score.description ? ` · "${score.description}"` : ""}
+                          {" · "}{new Date(score.submittedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {score.downloadCount > 0 ? ` · used ${score.downloadCount}×` : ""}
+                        </p>
+                      </div>
+
+                      {isOwner && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => setConfirmDeleteId(score.id)}
+                          title="Remove this community score"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <AlertDialog open={confirmDeleteId != null} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null); }}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Remove community score?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will delete your contributed bar analysis, allowing a new one to be submitted.
+                      Other users will no longer be able to use it.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={() => confirmDeleteId != null && deleteScore.mutate(confirmDeleteId)}
+                    >
+                      Remove
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+              </>
+            )}
           </div>
         )}
 

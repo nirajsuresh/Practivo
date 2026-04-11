@@ -61,5 +61,5 @@ export function getStatusColor(status: string): string {
 }
 
 export function getStatusDotColor(status: string): string {
-  return statusDotColors[status] ?? "#143642";
+  return statusDotColors[status] ?? "#629084";
 }
