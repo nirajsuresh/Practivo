@@ -159,6 +159,18 @@ function lineKey(systemMidY: number, x: number): string {
   return `${systemMidY.toFixed(3)}:${x.toFixed(3)}`;
 }
 
+function toLineItems(systemInfo: SystemInfo[]) {
+  return systemInfo.flatMap((sys) => {
+    const mid = (sys.y0 + sys.y1) / 2;
+    return extractBarlineXs(sys).map((x) => ({
+      key: lineKey(mid, x),
+      x,
+      y0: sys.y0,
+      y1: sys.y1,
+    }));
+  });
+}
+
 function dedupeMeasures(measures: EditMeasure[]): EditMeasure[] {
   const seen = new Set<string>();
   const out: EditMeasure[] = [];
@@ -460,24 +472,8 @@ export function PageOverlay({
     h: Math.abs(drawCurrent.y - drawStart.y),
   } : null;
 
-  const currentLineItems = systemInfo.flatMap((sys) => {
-    const mid = (sys.y0 + sys.y1) / 2;
-    return extractBarlineXs(sys).map((x) => ({
-      key: lineKey(mid, x),
-      x,
-      y0: sys.y0,
-      y1: sys.y1,
-    }));
-  });
-  const baselineLineItems = baselineSystemInfo.flatMap((sys) => {
-    const mid = (sys.y0 + sys.y1) / 2;
-    return extractBarlineXs(sys).map((x) => ({
-      key: lineKey(mid, x),
-      x,
-      y0: sys.y0,
-      y1: sys.y1,
-    }));
-  });
+  const currentLineItems = toLineItems(systemInfo);
+  const baselineLineItems = toLineItems(baselineSystemInfo);
   const currentKeys = new Set(currentLineItems.map(l => l.key));
   const baselineKeys = new Set(baselineLineItems.map(l => l.key));
   const addedLines = currentLineItems.filter(l => !baselineKeys.has(l.key));

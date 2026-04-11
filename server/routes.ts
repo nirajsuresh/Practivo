@@ -1172,7 +1172,7 @@ export async function registerRoutes(
   /** POST /api/community-scores — submit a completed score analysis to the community */
   app.post("/api/community-scores", async (req, res) => {
     const userId = req.headers["x-user-id"] as string;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const { sheetMusicId, description, movementId } = req.body as {
       sheetMusicId: number;
       description?: string;
@@ -1212,7 +1212,7 @@ export async function registerRoutes(
   /** POST /api/community-scores/:id/use — increment download count when a user adopts a community score */
   app.post("/api/community-scores/:id/use", async (req, res) => {
     const userId = req.headers["x-user-id"] as string;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     try {
@@ -1226,7 +1226,7 @@ export async function registerRoutes(
   /** DELETE /api/community-scores/:id — only the submitter can delete */
   app.delete("/api/community-scores/:id", async (req, res) => {
     const userId = req.headers["x-user-id"] as string;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     try {

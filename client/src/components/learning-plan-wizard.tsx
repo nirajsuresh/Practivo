@@ -46,9 +46,8 @@ interface Props {
   movementId?: number | null;
   pieceTitle: string;
   userId: string;
-  onCreated?: () => void;
-  /** Receives new or updated plan id after lessons are generated */
-  onPlanCreated?: (planId: number) => void;
+  /** Called with the new or updated plan id after lessons are generated. */
+  onSuccess?: (planId: number) => void;
 }
 
 type Step = "setup" | "upload" | "pageRange" | "processing" | "review" | "confirm";
@@ -620,7 +619,7 @@ function ConfirmStep({
 // ─── Main wizard ──────────────────────────────────────────────────────────────
 
 export function LearningPlanWizard({
-  open, onOpenChange, repertoireEntryId, pieceId, movementId = null, pieceTitle, userId, onCreated, onPlanCreated,
+  open, onOpenChange, repertoireEntryId, pieceId, movementId = null, pieceTitle, userId, onSuccess,
 }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -706,8 +705,7 @@ export function LearningPlanWizard({
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/lessons`] });
       toast({ title: "Plan created!", description: "Your daily lessons are ready." });
       onOpenChange(false);
-      onCreated?.();
-      onPlanCreated?.(planId);
+      onSuccess?.(planId);
     },
     onError: () => {
       toast({ title: "Something went wrong", variant: "destructive" });
@@ -775,10 +773,7 @@ export function LearningPlanWizard({
               setStep("pageRange");
             }}
             onUseCommunityScore={(score) => {
-              fetch(`/api/community-scores/${score.id}/use`, {
-                method: "POST",
-                headers: { "x-user-id": userId },
-              }).catch(() => {});
+              apiRequest("POST", `/api/community-scores/${score.id}/use`).catch(() => {});
               setSheetMusicId(score.sheetMusicId);
               setTotalMeasures(score.totalMeasures);
               setStep("confirm");

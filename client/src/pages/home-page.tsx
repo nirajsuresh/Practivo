@@ -929,7 +929,7 @@ function PieceJourneySidePane({ row, milestones, userId, onClose }: {
 
         <div className="p-5">
           <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">Learning Journey</h3>
-          <MilestoneTimeline milestones={milestones} movements={piece?.movements} currentCycle={currentCycle} pieceId={pieceId} userId={userId} repertoireEntryId={primaryEntryId} movementId={movementId} editable={!!userId} />
+          <MilestoneTimeline milestones={milestones} movements={piece?.movements} currentCycle={currentCycle} pieceId={pieceId} userId={userId} repertoireEntryId={primaryEntryId} movementId={movementId ?? undefined} editable={!!userId} />
         </div>
 
         <div className="p-5 border-t border-border">
@@ -960,7 +960,7 @@ function PieceJourneySidePane({ row, milestones, userId, onClose }: {
             </div>
           </div>
           {existingPlan ? (
-            <DailyLessonCard planId={existingPlan.id} repertoireEntryId={primaryEntryId} pieceTitle={pieceTitle} composerName={composerName} pieceId={pieceId} userId={userId} />
+            <DailyLessonCard planId={existingPlan.id} repertoireEntryId={primaryEntryId ?? 0} pieceTitle={pieceTitle} composerName={composerName} pieceId={pieceId ?? 0} userId={userId} />
           ) : (
             <p className="text-xs text-muted-foreground">Create a structured day-by-day schedule to learn this piece.</p>
           )}
@@ -976,7 +976,7 @@ function PieceJourneySidePane({ row, milestones, userId, onClose }: {
           movementId={movementId}
           pieceTitle={pieceTitle}
           userId={userId}
-          onPlanCreated={(pid) => {
+          onSuccess={(pid) => {
             onClose();
             navigate(`/plan/${pid}`);
           }}

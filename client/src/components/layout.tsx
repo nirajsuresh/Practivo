@@ -11,6 +11,23 @@ import { useQueryClient } from "@tanstack/react-query";
 const CHROME_CREAM = "bg-[#F5E9CC]";
 const CHROME_BORDER = "border-[#E5D4B0]";
 
+function NavBtn({ href, label, active, testId }: { href: string; label: string; active: boolean; testId?: string }) {
+  return (
+    <Link href={href}>
+      <Button
+        variant="ghost"
+        data-testid={testId}
+        className={cn(
+          "text-xs sm:text-sm font-semibold px-2 sm:px-3 h-9",
+          active ? "bg-[#1C1C1A]/10 text-[#1C1C1A]" : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
+        )}
+      >
+        {label}
+      </Button>
+    </Link>
+  );
+}
+
 export function Navbar() {
   const [location, setLocation] = useLocation();
   const [isLoggedIn, setIsLoggedIn] = useState(
@@ -62,33 +79,8 @@ export function Navbar() {
 
         {isLoggedIn && !isLanding && (
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            <Link href="/">
-              <Button
-                variant="ghost"
-                className={cn(
-                  "text-xs sm:text-sm font-semibold px-2 sm:px-3 h-9",
-                  location === "/"
-                    ? "bg-[#1C1C1A]/10 text-[#1C1C1A]"
-                    : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
-                )}
-              >
-                Library
-              </Button>
-            </Link>
-            <Link href="/profile">
-              <Button
-                variant="ghost"
-                className={cn(
-                  "text-xs sm:text-sm font-semibold px-2 sm:px-3 h-9",
-                  location === "/profile"
-                    ? "bg-[#1C1C1A]/10 text-[#1C1C1A]"
-                    : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
-                )}
-                data-testid="link-profile"
-              >
-                Profile
-              </Button>
-            </Link>
+            <NavBtn href="/" label="Library" active={location === "/"} />
+            <NavBtn href="/profile" label="Profile" active={location === "/profile"} testId="link-profile" />
           </div>
         )}
 
