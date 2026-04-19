@@ -3,7 +3,6 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { autoSeedIfEmpty } from "./auto-seed";
-import { seedExtraUsers } from "./seed-extra-users";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
@@ -157,13 +156,76 @@ app.use((req, res, next) => {
       UNIQUE(learning_plan_id, measure_id)
     )`);
 
+    // Sheet music page images
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS sheet_music_pages (
+      id serial PRIMARY KEY,
+      sheet_music_id integer NOT NULL REFERENCES sheet_music(id) ON DELETE CASCADE,
+      page_number integer NOT NULL,
+      image_url text NOT NULL,
+      width integer NOT NULL,
+      height integer NOT NULL
+    )`);
+
+    // Plan sections + phases
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS plan_sections (
+      id serial PRIMARY KEY,
+      learning_plan_id integer NOT NULL REFERENCES learning_plans(id) ON DELETE CASCADE,
+      name text NOT NULL,
+      measure_start integer NOT NULL,
+      measure_end integer NOT NULL,
+      difficulty integer NOT NULL DEFAULT 3,
+      display_order integer NOT NULL DEFAULT 0,
+      created_at timestamp DEFAULT now()
+    )`);
+
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS plan_section_phases (
+      id serial PRIMARY KEY,
+      section_id integer NOT NULL REFERENCES plan_sections(id) ON DELETE CASCADE,
+      phase_type text NOT NULL,
+      display_order integer NOT NULL DEFAULT 0,
+      repetitions integer NOT NULL DEFAULT 1,
+      UNIQUE(section_id, phase_type)
+    )`);
+
+    // Lesson day columns for sections/phases and structured tasks
+    await db.execute(sql`ALTER TABLE lesson_days ADD COLUMN IF NOT EXISTS tasks jsonb`);
+    await db.execute(sql`ALTER TABLE lesson_days ADD COLUMN IF NOT EXISTS section_id integer REFERENCES plan_sections(id)`);
+    await db.execute(sql`ALTER TABLE lesson_days ADD COLUMN IF NOT EXISTS phase_type text`);
+
+    // Bar flags
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS bar_flags (
+      id serial PRIMARY KEY,
+      learning_plan_id integer NOT NULL REFERENCES learning_plans(id),
+      lesson_day_id integer NOT NULL REFERENCES lesson_days(id),
+      measure_id integer NOT NULL REFERENCES measures(id),
+      user_id varchar NOT NULL REFERENCES users(id),
+      note text,
+      resolved boolean NOT NULL DEFAULT false,
+      created_at timestamp DEFAULT now(),
+      UNIQUE(lesson_day_id, measure_id)
+    )`);
+
+    // Plan suggestions
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS plan_suggestions (
+      id serial PRIMARY KEY,
+      learning_plan_id integer NOT NULL REFERENCES learning_plans(id),
+      triggered_by_lesson_id integer REFERENCES lesson_days(id),
+      type text NOT NULL,
+      section_id integer REFERENCES plan_sections(id),
+      payload jsonb NOT NULL,
+      status text NOT NULL DEFAULT 'pending',
+      created_at timestamp DEFAULT now()
+    )`);
+
+    // User profile: playing level
+    await db.execute(sql`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS playing_level text`);
+
     console.log("Schema migrations applied");
   } catch (err) {
     console.error("Migration error (non-fatal):", err);
   }
 
   try { await autoSeedIfEmpty(); } catch (err) { console.error("Auto-seed failed (non-fatal):", err); }
-  try { await seedExtraUsers(); } catch (err) { console.error("Extra-users seed failed (non-fatal):", err); }
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

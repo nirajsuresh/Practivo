@@ -129,6 +129,40 @@ export const VIDEO_TYPE_BADGE: Record<string, string> = {
   Masterclass: "bg-[#DCCAA6]/22 text-[#1C1C1A]",
 };
 
+// ── Section colors (learning plan sections) ──────────────────────────────────
+export const SECTION_COLORS = [
+  { bg: "rgba(99,102,241,0.15)",  border: "#6366f1" },   // indigo
+  { bg: "rgba(34,197,94,0.15)",   border: "#22c55e" },   // green
+  { bg: "rgba(249,115,22,0.15)",  border: "#f97316" },   // orange
+  { bg: "rgba(168,85,247,0.15)",  border: "#a855f7" },   // purple
+  { bg: "rgba(20,184,166,0.15)",  border: "#14b8a6" },   // teal
+  { bg: "rgba(234,179,8,0.15)",   border: "#eab308" },   // yellow
+] as const;
+
+export function getSectionColor(index: number) {
+  return SECTION_COLORS[index % SECTION_COLORS.length];
+}
+
+
+/**
+ * Fixed per-phase colors — painterly pigment palette spanning the full spectrum.
+ * Cerulean → Cobalt → Viridian → Ochre → Vermillion → Magenta → Indigo.
+ */
+export const PHASE_COLORS: Record<string, { border: string; bg: string }> = {
+  orient:     { border: "#0ea5e9", bg: "rgba(14,165,233,0.15)"  }, // cerulean
+  decode:     { border: "#2563eb", bg: "rgba(37,99,235,0.15)"   }, // cobalt
+  chunk:      { border: "#059669", bg: "rgba(5,150,105,0.15)"   }, // viridian
+  coordinate: { border: "#ca8a04", bg: "rgba(202,138,4,0.15)"   }, // ochre
+  link:       { border: "#dc2626", bg: "rgba(220,38,38,0.13)"   }, // vermillion
+  stabilize:  { border: "#c026d3", bg: "rgba(192,38,211,0.13)"  }, // magenta
+  shape:      { border: "#4f46e5", bg: "rgba(79,70,229,0.15)"   }, // indigo
+};
+
+/** Return the fixed color for a given phase type. */
+export function getPhaseColor(phaseType: string): { border: string; bg: string } {
+  return PHASE_COLORS[phaseType] ?? { border: "#94a3b8", bg: "rgba(148,163,184,0.15)" };
+}
+
 // ── Surfaces ────────────────────────────────────────────────────────────────
 export const SURFACE = {
   card: "#F4F1EA",

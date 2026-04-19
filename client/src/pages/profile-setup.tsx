@@ -271,6 +271,7 @@ export default function ProfileSetup() {
   const [displayName, setDisplayName] = useState("");
   const [instrument, setInstrument] = useState("");
   const [level, setLevel] = useState("");
+  const [playingLevel, setPlayingLevel] = useState("");
   const [bio, setBio] = useState("");
   const [location, setLocationField] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -311,6 +312,7 @@ export default function ProfileSetup() {
           displayName: displayName || "Anonymous",
           instrument: instrument || null,
           level: level || null,
+          playingLevel: playingLevel || null,
           bio: bio || null,
           location: location || null,
           avatarUrl: avatarId || null,
@@ -432,6 +434,21 @@ export default function ProfileSetup() {
                         <SelectItem value="professional">Professional</SelectItem>
                         <SelectItem value="amateur">Serious Amateur</SelectItem>
                         <SelectItem value="educator">Educator</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-3">
+                    <Label htmlFor="playing-level">Playing Level</Label>
+                    <p className="text-xs text-muted-foreground -mt-1">Used to calibrate learning plan session counts</p>
+                    <Select value={playingLevel} onValueChange={setPlayingLevel}>
+                      <SelectTrigger className="h-12 bg-background" data-testid="select-playing-level">
+                        <SelectValue placeholder="Select playing level" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="beginner">Beginner</SelectItem>
+                        <SelectItem value="intermediate">Intermediate</SelectItem>
+                        <SelectItem value="advanced">Advanced</SelectItem>
+                        <SelectItem value="professional">Professional</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
