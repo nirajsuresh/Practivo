@@ -14,6 +14,7 @@ import SearchPage from "@/pages/search-page";
 import ComposerPage from "@/pages/composer-page";
 import PlanPage from "@/pages/plan-page";
 import SessionPage from "@/pages/session-page";
+import ScorePage from "@/pages/score-page";
 
 /** Signed-in dashboard (Active Learning Plans, repertoire); signed-out marketing. */
 function RootPage() {
@@ -41,6 +42,7 @@ function Router() {
       <Route path="/profile" component={ProfileRedirect} />
       <Route path="/plan/:planId" component={PlanPage} />
       <Route path="/session/:lessonId" component={SessionPage} />
+      <Route path="/score/:sheetMusicId" component={ScorePage} />
       <Route path="/piece/:id" component={PieceDetailPage} />
       <Route path="/composer/:id" component={ComposerPage} />
       <Route path="/search" component={SearchPage} />

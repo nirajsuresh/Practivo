@@ -87,6 +87,65 @@ export const MILESTONE_TYPES = [
 ] as const;
 export type MilestoneType = (typeof MILESTONE_TYPES)[number];
 
+// ── Learning phase types (in pedagogical order) ──────────────────────────────
+export const PHASE_TYPES = [
+  "orient",
+  "decode",
+  "chunk",
+  "coordinate",
+  "link",
+  "stabilize",
+  "shape",
+] as const;
+export type PhaseType = (typeof PHASE_TYPES)[number];
+
+// ── Playing levels ───────────────────────────────────────────────────────────
+export const PLAYING_LEVELS = ["beginner", "intermediate", "advanced", "professional"] as const;
+export type PlayingLevel = (typeof PLAYING_LEVELS)[number];
+
+export const PLAYING_LEVEL_LABELS: Record<PlayingLevel, string> = {
+  beginner: "Beginner",
+  intermediate: "Intermediate",
+  advanced: "Advanced",
+  professional: "Professional",
+};
+
+// ── Phase allocation constants ───────────────────────────────────────────────
+export const PHASE_BASE_EFFORT: Record<PhaseType, number> = {
+  orient: 1, decode: 3, chunk: 2, coordinate: 3, link: 2, stabilize: 2, shape: 2,
+};
+
+export const CHUNK_LEVEL_PHASES: Set<PhaseType> = new Set<PhaseType>(["orient", "decode", "chunk", "coordinate"]);
+
+export const CHUNK_SIZE_BY_LEVEL: Record<PlayingLevel, number> = {
+  beginner: 3, intermediate: 4, advanced: 6, professional: 8,
+};
+
+export function computeChunkSizeShared(sectionBars: number, difficulty: number, playingLevel: PlayingLevel): number {
+  const base = CHUNK_SIZE_BY_LEVEL[playingLevel] ?? 4;
+  const diffAdj = difficulty >= 4 ? -1 : difficulty <= 2 ? 1 : 0;
+  const target = Math.max(2, base + diffAdj);
+  return Math.max(target, Math.ceil(sectionBars / 8));
+}
+
+export const LEVEL_MULTIPLIER: Record<PlayingLevel, number> = {
+  beginner: 1.5, intermediate: 1.0, advanced: 0.7, professional: 0.5,
+};
+
+export const DIFFICULTY_MULTIPLIER: Record<number, number> = {
+  1: 0.6, 2: 0.8, 3: 1.0, 4: 1.3, 5: 1.6,
+};
+
+export const PHASE_LABELS: Record<PhaseType, { label: string; description: string }> = {
+  orient:     { label: "Sight & Map",      description: "Listen and map the structure — note keys, repeats, shapes" },
+  decode:     { label: "Note by Note",     description: "Read notes and rhythm hands separate, slow tempo" },
+  chunk:      { label: "Bar Work",         description: "Drill short segments until each feels automatic" },
+  coordinate: { label: "Both Hands",       description: "Combine hands slowly — focus on clean alignment" },
+  link:       { label: "String Together",  description: "Join segments into longer, unbroken phrases" },
+  stabilize:  { label: "Consolidate",      description: "Fix weak spots, build memory and consistency" },
+  shape:      { label: "Bring to Life",    description: "Add tempo, dynamics, phrasing — full run-throughs" },
+};
+
 export const pieceMilestones = pgTable("piece_milestones", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -108,6 +167,7 @@ export const userProfiles = pgTable("user_profiles", {
   displayName: text("display_name").notNull(),
   instrument: text("instrument"),
   level: text("level"),
+  playingLevel: text("playing_level"), // "beginner" | "intermediate" | "advanced" | "professional"
   location: text("location"),
   bio: text("bio"),
   avatarUrl: text("avatar_url"),
@@ -195,6 +255,38 @@ export const sheetMusicPages = pgTable("sheet_music_pages", {
 
 export type SheetMusicPage = typeof sheetMusicPages.$inferSelect;
 
+// ── Plan Sections (user-defined named regions within a plan) ─────────────────
+
+export const planSections = pgTable("plan_sections", {
+  id: serial("id").primaryKey(),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id, { onDelete: "cascade" }),
+  name: text("name").notNull(), // e.g. "Exposition", "Development"
+  measureStart: integer("measure_start").notNull(),
+  measureEnd: integer("measure_end").notNull(),
+  difficulty: integer("difficulty").notNull().default(3), // 1 (easiest) … 5 (hardest)
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPlanSectionSchema = createInsertSchema(planSections).omit({ id: true, createdAt: true });
+export type InsertPlanSection = z.infer<typeof insertPlanSectionSchema>;
+export type PlanSection = typeof planSections.$inferSelect;
+
+// ── Plan Section Phases (ordered phase list per section) ─────────────────────
+
+export const planSectionPhases = pgTable("plan_section_phases", {
+  id: serial("id").primaryKey(),
+  sectionId: integer("section_id").notNull().references(() => planSections.id, { onDelete: "cascade" }),
+  phaseType: text("phase_type").notNull(), // one of PHASE_TYPES
+  displayOrder: integer("display_order").notNull().default(0),
+  /** Number of lesson-days allocated to this phase for this section */
+  repetitions: integer("repetitions").notNull().default(1),
+}, (table) => [unique("plan_section_phase_unique").on(table.sectionId, table.phaseType)]);
+
+export const insertPlanSectionPhaseSchema = createInsertSchema(planSectionPhases).omit({ id: true });
+export type InsertPlanSectionPhase = z.infer<typeof insertPlanSectionPhaseSchema>;
+export type PlanSectionPhase = typeof planSectionPhases.$inferSelect;
+
 export const lessonDays = pgTable("lesson_days", {
   id: serial("id").primaryKey(),
   learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id),
@@ -206,6 +298,10 @@ export const lessonDays = pgTable("lesson_days", {
   completedAt: timestamp("completed_at"),
   /** Structured session plan: array of sections each with tasks */
   tasks: jsonb("tasks").$type<SessionSection[]>(),
+  /** Set when generated via per-section-phase algorithm; null for flat-distribution lessons */
+  sectionId: integer("section_id").references(() => planSections.id),
+  /** One of PHASE_TYPES; null for flat-distribution lessons */
+  phaseType: text("phase_type"),
 });
 
 export type SessionTask = { text: string; tag?: string };
@@ -214,6 +310,10 @@ export type SessionSection = {
   label: string;       // display label
   durationMin?: number;
   tasks: SessionTask[];
+  sectionId?: number;  // plan_sections.id when generated by waterfall scheduler
+  phaseType?: string;  // one of PHASE_TYPES when generated by waterfall scheduler
+  measureStart?: number; // explicit measure range; when absent, parsed from label string
+  measureEnd?: number;   // explicit measure range; when absent, parsed from label string
 };
 
 export const insertLessonDaySchema = createInsertSchema(lessonDays).omit({ id: true });
@@ -254,3 +354,77 @@ export const measureProgress = pgTable("measure_progress", {
 export const insertMeasureProgressSchema = createInsertSchema(measureProgress).omit({ id: true });
 export type InsertMeasureProgress = z.infer<typeof insertMeasureProgressSchema>;
 export type MeasureProgress = typeof measureProgress.$inferSelect;
+
+// ── Bar Flags (per-session flags on individual bars) ─────────────────────────
+// Event-scoped: one flag per bar per lesson day; tracks difficult bars during practice.
+
+export const barFlags = pgTable("bar_flags", {
+  id: serial("id").primaryKey(),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id),
+  lessonDayId: integer("lesson_day_id").notNull().references(() => lessonDays.id),
+  measureId: integer("measure_id").notNull().references(() => measures.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  note: text("note"),
+  resolved: boolean("resolved").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [unique("bar_flag_lesson_measure_unique").on(table.lessonDayId, table.measureId)]);
+
+export const insertBarFlagSchema = createInsertSchema(barFlags).omit({ id: true, createdAt: true });
+export type InsertBarFlag = z.infer<typeof insertBarFlagSchema>;
+export type BarFlag = typeof barFlags.$inferSelect;
+
+/** Aggregated flag data per measure across all lessons in a plan */
+export type BarFlagSummary = {
+  measureId: number;
+  measureNumber: number;
+  imageUrl: string | null;
+  flagCount: number;
+  resolvedCount: number;
+};
+
+// ── Plan Suggestions (server-generated, user-actionable) ─────────────────────
+
+export const planSuggestions = pgTable("plan_suggestions", {
+  id: serial("id").primaryKey(),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id),
+  triggeredByLessonId: integer("triggered_by_lesson_id").references(() => lessonDays.id),
+  /** 'extra_sessions' | 'revisit_phase' */
+  type: text("type").notNull(),
+  sectionId: integer("section_id").references(() => planSections.id),
+  /** { message, extraSessions?, fromPhase?, targetPhase? } */
+  payload: jsonb("payload").notNull().$type<SuggestionPayload>(),
+  /** pending | accepted | dismissed */
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type SuggestionPayload = {
+  message: string;
+  extraSessions?: number;
+  fromPhase?: PhaseType;
+  targetPhase?: PhaseType;
+};
+
+export const insertPlanSuggestionSchema = createInsertSchema(planSuggestions).omit({ id: true, createdAt: true });
+export type InsertPlanSuggestion = z.infer<typeof insertPlanSuggestionSchema>;
+export type PlanSuggestion = typeof planSuggestions.$inferSelect;
+
+// ── Bar Annotations (durable user notes on bar ranges, across sessions) ───────
+
+export const barAnnotations = pgTable("bar_annotations", {
+  id: serial("id").primaryKey(),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id, { onDelete: "cascade" }),
+  lessonDayId: integer("lesson_day_id").references(() => lessonDays.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  measureStart: integer("measure_start").notNull(),
+  measureEnd: integer("measure_end").notNull(),
+  text: text("text").notNull(),
+  sessionNumber: integer("session_number"),
+  sessionDate: text("session_date"), // YYYY-MM-DD
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBarAnnotationSchema = createInsertSchema(barAnnotations).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBarAnnotation = z.infer<typeof insertBarAnnotationSchema>;
+export type BarAnnotation = typeof barAnnotations.$inferSelect;

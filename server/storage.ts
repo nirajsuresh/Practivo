@@ -14,13 +14,18 @@ import {
   type MeasureProgress, type InsertMeasureProgress,
   type CommunityScore, type InsertCommunityScore,
   type SheetMusicPage,
+  type PlanSection, type InsertPlanSection,
+  type PlanSectionPhase, type InsertPlanSectionPhase,
+  type BarFlag, type InsertBarFlag, type BarFlagSummary,
+  type PlanSuggestion, type InsertPlanSuggestion,
+  type BarAnnotation, type InsertBarAnnotation,
   users, composers, pieces, movements, repertoireEntries, userProfiles,
   pieceAnalyses, pieceMilestones,
   learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
-  sheetMusicPages,
+  sheetMusicPages, planSections, planSectionPhases, barFlags, planSuggestions, barAnnotations,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, sql, ne, inArray, isNull } from "drizzle-orm";
+import { eq, ilike, and, desc, sql, ne, inArray, isNull, count } from "drizzle-orm";
 
 const CANONICAL_REPERTOIRE_STATUSES = [
   "Want to learn",
@@ -100,6 +105,7 @@ export interface IStorage {
   // ── User Profiles ────────────────────────────────────────────────────────
   getUserProfile(userId: string): Promise<UserProfile | undefined>;
   createUserProfile(profile: InsertUserProfile): Promise<UserProfile>;
+  updateUserProfile(userId: string, updates: Partial<InsertUserProfile>): Promise<UserProfile | undefined>;
   searchUsers(query: string, currentUserId: string): Promise<any[]>;
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -126,6 +132,7 @@ export interface IStorage {
   getLearningPlan(repertoireEntryId: number): Promise<LearningPlan | undefined>;
   getLearningPlanById(id: number): Promise<LearningPlan | undefined>;
   getLearningPlanBySheetMusic(sheetMusicId: number): Promise<LearningPlan | undefined>;
+  getLearningPlanBySheetAndUser(sheetMusicId: number, userId: string): Promise<LearningPlan | undefined>;
   createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan>;
   updateLearningPlan(id: number, updates: Partial<InsertLearningPlan>): Promise<LearningPlan | undefined>;
   deleteLearningPlan(id: number, userId: string): Promise<boolean>;
@@ -157,6 +164,8 @@ export interface IStorage {
     plan: LearningPlan;
     pieceTitle: string;
     composerName: string;
+    dayIndex: number;
+    sectionName: string | null;
   } | null>;
   createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]>;
   deleteLessonDaysForPlan(learningPlanId: number): Promise<void>;
@@ -173,6 +182,36 @@ export interface IStorage {
   createCommunityScore(data: InsertCommunityScore): Promise<CommunityScore>;
   incrementCommunityScoreDownloads(id: number): Promise<void>;
   deleteCommunityScore(id: number): Promise<void>;
+
+  // ── Plan Sections ─────────────────────────────────────────────────────────
+  getSectionsForPlan(planId: number): Promise<PlanSection[]>;
+  createSection(data: InsertPlanSection): Promise<PlanSection>;
+  updateSection(id: number, updates: Partial<InsertPlanSection>): Promise<PlanSection | undefined>;
+  deleteSection(id: number): Promise<boolean>;
+  reorderSections(updates: { id: number; displayOrder: number }[]): Promise<void>;
+
+  // ── Plan Section Phases ───────────────────────────────────────────────────
+  getPhasesForSection(sectionId: number): Promise<PlanSectionPhase[]>;
+  replacePhasesForSection(sectionId: number, phases: InsertPlanSectionPhase[]): Promise<PlanSectionPhase[]>;
+
+  // ── Bar Flags ─────────────────────────────────────────────────────────────
+  getFlagsForLesson(lessonId: number): Promise<BarFlag[]>;
+  createBarFlag(data: InsertBarFlag): Promise<BarFlag>;
+  updateBarFlag(id: number, updates: Partial<InsertBarFlag>): Promise<BarFlag | undefined>;
+  deleteBarFlag(id: number): Promise<boolean>;
+  getFlagSummaryForPlan(planId: number): Promise<BarFlagSummary[]>;
+
+  // ── Bar Annotations ───────────────────────────────────────────────────────
+  getAnnotationsForLesson(lessonId: number): Promise<BarAnnotation[]>;
+  getAnnotationsForPlan(planId: number): Promise<BarAnnotation[]>;
+  createBarAnnotation(data: InsertBarAnnotation): Promise<BarAnnotation>;
+  updateBarAnnotation(id: number, text: string): Promise<BarAnnotation | undefined>;
+  deleteBarAnnotation(id: number): Promise<boolean>;
+
+  // ── Plan Suggestions ──────────────────────────────────────────────────────
+  getPendingSuggestions(planId: number): Promise<PlanSuggestion[]>;
+  createSuggestion(data: InsertPlanSuggestion): Promise<PlanSuggestion>;
+  updateSuggestion(id: number, updates: { status: "accepted" | "dismissed" }): Promise<PlanSuggestion | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -536,6 +575,15 @@ export class DatabaseStorage implements IStorage {
     return newProfile;
   }
 
+  async updateUserProfile(userId: string, updates: Partial<InsertUserProfile>): Promise<UserProfile | undefined> {
+    const [updated] = await db
+      .update(userProfiles)
+      .set(updates)
+      .where(eq(userProfiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
   async searchUsers(query: string, currentUserId: string): Promise<any[]> {
     if (!query.trim()) return [];
     return db
@@ -763,6 +811,20 @@ export class DatabaseStorage implements IStorage {
     return plan;
   }
 
+  async getLearningPlanBySheetAndUser(sheetMusicId: number, userId: string): Promise<LearningPlan | undefined> {
+    const [sm] = await db.select().from(sheetMusic).where(eq(sheetMusic.id, sheetMusicId));
+    if (!sm || sm.pieceId == null) return undefined;
+    const pieceId = sm.pieceId;
+    const [plan] = await db
+      .select()
+      .from(learningPlans)
+      .innerJoin(repertoireEntries, eq(learningPlans.repertoireEntryId, repertoireEntries.id))
+      .where(and(eq(learningPlans.userId, userId), eq(repertoireEntries.pieceId, pieceId)))
+      .limit(1)
+      .then(rows => rows.map(r => r.learning_plans));
+    return plan;
+  }
+
   async createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan> {
     const [created] = await db.insert(learningPlans).values(plan).returning();
     return created;
@@ -894,6 +956,7 @@ export class DatabaseStorage implements IStorage {
     pieceTitle: string;
     composerName: string;
     dayIndex: number;
+    sectionName: string | null;
   } | null> {
     const [lesson] = await db.select().from(lessonDays).where(eq(lessonDays.id, lessonId));
     if (!lesson) return null;
@@ -914,7 +977,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(lessonDays.learningPlanId, lesson.learningPlanId))
       .orderBy(lessonDays.scheduledDate);
     const dayIndex = allLessons.findIndex((l) => l.id === lessonId) + 1;
-    return { lesson, plan, pieceTitle: ctx.pieceTitle, composerName: ctx.composerName, dayIndex };
+    // Resolve section name if this lesson belongs to a section
+    let sectionName: string | null = null;
+    if (lesson.sectionId != null) {
+      const [sec] = await db.select({ name: planSections.name }).from(planSections).where(eq(planSections.id, lesson.sectionId));
+      sectionName = sec?.name ?? null;
+    }
+    return { lesson, plan, pieceTitle: ctx.pieceTitle, composerName: ctx.composerName, dayIndex, sectionName };
   }
 
   async createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]> {
@@ -983,6 +1052,141 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCommunityScore(id: number): Promise<void> {
     await db.delete(communityScores).where(eq(communityScores.id, id));
+  }
+
+  // ── Plan Sections ─────────────────────────────────────────────────────────
+
+  async getSectionsForPlan(planId: number): Promise<PlanSection[]> {
+    return db.select().from(planSections)
+      .where(eq(planSections.learningPlanId, planId))
+      .orderBy(planSections.displayOrder);
+  }
+
+  async createSection(data: InsertPlanSection): Promise<PlanSection> {
+    const [row] = await db.insert(planSections).values(data).returning();
+    return row;
+  }
+
+  async updateSection(id: number, updates: Partial<InsertPlanSection>): Promise<PlanSection | undefined> {
+    const [row] = await db.update(planSections).set(updates).where(eq(planSections.id, id)).returning();
+    return row;
+  }
+
+  async deleteSection(id: number): Promise<boolean> {
+    const result = await db.delete(planSections).where(eq(planSections.id, id)).returning({ id: planSections.id });
+    return result.length > 0;
+  }
+
+  async reorderSections(updates: { id: number; displayOrder: number }[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      for (const { id, displayOrder } of updates) {
+        await tx.update(planSections).set({ displayOrder }).where(eq(planSections.id, id));
+      }
+    });
+  }
+
+  // ── Plan Section Phases ───────────────────────────────────────────────────
+
+  async getPhasesForSection(sectionId: number): Promise<PlanSectionPhase[]> {
+    return db.select().from(planSectionPhases)
+      .where(eq(planSectionPhases.sectionId, sectionId))
+      .orderBy(planSectionPhases.displayOrder);
+  }
+
+  async replacePhasesForSection(sectionId: number, phases: InsertPlanSectionPhase[]): Promise<PlanSectionPhase[]> {
+    return db.transaction(async (tx) => {
+      await tx.delete(planSectionPhases).where(eq(planSectionPhases.sectionId, sectionId));
+      if (phases.length === 0) return [];
+      return tx.insert(planSectionPhases).values(phases).returning();
+    });
+  }
+
+  // ── Bar Flags ─────────────────────────────────────────────────────────────
+
+  async getFlagsForLesson(lessonId: number): Promise<BarFlag[]> {
+    return db.select().from(barFlags).where(eq(barFlags.lessonDayId, lessonId));
+  }
+
+  async createBarFlag(data: InsertBarFlag): Promise<BarFlag> {
+    const [row] = await db.insert(barFlags).values(data).returning();
+    return row;
+  }
+
+  async updateBarFlag(id: number, updates: Partial<InsertBarFlag>): Promise<BarFlag | undefined> {
+    const [row] = await db.update(barFlags).set(updates).where(eq(barFlags.id, id)).returning();
+    return row;
+  }
+
+  async deleteBarFlag(id: number): Promise<boolean> {
+    const result = await db.delete(barFlags).where(eq(barFlags.id, id)).returning({ id: barFlags.id });
+    return result.length > 0;
+  }
+
+  async getFlagSummaryForPlan(planId: number): Promise<BarFlagSummary[]> {
+    const rows = await db
+      .select({
+        measureId: barFlags.measureId,
+        measureNumber: measures.measureNumber,
+        imageUrl: measures.imageUrl,
+        flagCount: sql<number>`count(*)::int`,
+        resolvedCount: sql<number>`sum(case when ${barFlags.resolved} then 1 else 0 end)::int`,
+      })
+      .from(barFlags)
+      .innerJoin(measures, eq(measures.id, barFlags.measureId))
+      .where(eq(barFlags.learningPlanId, planId))
+      .groupBy(barFlags.measureId, measures.measureNumber, measures.imageUrl)
+      .orderBy(measures.measureNumber);
+    return rows;
+  }
+
+  // ── Bar Annotations ───────────────────────────────────────────────────────
+
+  async getAnnotationsForLesson(lessonId: number): Promise<BarAnnotation[]> {
+    return db.select().from(barAnnotations)
+      .where(eq(barAnnotations.lessonDayId, lessonId))
+      .orderBy(barAnnotations.createdAt);
+  }
+
+  async getAnnotationsForPlan(planId: number): Promise<BarAnnotation[]> {
+    return db.select().from(barAnnotations)
+      .where(eq(barAnnotations.learningPlanId, planId))
+      .orderBy(desc(barAnnotations.createdAt));
+  }
+
+  async createBarAnnotation(data: InsertBarAnnotation): Promise<BarAnnotation> {
+    const [row] = await db.insert(barAnnotations).values(data).returning();
+    return row;
+  }
+
+  async updateBarAnnotation(id: number, text: string): Promise<BarAnnotation | undefined> {
+    const [row] = await db.update(barAnnotations)
+      .set({ text, updatedAt: new Date() })
+      .where(eq(barAnnotations.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteBarAnnotation(id: number): Promise<boolean> {
+    const result = await db.delete(barAnnotations).where(eq(barAnnotations.id, id)).returning({ id: barAnnotations.id });
+    return result.length > 0;
+  }
+
+  // ── Plan Suggestions ──────────────────────────────────────────────────────
+
+  async getPendingSuggestions(planId: number): Promise<PlanSuggestion[]> {
+    return db.select().from(planSuggestions)
+      .where(and(eq(planSuggestions.learningPlanId, planId), eq(planSuggestions.status, "pending")))
+      .orderBy(desc(planSuggestions.createdAt));
+  }
+
+  async createSuggestion(data: InsertPlanSuggestion): Promise<PlanSuggestion> {
+    const [row] = await db.insert(planSuggestions).values(data).returning();
+    return row;
+  }
+
+  async updateSuggestion(id: number, updates: { status: "accepted" | "dismissed" }): Promise<PlanSuggestion | undefined> {
+    const [row] = await db.update(planSuggestions).set(updates).where(eq(planSuggestions.id, id)).returning();
+    return row;
   }
 }
 
