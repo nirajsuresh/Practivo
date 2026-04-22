@@ -85,6 +85,7 @@ type PieceEntry = {
   startedDate: string | null;
   movements: Movement[];
   primaryEntryId: number;
+  primaryMovementId: number | null;
   currentCycle: number;
   hasStartedMilestone: boolean;
   everMilestone: "completed" | "performed" | null;
@@ -188,6 +189,7 @@ function groupByComposer(raw: any[], movementOrderByPiece?: Record<number, numbe
         composerId: entry.composerId, composerName: entry.composerName,
         status: entry.status, startedDate: entry.startedDate || null,
         movements: [], primaryEntryId: entry.id,
+        primaryMovementId: (entry as any).movementId ?? null,
         currentCycle: Number.isInteger(entry.currentCycle) ? entry.currentCycle : 1,
         hasStartedMilestone: Boolean((entry as any).hasStartedMilestone),
         everMilestone: entry.everMilestone === "performed" || entry.everMilestone === "completed"
@@ -874,9 +876,9 @@ function PieceJourneySidePane({ row, milestones, userId, onClose }: {
   const currentCycle = piece?.currentCycle ?? entry?.currentCycle ?? 1;
   const pieceId = piece?.pieceId ?? entry?.pieceId;
   const primaryEntryId = piece?.primaryEntryId ?? entry?.entryId;
-  // For a movement entry, scope community scores to that movement.
-  // For a piece row, scope to null (whole piece).
-  const movementId: number | null = entry?.movementId ?? null;
+  // For a movement entry, scope to that movement.
+  // For a piece row, use the primary entry's movementId (may be null for whole-piece entries).
+  const movementId: number | null = entry?.movementId ?? piece?.primaryMovementId ?? null;
   const prog = STATUS_PROGRESS[status] ?? 0;
 
   if (!pieceId) return null;

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,13 @@ import {
 } from "@shared/schema";
 import { useSheetPageUrl, measuresUsePageGeometry } from "@/lib/sheet-page";
 import { SECTION_COLORS } from "@/lib/palette";
+import {
+  DndContext, PointerSensor, useSensor, useSensors,
+  useDraggable, useDroppable,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -35,8 +42,40 @@ type DraftSection = {
   name: string;
   measureStart: number;
   measureEnd: number;
-  difficulty: 1 | 2 | 3 | 4 | 5;
+  difficulty: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  ignored?: boolean;
 };
+
+type Zone = "hard" | "easy" | "ignore";
+type Level = 1 | 2 | 3;
+type ZoneLevel = { zone: Zone; level: Level };
+
+type Tempo = "slow" | "medium" | "fast" | "aggressive";
+const TEMPO_DAYS_PER_PAGE: Record<Tempo, number> = {
+  slow: 14, medium: 7, fast: 4, aggressive: 2,
+};
+const TEMPO_LABELS: Record<Tempo, { title: string; blurb: string }> = {
+  slow:       { title: "Slow",       blurb: "2 weeks per page" },
+  medium:     { title: "Medium",     blurb: "1 week per page" },
+  fast:       { title: "Fast",       blurb: "4 days per page" },
+  aggressive: { title: "Aggressive", blurb: "2 days per page" },
+};
+
+const HARD_DIFFICULTY: Record<Level, 5 | 6 | 7> = { 1: 5, 2: 6, 3: 7 };
+const EASY_DIFFICULTY: Record<Level, 1 | 2 | 3> = { 1: 3, 2: 2, 3: 1 };
+
+function zoneLevelToDifficulty(zl: ZoneLevel): DraftSection["difficulty"] | null {
+  if (zl.zone === "ignore") return null;
+  return zl.zone === "hard" ? HARD_DIFFICULTY[zl.level] : EASY_DIFFICULTY[zl.level];
+}
+
+function colorForZoneLevel(zl: ZoneLevel): { bg: string; border: string } {
+  if (zl.zone === "ignore") {
+    return { bg: "rgba(100,116,139,0.12)", border: "rgba(100,116,139,0.7)" };
+  }
+  const d = zoneLevelToDifficulty(zl) ?? 4;
+  return difficultyToColor(d);
+}
 
 type DraftPhase = {
   phaseType: PhaseType;
@@ -45,13 +84,38 @@ type DraftPhase = {
   displayOrder: number;
 };
 
-// SectionMark — internal to SectionMarkStep; one per section-start bar
-type SectionMark = {
+type LocalSection = {
   tempId: string;
-  measureNumber: number;
   name: string;
-  difficulty: 1 | 2 | 3 | 4 | 5;
+  measureStart: number;
+  measureEnd: number;
 };
+
+function difficultyToColor(d: number): { bg: string; border: string } {
+  const t = Math.max(0, Math.min(1, (d - 1) / 6));
+  let r: number, g: number, b: number, bgA: number, bA: number;
+  if (t <= 0.5) {
+    const u = t / 0.5;
+    r = Math.round(59 + (161 - 59) * u);
+    g = Math.round(130 + (161 - 130) * u);
+    b = Math.round(246 + (170 - 246) * u);
+    bgA = 0.28 - u * 0.16;
+    bA = 0.65 - u * 0.28;
+  } else {
+    const u = (t - 0.5) / 0.5;
+    r = Math.round(161 + (239 - 161) * u);
+    g = Math.round(161 + (68 - 161) * u);
+    b = Math.round(170 + (68 - 170) * u);
+    bgA = 0.12 + u * 0.16;
+    bA = 0.37 + u * 0.28;
+  }
+  return {
+    bg: `rgba(${r},${g},${b},${bgA.toFixed(2)})`,
+    border: `rgba(${r},${g},${b},${bA.toFixed(2)})`,
+  };
+}
+
+const MVMT_STROKE_COLORS = ["#3b82f6", "#16a34a", "#d97706", "#9333ea", "#ef4444"] as const;
 
 type MeasureRow = {
   id: number;
@@ -59,6 +123,7 @@ type MeasureRow = {
   pageNumber: number | null;
   boundingBox: { x: number; y: number; w: number; h: number } | null;
   imageUrl: string | null;
+  movementId?: number | null;
 };
 
 type ScorePage = {
@@ -196,14 +261,14 @@ function stepToProgressIndex(step: Step): number {
     case "processing": return 2;
     case "review": return 3;
     case "sectionMark": return 4;
-    case "phases": return 5;
-    case "confirm": return 6;
+    case "phases": return 4;
+    case "confirm": return 5;
     default: return 0;
   }
 }
 
 function StepDots({ current }: { current: Step }) {
-  const keys = ["setup", "upload", "pages", "review", "sectionMark", "phases", "confirm"] as const;
+  const keys = ["setup", "upload", "pages", "review", "sectionMark", "confirm"] as const;
   const currentIdx = stepToProgressIndex(current);
   return (
     <div className="flex items-center gap-2 mb-6">
@@ -232,20 +297,13 @@ function StepDots({ current }: { current: Step }) {
 
 function SetupStep({
   dailyMinutes, setDailyMinutes,
-  targetDate, setTargetDate,
   playingLevel,
   onNext,
 }: {
   dailyMinutes: number; setDailyMinutes: (v: number) => void;
-  targetDate: string; setTargetDate: (v: string) => void;
   playingLevel: PlayingLevel;
   onNext: () => void;
 }) {
-  const today = new Date();
-  const minDate = new Date(today);
-  minDate.setDate(minDate.getDate() + 7);
-  const minDateStr = minDate.toISOString().slice(0, 10);
-
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -270,24 +328,6 @@ function SetupStep({
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="target-date" className="flex items-center gap-2 text-sm font-medium">
-          <CalendarDays className="w-4 h-4 text-muted-foreground" />
-          Target completion date
-        </Label>
-        <Input
-          id="target-date"
-          type="date"
-          min={minDateStr}
-          value={targetDate}
-          onChange={(e) => setTargetDate(e.target.value)}
-          className="w-full"
-        />
-        <p className="text-xs text-muted-foreground">
-          We'll build a day-by-day lesson schedule to get you there.
-        </p>
-      </div>
-
       <div className="flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2">
         <div className="flex items-center gap-2">
           <Music2 className="w-4 h-4 text-muted-foreground" />
@@ -296,7 +336,7 @@ function SetupStep({
         <span className="text-xs font-medium">{PLAYING_LEVEL_LABELS[playingLevel]}</span>
       </div>
 
-      <Button onClick={onNext} className="w-full" disabled={!targetDate}>
+      <Button onClick={onNext} className="w-full">
         Next: Upload sheet music
         <ChevronRight className="w-4 h-4 ml-1" />
       </Button>
@@ -703,149 +743,506 @@ function ReviewStep({
 
 // ─── Step: Section Marking ────────────────────────────────────────────────────
 
+function LevelIndicator({
+  zone, level, onSetLevel,
+}: {
+  zone: "hard" | "easy";
+  level: Level;
+  onSetLevel: (l: Level) => void;
+}) {
+  const colorClass = zone === "hard" ? "bg-rose-500" : "bg-blue-500";
+  return (
+    <div
+      className="absolute left-0 top-0 bottom-0 w-4 flex items-stretch gap-[2px] py-1.5 pl-1"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {([1, 2, 3] as Level[]).map((lv) => (
+        <button
+          key={lv}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onSetLevel(lv); }}
+          className={cn(
+            "w-[3px] rounded-sm transition-opacity cursor-pointer",
+            colorClass,
+            level >= lv ? "opacity-100" : "opacity-20 hover:opacity-50",
+          )}
+          title={`Set level ${lv}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DraggableSectionCard({
+  id, section, zoneLevel, isHovered, editing,
+  onHover, onUnhover, onStartEdit, onStopEdit, onRename, onSetLevel, onDelete,
+}: {
+  id: string;
+  section: LocalSection;
+  zoneLevel: ZoneLevel;
+  isHovered: boolean;
+  editing: boolean;
+  onHover: () => void;
+  onUnhover: () => void;
+  onStartEdit: () => void;
+  onStopEdit: () => void;
+  onRename: (name: string) => void;
+  onSetLevel: (l: Level) => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+  const style: React.CSSProperties = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.6 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  const ignored = zoneLevel.zone === "ignore";
+  const col = colorForZoneLevel(zoneLevel);
+  const cardStyle: React.CSSProperties = ignored
+    ? { ...style, background: "rgba(100,116,139,0.08)", borderColor: "rgba(100,116,139,0.5)", borderLeftWidth: 3, borderLeftStyle: "dashed" }
+    : { ...style, background: col.bg, borderColor: col.border, borderLeftWidth: 1 };
+  return (
+    <div
+      ref={setNodeRef}
+      style={cardStyle}
+      className={cn(
+        "relative rounded border py-2 pr-2 text-xs space-y-1 cursor-grab active:cursor-grabbing select-none",
+        ignored ? "pl-2" : "pl-6",
+        isHovered && "ring-2 ring-primary/50",
+        ignored && "opacity-70",
+      )}
+      onMouseEnter={onHover}
+      onMouseLeave={onUnhover}
+      {...attributes}
+      {...listeners}
+    >
+      {!ignored && (
+        <LevelIndicator zone={zoneLevel.zone as "hard" | "easy"} level={zoneLevel.level} onSetLevel={onSetLevel} />
+      )}
+      <div className="flex items-center gap-1">
+        {editing ? (
+          <input
+            autoFocus
+            className="flex-1 outline-none text-xs bg-transparent font-medium min-w-0"
+            value={section.name}
+            onChange={(e) => onRename(e.target.value)}
+            onBlur={onStopEdit}
+            onKeyDown={(e) => { if (e.key === "Enter") onStopEdit(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            className="flex-1 font-medium cursor-text truncate"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onStartEdit(); }}
+          >
+            {section.name}
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label="Delete section"
+          title="Delete section"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="shrink-0 rounded p-0.5 text-muted-foreground/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="text-muted-foreground text-[11px]">Bars {section.measureStart}–{section.measureEnd}</div>
+    </div>
+  );
+}
+
+function DropZone({
+  id, children, className,
+}: {
+  id: Zone;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "rounded-md border transition-colors",
+        isOver ? "ring-2 ring-primary/50 bg-primary/5" : "",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 function SectionMarkStep({
   sheetMusicId,
-  totalMeasures,
+  totalMeasures: _totalMeasures,
+  planMovementId,
   onNext,
   onSkip,
   onBack,
 }: {
   sheetMusicId: number;
   totalMeasures: number;
-  onNext: (marks: SectionMark[]) => void;
+  planMovementId?: number | null;
+  onNext: (sections: DraftSection[]) => void;
   onSkip: () => void;
   onBack: () => void;
 }) {
-  const [sectionMarks, setSectionMarks] = useState<SectionMark[]>([]);
-  const [editingTempId, setEditingTempId] = useState<string | null>(null);
-  const [validationError, setValidationError] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-
+  const [localSections, setLocalSections] = useState<LocalSection[]>([]);
+  const [difficulties, setDifficulties] = useState<Record<string, ZoneLevel>>({});
+  const localSectionsRef = useRef<LocalSection[]>([]);
+  const [selStart, setSelStart] = useState<number | null>(null);
+  const [selMode, setSelMode] = useState<"idle" | "pending" | "dragging">("idle");
+  const [hoverMeasure, setHoverMeasure] = useState<number | null>(null);
+  const [hoveredSectionId, setHoveredSectionId] = useState<string | null>(null);
+  const [selError, setSelError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const pointerIsDownRef = useRef(false);
+  const pageRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const centerRef = useRef<HTMLDivElement | null>(null);
   const getPageUrl = useSheetPageUrl(sheetMusicId);
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const mvtParam = planMovementId ? `?movementId=${planMovementId}` : "";
   const { data: pages = [] } = useQuery<ScorePage[]>({
-    queryKey: [`/api/sheet-music/${sheetMusicId}/pages`],
+    queryKey: [`/api/sheet-music/${sheetMusicId}/pages${mvtParam}`],
+  });
+  const { data: rawMeasures = [] } = useQuery<MeasureRow[]>({
+    queryKey: [`/api/sheet-music/${sheetMusicId}/measures${mvtParam}`],
   });
 
-  const { data: measures = [] } = useQuery<MeasureRow[]>({
-    queryKey: [`/api/sheet-music/${sheetMusicId}/measures`],
-  });
+  useEffect(() => { localSectionsRef.current = localSections; }, [localSections]);
 
-  const totalPages = pages.length || 1;
-  const usePageGeometry = measuresUsePageGeometry(measures as Parameters<typeof measuresUsePageGeometry>[0]);
+  const measures = useMemo(
+    () => [...rawMeasures].sort((a, b) => a.measureNumber - b.measureNumber),
+    [rawMeasures],
+  );
 
-  // Bars on current page with bounding boxes
-  const barsOnPage = measures
-    .filter((m) => m.pageNumber === currentPage && m.boundingBox != null)
-    .sort((a, b) => a.measureNumber - b.measureNumber);
+  const usePageGeometry = useMemo(
+    () => measuresUsePageGeometry(measures as Parameters<typeof measuresUsePageGeometry>[0]),
+    [measures],
+  );
 
-  // Return sorted marks
-  const getSortedMarks = () => [...sectionMarks].sort((a, b) => a.measureNumber - b.measureNumber);
+  const measuresByPage = useMemo(() => {
+    const m: Record<number, MeasureRow[]> = {};
+    for (const msr of measures) { (m[msr.pageNumber ?? 1] ??= []).push(msr); }
+    return m;
+  }, [measures]);
 
-  // Index of a section mark in the sorted list
-  const getSectionIdx = (measureNumber: number) => {
-    const sorted = getSortedMarks();
-    return sorted.findIndex((m) => m.measureNumber === measureNumber);
-  };
-
-  // Which section does this bar belong to? Returns the section color or null if no marks yet.
-  const getSectionColorForBar = (measureNumber: number): { bg: string; border: string } | null => {
-    const sorted = getSortedMarks();
-    let idx = -1;
-    for (let i = sorted.length - 1; i >= 0; i--) {
-      if (sorted[i].measureNumber <= measureNumber) { idx = i; break; }
+  const movementIds = useMemo(() => {
+    const seen = new Set<number | null>();
+    const ids: Array<number | null> = [];
+    for (const m of measures) {
+      const mvt = m.movementId ?? null;
+      if (!seen.has(mvt)) { seen.add(mvt); ids.push(mvt); }
     }
-    if (idx === -1) return null;
-    return SECTION_COLORS[idx % SECTION_COLORS.length];
+    return ids;
+  }, [measures]);
+
+  const mvtColorFor = (mvtId: number | null | undefined): string | null => {
+    const key = mvtId ?? null;
+    const idx = movementIds.indexOf(key);
+    if (idx < 0 || movementIds.length <= 1) return null;
+    return MVMT_STROKE_COLORS[idx % MVMT_STROKE_COLORS.length];
   };
 
-  const sectionLetter = (index: number) =>
-    `Section ${String.fromCharCode(65 + (index % 26))}`;
+  const ignoredIdSet = useMemo(
+    () => new Set(Object.entries(difficulties).filter(([, v]) => v.zone === "ignore").map(([k]) => k)),
+    [difficulties],
+  );
 
-  const handleBarClick = (measureNumber: number) => {
-    setValidationError(false);
-    const existing = sectionMarks.find((m) => m.measureNumber === measureNumber);
-    if (existing) {
-      setSectionMarks((prev) => {
-        const filtered = prev.filter((m) => m.measureNumber !== measureNumber);
-        const sorted = [...filtered].sort((a, b) => a.measureNumber - b.measureNumber);
-        return sorted.map((m, i) => ({
-          ...m,
-          name: m.name.match(/^Section [A-Z]$/) ? sectionLetter(i) : m.name,
-        }));
-      });
-      if (editingTempId === existing.tempId) setEditingTempId(null);
-    } else {
-      setSectionMarks((prev) => {
-        const withNew: SectionMark = { tempId: crypto.randomUUID(), measureNumber, name: "", difficulty: 3 };
-        const all = [...prev, withNew].sort((a, b) => a.measureNumber - b.measureNumber);
-        return all.map((m, i) => ({
-          ...m,
-          name: m.name === "" || m.name.match(/^Section [A-Z]$/) ? sectionLetter(i) : m.name,
-        }));
-      });
+  const getZoneLevel = useCallback(
+    (tempId: string): ZoneLevel => difficulties[tempId] ?? { zone: "easy", level: 1 },
+    [difficulties],
+  );
+
+  const sectionForBar = (mNum: number) =>
+    localSectionsRef.current.find((s) => s.measureStart <= mNum && mNum <= s.measureEnd);
+
+  const hoveredSection = hoveredSectionId
+    ? localSections.find((s) => s.tempId === hoveredSectionId) ?? null
+    : null;
+
+  const selPreviewRange = useMemo((): { lo: number; hi: number } | null => {
+    if (selStart === null) return null;
+    const end = hoverMeasure ?? selStart;
+    return { lo: Math.min(selStart, end), hi: Math.max(selStart, end) };
+  }, [selStart, hoverMeasure]);
+
+  const finalizeSelection = useCallback((endMeasure: number) => {
+    const start = selStart;
+    if (start === null) return;
+    const lo = Math.min(start, endMeasure);
+    const hi = Math.max(start, endMeasure);
+    const rangeMsrs = measures.filter((m) => m.measureNumber >= lo && m.measureNumber <= hi);
+
+    const uniqueMvt = new Set(rangeMsrs.map((m) => m.movementId ?? null));
+    if (uniqueMvt.size > 1) {
+      setSelError("Selection cannot cross movement boundaries.");
+      setSelStart(null);
+      return;
     }
-  };
 
-  const updateMarkName = (tempId: string, name: string) =>
-    setSectionMarks((prev) => prev.map((m) => (m.tempId === tempId ? { ...m, name } : m)));
-
-  const updateMarkDifficulty = (tempId: string, difficulty: 1 | 2 | 3 | 4 | 5) =>
-    setSectionMarks((prev) => prev.map((m) => (m.tempId === tempId ? { ...m, difficulty } : m)));
-
-  const removeMark = (tempId: string) => {
-    setSectionMarks((prev) => prev.filter((m) => m.tempId !== tempId));
-    if (editingTempId === tempId) setEditingTempId(null);
-  };
-
-  const handleNext = () => {
-    if (sectionMarks.length > 0) {
-      const firstMark = Math.min(...sectionMarks.map((m) => m.measureNumber));
-      if (firstMark > 1) { setValidationError(true); return; }
+    const sections = localSectionsRef.current;
+    if (sections.some((s) => s.measureStart <= hi && s.measureEnd >= lo)) {
+      setSelError("This range overlaps an existing section. Delete it first.");
+      setSelStart(null);
+      return;
     }
-    onNext(sectionMarks);
+
+    const idx = sections.length;
+    const newSec: LocalSection = {
+      tempId: crypto.randomUUID(),
+      name: `Section ${String.fromCharCode(65 + (idx % 26))}`,
+      measureStart: lo,
+      measureEnd: hi,
+    };
+    setLocalSections((prev) => {
+      const sorted = [...prev, newSec].sort((a, b) => a.measureStart - b.measureStart);
+      return sorted.map((s, i) => ({
+        ...s,
+        name: s.name.match(/^Section [A-Z]$/) ? `Section ${String.fromCharCode(65 + (i % 26))}` : s.name,
+      }));
+    });
+    // Default new section to easy/level 1 (closest to baseline)
+    setDifficulties((prev) => ({ ...prev, [newSec.tempId]: { zone: "easy", level: 1 } }));
+    setSelStart(null);
+    setHoverMeasure(null);
+    setSelError(null);
+  }, [selStart, measures]);
+
+  const handleBarPointerDown = useCallback((mNum: number) => {
+    pointerIsDownRef.current = true;
+    if (selMode === "idle") {
+      setSelStart(mNum);
+      setSelMode("dragging");
+      setHoverMeasure(mNum);
+      setSelError(null);
+    }
+  }, [selMode]);
+
+  const handleBarPointerEnter = useCallback((mNum: number, sec?: LocalSection | null) => {
+    if (selMode === "dragging" || selMode === "pending") {
+      setHoverMeasure(mNum);
+    }
+    if (selMode === "idle") {
+      setHoveredSectionId(sec?.tempId ?? null);
+    }
+  }, [selMode]);
+
+  const handleBarPointerLeave = useCallback(() => {
+    if (selMode === "pending") setHoverMeasure(null);
+  }, [selMode]);
+
+  const handleBarPointerUp = useCallback((mNum: number) => {
+    pointerIsDownRef.current = false;
+    if (selMode === "dragging") {
+      if (mNum === selStart) {
+        setSelMode("pending");
+      } else {
+        setSelMode("idle");
+        finalizeSelection(mNum);
+      }
+    } else if (selMode === "pending") {
+      if (mNum === selStart) {
+        setSelStart(null);
+        setSelMode("idle");
+        setHoverMeasure(null);
+      } else {
+        setSelMode("idle");
+        finalizeSelection(mNum);
+      }
+    }
+  }, [selMode, selStart, finalizeSelection]);
+
+  const removeSection = (tempId: string) => {
+    setLocalSections((prev) => {
+      const filtered = prev.filter((s) => s.tempId !== tempId);
+      return filtered.map((s, i) => ({
+        ...s,
+        name: s.name.match(/^Section [A-Z]$/) ? `Section ${String.fromCharCode(65 + (i % 26))}` : s.name,
+      }));
+    });
+    setDifficulties((prev) => {
+      const next = { ...prev };
+      delete next[tempId];
+      return next;
+    });
+    if (hoveredSectionId === tempId) setHoveredSectionId(null);
   };
 
-  // Render a label chip for a given section mark
-  const renderChip = (mark: SectionMark, posStyle: React.CSSProperties) => {
-    const sortedIdx = getSectionIdx(mark.measureNumber);
-    const color = SECTION_COLORS[sortedIdx % SECTION_COLORS.length];
+  const setLevelFor = useCallback((tempId: string, level: Level) => {
+    setDifficulties((prev) => {
+      const curr = prev[tempId];
+      if (!curr || curr.zone === "ignore") return prev;
+      return { ...prev, [tempId]: { ...curr, level } };
+    });
+  }, []);
+
+  const handleDragEnd = useCallback((e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over) return;
+    const overId = String(over.id);
+    if (overId !== "hard" && overId !== "easy" && overId !== "ignore") return;
+    const id = String(active.id);
+    setDifficulties((prev) => {
+      const curr = prev[id];
+      if (curr && curr.zone === overId) return prev;
+      return { ...prev, [id]: { zone: overId as Zone, level: 1 } };
+    });
+  }, []);
+
+  const handleDone = () => {
+    const drafts: DraftSection[] = localSections.map((s): DraftSection => {
+      const zl = getZoneLevel(s.tempId);
+      if (zl.zone === "ignore") {
+        return {
+          localId: s.tempId,
+          name: s.name,
+          measureStart: s.measureStart,
+          measureEnd: s.measureEnd,
+          difficulty: 4,
+          ignored: true,
+        };
+      }
+      return {
+        localId: s.tempId,
+        name: s.name,
+        measureStart: s.measureStart,
+        measureEnd: s.measureEnd,
+        difficulty: zoneLevelToDifficulty(zl) ?? 4,
+      };
+    });
+    onNext(drafts);
+  };
+
+  const scrollToPage = (pageNum: number) => {
+    pageRefs.current[pageNum]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const renderBarOverlay = (msr: MeasureRow) => {
+    const mNum = msr.measureNumber;
+    const box = msr.boundingBox!;
+    const sec = sectionForBar(mNum);
+    const isSelStart = selStart === mNum;
+    const inSelRange = selPreviewRange && mNum >= selPreviewRange.lo && mNum <= selPreviewRange.hi;
+    const isHoveredSec = hoveredSectionId !== null && sec?.tempId === hoveredSectionId;
+    const dimmed = sec && hoveredSectionId !== null && sec.tempId !== hoveredSectionId;
+    const mvtColor = mvtColorFor(msr.movementId);
+
+    let bgColor = "rgba(0,0,0,0.03)";
+    let borderLeft = mvtColor ? `2px solid ${mvtColor}40` : "2px solid transparent";
+
+    if (sec && !dimmed) {
+      const zl = getZoneLevel(sec.tempId);
+      if (zl.zone === "ignore") {
+        bgColor = isHoveredSec ? "rgba(100,116,139,0.25)" : "rgba(100,116,139,0.12)";
+        borderLeft = `3px dashed rgba(100,116,139,0.7)`;
+      } else {
+        const col = colorForZoneLevel(zl);
+        bgColor = isHoveredSec ? col.bg.replace(/[\d.]+\)$/, "0.5)") : col.bg;
+        borderLeft = `3px solid ${col.border}`;
+      }
+    }
+    if (inSelRange && !sec) {
+      bgColor = "rgba(251,191,36,0.22)";
+      borderLeft = isSelStart ? "3px solid rgb(251,191,36)" : "2px solid rgba(251,191,36,0.5)";
+    }
+    if (isSelStart) borderLeft = "3px solid rgb(251,191,36)";
+
     return (
       <div
-        key={mark.tempId}
-        style={{ ...posStyle, borderColor: color.border, zIndex: 30 }}
-        className="absolute pointer-events-auto flex items-center gap-1 rounded border bg-white/95 shadow-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap"
+        key={msr.id}
+        onPointerDown={(e) => { e.preventDefault(); handleBarPointerDown(mNum); }}
+        onPointerEnter={() => handleBarPointerEnter(mNum, sec)}
+        onPointerLeave={handleBarPointerLeave}
+        onPointerUp={(e) => { e.stopPropagation(); handleBarPointerUp(mNum); }}
+        style={{
+          left: `${box.x * 100}%`,
+          top: `${box.y * 100}%`,
+          width: `${box.w * 100}%`,
+          height: `${box.h * 100}%`,
+          position: "absolute",
+          backgroundColor: dimmed ? "transparent" : bgColor,
+          borderLeft,
+          boxSizing: "border-box",
+          outline: isSelStart ? "2px solid rgba(251,191,36,0.7)" : undefined,
+          outlineOffset: isSelStart ? "-2px" : undefined,
+          cursor: "crosshair",
+          userSelect: "none",
+          touchAction: "none",
+        }}
+        title={sec ? `${sec.name} (bars ${sec.measureStart}–${sec.measureEnd})` : `Bar ${mNum}`}
+      />
+    );
+  };
+
+  const hardSections = useMemo(() => {
+    return localSections
+      .filter((s) => getZoneLevel(s.tempId).zone === "hard")
+      .slice()
+      .sort((a, b) => {
+        const la = getZoneLevel(a.tempId).level;
+        const lb = getZoneLevel(b.tempId).level;
+        if (la !== lb) return lb - la; // hard: higher level first
+        return a.measureStart - b.measureStart;
+      });
+  }, [localSections, difficulties, getZoneLevel]);
+
+  const easySections = useMemo(() => {
+    return localSections
+      .filter((s) => getZoneLevel(s.tempId).zone === "easy")
+      .slice()
+      .sort((a, b) => {
+        const la = getZoneLevel(a.tempId).level;
+        const lb = getZoneLevel(b.tempId).level;
+        if (la !== lb) return la - lb; // easy: lower level first (closest to baseline)
+        return a.measureStart - b.measureStart;
+      });
+  }, [localSections, difficulties, getZoneLevel]);
+
+  const ignoredSections = useMemo(() => {
+    return localSections
+      .filter((s) => getZoneLevel(s.tempId).zone === "ignore")
+      .slice()
+      .sort((a, b) => a.measureStart - b.measureStart);
+  }, [localSections, difficulties, getZoneLevel]);
+
+  const renderCard = (sec: LocalSection) => {
+    const zl = getZoneLevel(sec.tempId);
+    return (
+      <motion.div
+        key={sec.tempId}
+        layout
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.9 }}
+        transition={{ type: "spring", stiffness: 420, damping: 32, mass: 0.7 }}
       >
-        {editingTempId === mark.tempId ? (
-          <input
-            autoFocus
-            className="w-28 outline-none text-xs bg-transparent"
-            value={mark.name}
-            onChange={(e) => updateMarkName(mark.tempId, e.target.value)}
-            onBlur={() => setEditingTempId(null)}
-            onKeyDown={(e) => { if (e.key === "Enter") setEditingTempId(null); }}
-            placeholder="Section name…"
-          />
-        ) : (
-          <span onClick={() => setEditingTempId(mark.tempId)} className="cursor-text min-w-[4rem]">
-            {mark.name || <span className="text-muted-foreground italic">Unnamed</span>}
-          </span>
-        )}
-        <div className="flex items-center gap-0.5 ml-1 shrink-0 border-l border-border/40 pl-1">
-          <button type="button"
-            onClick={() => updateMarkDifficulty(mark.tempId, Math.max(1, mark.difficulty - 1) as 1 | 2 | 3 | 4 | 5)}
-            className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground text-xs leading-none"
-          >−</button>
-          <span className="w-3 text-center tabular-nums text-xs font-semibold">{mark.difficulty}</span>
-          <button type="button"
-            onClick={() => updateMarkDifficulty(mark.tempId, Math.min(5, mark.difficulty + 1) as 1 | 2 | 3 | 4 | 5)}
-            className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground text-xs leading-none"
-          >+</button>
-        </div>
-        <button type="button" onClick={() => removeMark(mark.tempId)} className="text-muted-foreground hover:text-destructive ml-0.5">
-          <X className="w-3 h-3" />
-        </button>
-      </div>
+        <DraggableSectionCard
+          id={sec.tempId}
+          section={sec}
+          zoneLevel={zl}
+          isHovered={hoveredSectionId === sec.tempId}
+          editing={editingId === sec.tempId}
+          onHover={() => setHoveredSectionId(sec.tempId)}
+          onUnhover={() => setHoveredSectionId(null)}
+          onStartEdit={() => setEditingId(sec.tempId)}
+          onStopEdit={() => setEditingId(null)}
+          onRename={(name) =>
+            setLocalSections((prev) => prev.map((s) => s.tempId === sec.tempId ? { ...s, name } : s))
+          }
+          onSetLevel={(lv) => setLevelFor(sec.tempId, lv)}
+          onDelete={() => removeSection(sec.tempId)}
+        />
+      </motion.div>
     );
   };
 
@@ -854,201 +1251,223 @@ function SectionMarkStep({
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b bg-background/95 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
           <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-2">
-            <BookMarked className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-semibold">Mark sections</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs bg-muted px-2 py-0.5 rounded-full text-muted-foreground">
-              {totalMeasures} bars
+          <BookMarked className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">Mark & rank sections</span>
+          {localSections.length > 0 && (
+            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+              {localSections.length} section{localSections.length !== 1 ? "s" : ""}
             </span>
-            {sectionMarks.length > 0 && (
-              <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-                {sectionMarks.length} section{sectionMarks.length === 1 ? "" : "s"}
-              </span>
-            )}
-          </div>
+          )}
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center gap-2">
-            <button
-              disabled={currentPage <= 1}
-              onClick={() => setCurrentPage((p) => p - 1)}
-              className="w-7 h-7 rounded border flex items-center justify-center disabled:opacity-30 hover:bg-muted transition-colors"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <span className="text-xs text-muted-foreground min-w-[4.5rem] text-center">
-              Page {currentPage} / {totalPages}
-            </span>
-            <button
-              disabled={currentPage >= totalPages}
-              onClick={() => setCurrentPage((p) => p + 1)}
-              className="w-7 h-7 rounded border flex items-center justify-center disabled:opacity-30 hover:bg-muted transition-colors"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <button onClick={onSkip} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            Skip
+          </button>
+          <Button size="sm" onClick={handleDone}>
+            Next <ChevronRight className="w-4 h-4 ml-1" />
+          </Button>
+        </div>
       </div>
 
-      {/* Score area */}
-      <div className="flex-1 overflow-y-auto bg-neutral-100">
-        {usePageGeometry ? (
-          /* Full-page view */
-          <div className="relative mx-auto max-w-3xl bg-white shadow-sm my-4">
-            {pages.length > 0 ? (
-              <div className="relative w-full">
-                <img
-                  src={getPageUrl(currentPage)}
-                  alt={`Page ${currentPage}`}
-                  className="w-full h-auto block"
-                />
-                {/* Clickable bar overlays */}
-                {barsOnPage.map((bar) => {
-                  const box = bar.boundingBox!;
-                  const color = getSectionColorForBar(bar.measureNumber);
-                  return (
-                    <button
-                      key={bar.id}
-                      type="button"
-                      onClick={() => handleBarClick(bar.measureNumber)}
-                      style={{
-                        left: `${box.x * 100}%`,
-                        top: `${box.y * 100}%`,
-                        width: `${box.w * 100}%`,
-                        height: `${box.h * 100}%`,
-                        position: "absolute",
-                        boxSizing: "border-box",
-                      }}
-                      className="cursor-pointer transition-colors group"
-                      title={
-                        sectionMarks.find((m) => m.measureNumber === bar.measureNumber)
-                          ? `${sectionMarks.find((m) => m.measureNumber === bar.measureNumber)!.name || "Unnamed"} — click to unmark`
-                          : `Bar ${bar.measureNumber} — click to mark section start`
-                      }
-                    >
-                      {color ? (
-                        <div
-                          style={{ background: color.bg, borderLeft: `3px solid ${color.border}` }}
-                          className="absolute inset-0 pointer-events-none"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 pointer-events-none border-l-2 border-amber-400 bg-amber-100/30 transition-opacity" />
-                      )}
-                    </button>
-                  );
-                })}
-                {/* Section label chips */}
-                {sectionMarks
-                  .filter((mark) => barsOnPage.some((b) => b.measureNumber === mark.measureNumber))
-                  .map((mark) => {
-                    const bar = barsOnPage.find((b) => b.measureNumber === mark.measureNumber)!;
-                    const box = bar.boundingBox!;
-                    return renderChip(mark, { left: `${box.x * 100}%`, top: `${box.y * 100}%` });
-                  })}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
-            )}
-          </div>
-        ) : (
-          /* Bar-strip view (no page geometry) */
-          <div className="mx-auto max-w-3xl py-4 px-3 space-y-1.5">
-            {measures
-              .sort((a, b) => a.measureNumber - b.measureNumber)
-              .map((bar) => {
-                const mark = sectionMarks.find((m) => m.measureNumber === bar.measureNumber);
-                const color = getSectionColorForBar(bar.measureNumber);
-                const sortedIdx = mark ? getSectionIdx(bar.measureNumber) : -1;
-                const markColor = sortedIdx >= 0 ? SECTION_COLORS[sortedIdx % SECTION_COLORS.length] : null;
+      {/* 3-column body */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: page thumbnails */}
+        <div className="w-16 shrink-0 border-r bg-muted/20 overflow-y-auto py-2 flex flex-col gap-2 items-center">
+          {pages.map((pg) => (
+            <button
+              key={pg.pageNumber}
+              onClick={() => scrollToPage(pg.pageNumber)}
+              className="w-12 rounded border border-border/50 overflow-hidden hover:border-primary/60 transition-colors"
+              title={`Page ${pg.pageNumber}`}
+            >
+              <img src={pg.imageUrl} alt={`p${pg.pageNumber}`} className="w-full h-auto block" />
+              <div className="text-[9px] text-center text-muted-foreground py-0.5 leading-none">{pg.pageNumber}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Center: score pages */}
+        <div
+          ref={centerRef}
+          className="flex-1 overflow-y-auto bg-neutral-100 p-4"
+          onPointerUp={() => {
+            if (selMode === "dragging") setSelMode("pending");
+            pointerIsDownRef.current = false;
+          }}
+          onMouseLeave={() => { if (selMode === "idle") setHoveredSectionId(null); }}
+        >
+          {/* Instructional banner + hovered section delete affordance */}
+          {selMode === "idle" && !selError && !hoveredSection && (
+            <div className="mb-3 px-3 py-2 rounded bg-primary/5 border border-primary/20 text-xs text-foreground/80">
+              <span className="font-medium">Step 1 ·</span> Click or drag across bars to mark a section. Then rank its difficulty on the right →
+            </div>
+          )}
+          {hoveredSection && selMode === "idle" && (
+            <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs flex items-center gap-2">
+              <span className="font-medium text-amber-900">
+                {hoveredSection.name} · bars {hoveredSection.measureStart}–{hoveredSection.measureEnd}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeSection(hoveredSection.tempId)}
+                className="ml-auto inline-flex items-center gap-1 rounded bg-white border border-amber-300 px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
+              >
+                <X className="w-3 h-3" /> Delete section
+              </button>
+            </div>
+          )}
+          {selMode === "pending" && selStart !== null && (
+            <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+              <span className="font-medium">Bar {selStart} selected.</span>
+              <span>Click or drag to another bar to set the end, or click bar {selStart} again to cancel.</span>
+            </div>
+          )}
+          {selError && (
+            <div className="mb-3 px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {selError}
+            </div>
+          )}
+          {usePageGeometry ? (
+            <div className="grid grid-cols-2 gap-4">
+              {pages.map((pg) => (
+                <div
+                  key={pg.pageNumber}
+                  ref={(el) => { pageRefs.current[pg.pageNumber] = el; }}
+                  className="bg-white shadow-sm rounded overflow-hidden relative"
+                >
+                  <img src={getPageUrl(pg.pageNumber)} alt={`Page ${pg.pageNumber}`} className="w-full h-auto block" />
+                  {(measuresByPage[pg.pageNumber] ?? [])
+                    .filter((m) => m.boundingBox != null)
+                    .map((msr) => renderBarOverlay(msr))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1 max-w-2xl mx-auto" style={{ userSelect: "none" }}>
+              {measures.map((msr) => {
+                const mNum = msr.measureNumber;
+                const sec = sectionForBar(mNum);
+                const isSelStart = selStart === mNum;
+                const inRange = selPreviewRange && mNum >= selPreviewRange.lo && mNum <= selPreviewRange.hi;
+                const isIgnoredSec = !!sec && ignoredIdSet.has(sec.tempId);
+                const col = sec && !isIgnoredSec ? colorForZoneLevel(getZoneLevel(sec.tempId)) : null;
+                const dimmed = sec && hoveredSectionId !== null && sec.tempId !== hoveredSectionId;
                 return (
-                  <div key={bar.id} className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleBarClick(bar.measureNumber)}
-                      style={color ? { borderLeftColor: color.border, background: color.bg } : undefined}
-                      className={cn(
-                        "relative flex-1 rounded border transition-colors overflow-hidden",
-                        color ? "border-l-4" : "hover:bg-amber-50 hover:border-amber-300",
-                      )}
-                    >
-                      {bar.imageUrl && (
-                        <img src={bar.imageUrl} alt={`m.${bar.measureNumber}`} className="w-full h-12 object-cover object-left" />
-                      )}
-                      <span className="absolute top-0.5 left-1 text-[10px] text-muted-foreground/60 tabular-nums">
-                        {bar.measureNumber}
-                      </span>
-                    </button>
-                    {mark && markColor && (
-                      <div
-                        style={{ borderColor: markColor.border }}
-                        className="flex items-center gap-1 rounded border bg-white px-1.5 py-0.5 text-xs font-medium shrink-0"
-                      >
-                        {editingTempId === mark.tempId ? (
-                          <input
-                            autoFocus
-                            className="w-24 outline-none text-xs bg-transparent"
-                            value={mark.name}
-                            onChange={(e) => updateMarkName(mark.tempId, e.target.value)}
-                            onBlur={() => setEditingTempId(null)}
-                            onKeyDown={(e) => { if (e.key === "Enter") setEditingTempId(null); }}
-                            placeholder="Name…"
-                          />
-                        ) : (
-                          <span onClick={() => setEditingTempId(mark.tempId)} className="cursor-text min-w-[3rem]">
-                            {mark.name || <span className="italic text-muted-foreground">Unnamed</span>}
-                          </span>
-                        )}
-                        <div className="flex items-center gap-0.5 ml-1 border-l border-border/40 pl-1">
-                          <button type="button" onClick={() => updateMarkDifficulty(mark.tempId, Math.max(1, mark.difficulty - 1) as 1|2|3|4|5)}
-                            className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground text-xs">−</button>
-                          <span className="w-3 text-center text-xs font-semibold tabular-nums">{mark.difficulty}</span>
-                          <button type="button" onClick={() => updateMarkDifficulty(mark.tempId, Math.min(5, mark.difficulty + 1) as 1|2|3|4|5)}
-                            className="w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground text-xs">+</button>
-                        </div>
-                        <button type="button" onClick={() => removeMark(mark.tempId)} className="text-muted-foreground hover:text-destructive">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
+                  <div
+                    key={msr.id}
+                    onPointerDown={(e) => { e.preventDefault(); handleBarPointerDown(mNum); }}
+                    onPointerEnter={() => handleBarPointerEnter(mNum, sec)}
+                    onPointerLeave={handleBarPointerLeave}
+                    onPointerUp={(e) => { e.stopPropagation(); handleBarPointerUp(mNum); }}
+                    style={
+                      isIgnoredSec && !dimmed
+                        ? { background: "rgba(100,116,139,0.12)", borderLeftColor: "rgba(100,116,139,0.7)", borderLeftStyle: "dashed", touchAction: "none" }
+                        : col && !dimmed
+                        ? { background: col.bg, borderLeftColor: col.border, touchAction: "none" }
+                        : { touchAction: "none" }
+                    }
+                    className={cn(
+                      "relative w-full h-10 rounded border text-left overflow-hidden transition-colors cursor-crosshair",
+                      isSelStart && "ring-2 ring-amber-400",
+                      inRange && !sec && "bg-amber-50 border-l-2 border-amber-400",
+                      (col || isIgnoredSec) && !dimmed && "border-l-4",
+                      !col && !isIgnoredSec && !isSelStart && !inRange && "bg-white/50",
+                      dimmed && "opacity-30",
                     )}
+                  >
+                    {msr.imageUrl && <img src={msr.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover object-left opacity-80 pointer-events-none" />}
+                    <span className="absolute top-0.5 left-1 text-[10px] text-muted-foreground/70 tabular-nums pointer-events-none">{mNum}</span>
                   </div>
                 );
               })}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
 
-      {/* Footer */}
-      <div className="shrink-0 border-t bg-background/95 backdrop-blur-sm px-4 py-3 space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Click the first bar of a section to mark it. Click again to unmark. Bar 1 must be your first mark.
-        </p>
-        {validationError && (
-          <p className="text-xs text-destructive flex items-center gap-1">
-            <AlertCircle className="w-3.5 h-3.5" />
-            Section 1 must start at bar 1 — click bar 1 first.
-          </p>
-        )}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onSkip}
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Skip →
-          </button>
-          <Button onClick={handleNext} className="flex-1">
-            Next: Choose phases <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
+        {/* Right: rank panel */}
+        <div className="w-64 shrink-0 border-l bg-background overflow-y-auto p-3 flex flex-col gap-3">
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Step 2 · Rank difficulty</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Drag sections into the <span className="font-semibold text-rose-600">Hard</span>, <span className="font-semibold text-blue-600">Easy</span>, or <span className="font-semibold text-slate-600">Ignore</span> zone. Click the lines on the left of each card to set the level (1–3).
+            </p>
+          </div>
+
+          {localSections.length === 0 ? (
+            <div className="text-xs text-muted-foreground leading-relaxed border-t pt-3">
+              No sections yet. Click a bar on the score to start a section.
+            </div>
+          ) : (
+            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+              <div className="space-y-2">
+                <DropZone id="hard" className="border-rose-300/60 bg-rose-50/50 p-2">
+                  <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1 mb-1.5">
+                    <span>↑ Harder than average</span>
+                    <span className="h-px flex-1 bg-rose-200" />
+                  </div>
+                  <div className="space-y-1.5 min-h-[24px]">
+                    {hardSections.length === 0 ? (
+                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                        (drop sections here)
+                      </div>
+                    ) : (
+                      <AnimatePresence initial={false}>
+                        {hardSections.map(renderCard)}
+                      </AnimatePresence>
+                    )}
+                  </div>
+                </DropZone>
+
+                <div className="rounded border border-dashed border-muted-foreground/40 bg-muted/40 px-3 py-1.5 text-center select-none">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">— Everything else —</div>
+                  <div className="text-[10px] text-muted-foreground leading-tight">Average difficulty</div>
+                </div>
+
+                <DropZone id="easy" className="border-blue-300/60 bg-blue-50/50 p-2">
+                  <div className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold flex items-center gap-1 mb-1.5">
+                    <span className="h-px flex-1 bg-blue-200" />
+                    <span>↓ Easier than average</span>
+                  </div>
+                  <div className="space-y-1.5 min-h-[24px]">
+                    {easySections.length === 0 ? (
+                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                        (drop sections here)
+                      </div>
+                    ) : (
+                      <AnimatePresence initial={false}>
+                        {easySections.map(renderCard)}
+                      </AnimatePresence>
+                    )}
+                  </div>
+                </DropZone>
+
+                <DropZone id="ignore" className="border-slate-300/60 bg-slate-100/60 p-2">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-600 font-semibold flex items-center gap-1 mb-1.5">
+                    <span>↓ Ignore from learning plan ↓</span>
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                  <div className="space-y-1.5 min-h-[24px]">
+                    {ignoredSections.length === 0 ? (
+                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                        (drop to skip from plan)
+                      </div>
+                    ) : (
+                      <AnimatePresence initial={false}>
+                        {ignoredSections.map(renderCard)}
+                      </AnimatePresence>
+                    )}
+                  </div>
+                </DropZone>
+              </div>
+              <p className="text-[10px] text-muted-foreground leading-relaxed border-t pt-2 mt-2">
+                To remove a section entirely, hover it on the score and click <span className="font-semibold">Delete</span>.
+              </p>
+            </DndContext>
+          )}
         </div>
       </div>
     </div>
@@ -1535,57 +1954,60 @@ function PhasesStep({
 
 function ConfirmStep({
   pieceTitle, dailyMinutes, targetDate, totalMeasures,
-  sections, sectionPhases, playingLevel,
+  pageCount, tempo, setTempo,
   onConfirm, isLoading, onBack,
 }: {
   pieceTitle: string; dailyMinutes: number; targetDate: string;
   totalMeasures: number;
-  sections: DraftSection[];
-  sectionPhases: Record<string, DraftPhase[]>;
-  playingLevel: PlayingLevel;
+  pageCount: number;
+  tempo: Tempo; setTempo: (t: Tempo) => void;
   onConfirm: () => void; isLoading: boolean; onBack: () => void;
 }) {
   const target = new Date(targetDate);
   const today = new Date();
-  const days = Math.round((target.getTime() - today.getTime()) / 86400000);
-  const measuresPerDay = totalMeasures > 0 ? Math.ceil(totalMeasures / days) : null;
-
-  const getPhasesFor = (localId: string, difficulty: DraftSection["difficulty"]): DraftPhase[] =>
-    sectionPhases[localId] ?? defaultPhasesForSection(difficulty);
-
-  const totalLessonDays = sections.length > 0
-    ? buildTimelinePreview(sections, sectionPhases, getPhasesFor, playingLevel).length
-    : null;
+  const days = Math.max(1, Math.round((target.getTime() - today.getTime()) / 86400000));
 
   return (
     <div className="space-y-5">
+      <div>
+        <p className="text-xs font-medium text-muted-foreground mb-2">Pace</p>
+        <div className="grid grid-cols-2 gap-2">
+          {(["slow", "medium", "fast", "aggressive"] as Tempo[]).map((t) => {
+            const active = tempo === t;
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTempo(t)}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left transition-all",
+                  active
+                    ? "border-primary bg-primary/10 ring-1 ring-primary"
+                    : "border-border bg-muted/20 hover:bg-muted/40",
+                )}
+              >
+                <div className="text-sm font-semibold">{TEMPO_LABELS[t].title}</div>
+                <div className="text-xs text-muted-foreground">{TEMPO_LABELS[t].blurb}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="rounded-xl border bg-muted/20 divide-y divide-border overflow-hidden">
         {[
           { label: "Piece", value: pieceTitle },
           { label: "Daily practice", value: `${dailyMinutes} min` },
-          { label: "Target date", value: new Date(targetDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) },
-          ...(totalLessonDays != null
-            ? [{ label: "Total lesson days", value: `${totalLessonDays} (${sections.length} section${sections.length === 1 ? "" : "s"})` }]
-            : [{ label: "Days to learn", value: `${days} days` }]),
-          ...(totalMeasures > 0 && totalLessonDays == null ? [
-            { label: "Total measures", value: totalMeasures.toString() },
-            { label: "Measures/day", value: measuresPerDay?.toString() ?? "—" },
-          ] : []),
+          { label: "Pages", value: pageCount > 0 ? pageCount.toString() : "—" },
+          { label: "Estimated duration", value: `${days} days` },
+          { label: "Target date", value: target.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) },
+          ...(totalMeasures > 0 ? [{ label: "Total measures", value: totalMeasures.toString() }] : []),
         ].map(({ label, value }) => (
           <div key={label} className="flex justify-between items-center px-4 py-2.5 text-sm">
             <span className="text-muted-foreground">{label}</span>
             <span className="font-medium">{value}</span>
           </div>
         ))}
-      </div>
-
-      <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2.5">
-        <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
-        <span>
-          {sections.length > 0
-            ? "Each section is split into small bar groups. You'll learn each group individually, then progressively link them into full sections and finally the complete piece."
-            : "We'll create a lesson for each day, assigning measures in order so you always know exactly what to practice."}
-        </span>
       </div>
 
       <div className="flex gap-3">
@@ -1611,17 +2033,14 @@ export function LearningPlanWizard({
 
   const [step, setStep] = useState<Step>("setup");
   const [dailyMinutes, setDailyMinutes] = useState(30);
-  const [targetDate, setTargetDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 3);
-    return d.toISOString().slice(0, 10);
-  });
+  const [tempo, setTempo] = useState<Tempo>("medium");
   const [sheetMusicId, setSheetMusicId] = useState<number | null>(null);
   /** Full PDF page count from upload / pdf-meta (unchanged after excerpt processing). */
   const [pdfSourcePageCount, setPdfSourcePageCount] = useState<number | null>(null);
   const [totalMeasures, setTotalMeasures] = useState(0);
   const [sections, setSections] = useState<DraftSection[]>([]);
   const [sectionPhases, setSectionPhases] = useState<Record<string, DraftPhase[]>>({});
+  const [cameViaCommunityScore, setCameViaCommunityScore] = useState(false);
 
   // Fetch user profile for playing level
   const { data: userProfile } = useQuery<{ playingLevel?: string | null }>({
@@ -1639,6 +2058,30 @@ export function LearningPlanWizard({
     PLAYING_LEVELS.includes(userProfile?.playingLevel as PlayingLevel)
       ? (userProfile!.playingLevel as PlayingLevel)
       : "intermediate";
+
+  const pagesUrl = sheetMusicId
+    ? `/api/sheet-music/${sheetMusicId}/pages${movementId != null ? `?movementId=${movementId}` : ""}`
+    : null;
+  const { data: pagesList } = useQuery<{ pageNumber: number }[]>({
+    queryKey: [pagesUrl],
+    queryFn: async () => {
+      if (!pagesUrl) return [];
+      const res = await fetch(pagesUrl, { headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!pagesUrl,
+  });
+  const pageCount = pagesList?.length ?? 0;
+
+  const targetDate = useMemo(() => {
+    const pages = Math.max(1, pageCount);
+    const timeFactor = 30 / Math.max(1, dailyMinutes);
+    const days = Math.max(1, Math.ceil(pages * TEMPO_DAYS_PER_PAGE[tempo] * timeFactor));
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }, [tempo, pageCount, dailyMinutes]);
 
   const communityScoreUrl = pieceId
     ? `/api/community-scores?pieceId=${pieceId}${movementId != null ? `&movementId=${movementId}` : ""}`
@@ -1707,19 +2150,22 @@ export function LearningPlanWizard({
             measureStart: sec.measureStart,
             measureEnd: sec.measureEnd,
             difficulty: sec.difficulty,
+            ignored: !!sec.ignored,
             displayOrder: i,
           });
           const createdSection = (await secRes.json()) as { id: number };
-          const phases = sectionPhases[sec.localId] ?? defaultPhasesForSection(sec.difficulty);
-          const enabledPhases = phases.filter((p) => p.enabled);
-          if (enabledPhases.length > 0) {
-            await apiRequest("PUT", `/api/sections/${createdSection.id}/phases`, {
-              phases: enabledPhases.map((p) => ({
-                phaseType: p.phaseType,
-                displayOrder: p.displayOrder,
-                repetitions: p.repetitions,
-              })),
-            });
+          if (!sec.ignored) {
+            const phases = sectionPhases[sec.localId] ?? defaultPhasesForSection(sec.difficulty);
+            const enabledPhases = phases.filter((p) => p.enabled);
+            if (enabledPhases.length > 0) {
+              await apiRequest("PUT", `/api/sections/${createdSection.id}/phases`, {
+                phases: enabledPhases.map((p) => ({
+                  phaseType: p.phaseType,
+                  displayOrder: p.displayOrder,
+                  repetitions: p.repetitions,
+                })),
+              });
+            }
           }
         }
       }
@@ -1753,6 +2199,8 @@ export function LearningPlanWizard({
       setTotalMeasures(0);
       setSections([]);
       setSectionPhases({});
+      setTempo("medium");
+      setCameViaCommunityScore(false);
     }, 300);
   };
 
@@ -1784,25 +2232,14 @@ export function LearningPlanWizard({
       <SectionMarkStep
         sheetMusicId={sheetMusicId}
         totalMeasures={totalMeasures}
-        onNext={(marks) => {
-          if (marks.length > 0) {
-            const sorted = [...marks].sort((a, b) => a.measureNumber - b.measureNumber);
-            const drafts: DraftSection[] = sorted.map((m, i) => ({
-              localId: crypto.randomUUID(),
-              name: m.name || `Section ${String.fromCharCode(65 + (i % 26))}`,
-              measureStart: m.measureNumber,
-              measureEnd: i < sorted.length - 1 ? sorted[i + 1].measureNumber - 1 : totalMeasures,
-              difficulty: m.difficulty,
-            }));
-            setSections(drafts);
-          } else {
-            setSections([]);
-            setSectionPhases({});
-          }
-          setStep("phases");
+        planMovementId={movementId}
+        onNext={(drafts) => {
+          setSections(drafts);
+          setSectionPhases({});
+          setStep("confirm");
         }}
-        onSkip={() => { setSections([]); setSectionPhases({}); setStep("phases"); }}
-        onBack={() => setStep("review")}
+        onSkip={() => { setSections([]); setSectionPhases({}); setStep("confirm"); }}
+        onBack={() => cameViaCommunityScore ? setStep("upload") : setStep("review")}
       />
     );
   }
@@ -1820,7 +2257,6 @@ export function LearningPlanWizard({
         {step === "setup" && (
           <SetupStep
             dailyMinutes={dailyMinutes} setDailyMinutes={setDailyMinutes}
-            targetDate={targetDate} setTargetDate={setTargetDate}
             playingLevel={playingLevel}
             onNext={() => setStep("upload")}
           />
@@ -1839,7 +2275,8 @@ export function LearningPlanWizard({
               apiRequest("POST", `/api/community-scores/${score.id}/use`).catch(() => {});
               setSheetMusicId(score.sheetMusicId);
               setTotalMeasures(score.totalMeasures);
-              setStep("confirm");
+              setCameViaCommunityScore(true);
+              setStep("sectionMark");
             }}
             onBack={() => setStep("setup")}
           />
@@ -1875,12 +2312,11 @@ export function LearningPlanWizard({
           <ConfirmStep
             pieceTitle={pieceTitle} dailyMinutes={dailyMinutes}
             targetDate={targetDate} totalMeasures={totalMeasures}
-            sections={sections}
-            sectionPhases={sectionPhases}
-            playingLevel={playingLevel}
+            pageCount={pageCount}
+            tempo={tempo} setTempo={setTempo}
             onConfirm={() => confirmPlan.mutate()}
             isLoading={confirmPlan.isPending}
-            onBack={() => setStep("phases")}
+            onBack={() => setStep("sectionMark")}
           />
         )}
       </DialogContent>

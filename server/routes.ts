@@ -705,7 +705,8 @@ export async function registerRoutes(
       const plan = await storage.getLearningPlanById(planId);
       if (!plan) return res.json(null);
       if (userId && plan.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      res.json(plan);
+      const entry = await storage.getRepertoireEntryById(plan.repertoireEntryId);
+      res.json({ ...plan, movementId: entry?.movementId ?? null });
     } catch {
       res.status(500).json({ error: "Failed to get learning plan" });
     }
@@ -930,14 +931,23 @@ export async function registerRoutes(
       const record = await storage.getSheetMusic(id);
       if (!record) return res.status(404).json({ error: "Sheet music not found" });
 
+      const movementIdRaw = req.query.movementId as string | undefined;
+      const movementId = movementIdRaw ? parseInt(movementIdRaw, 10) : undefined;
+
       const [dbPages, measureList] = await Promise.all([
         storage.getSheetMusicPages(id),
-        storage.getMeasures(id),
+        storage.getMeasures(id, movementId),
       ]);
 
-      const pages = dbPages.map((p) => ({
+      // When scoped to a movement, only return pages that have measures for that movement
+      const pageNumbersWithMeasures = new Set(measureList.map((m) => m.pageNumber));
+      const filteredPages = movementId != null
+        ? dbPages.filter((p) => pageNumbersWithMeasures.has(p.pageNumber))
+        : dbPages;
+
+      const pages = filteredPages.map((p) => ({
         pageNumber: p.pageNumber,
-        imageUrl: p.imageUrl, // R2 public URL
+        imageUrl: p.imageUrl,
         measures: measureList
           .filter((m) => m.pageNumber === p.pageNumber)
           .map((m) => ({
@@ -957,7 +967,9 @@ export async function registerRoutes(
   app.get("/api/sheet-music/:id/measures", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const measureList = await storage.getMeasures(id);
+      const movementIdRaw = req.query.movementId as string | undefined;
+      const movementId = movementIdRaw ? parseInt(movementIdRaw, 10) : undefined;
+      const measureList = await storage.getMeasures(id, movementId);
       res.json(measureList.map((m) => ({ ...m, imageUrl: null })));
     } catch {
       res.status(500).json({ error: "Failed to get measures" });
@@ -1116,8 +1128,6 @@ export async function registerRoutes(
       if (!plan) return res.status(404).json({ error: "Plan not found" });
 
       const totalMeasures = plan.totalMeasures ?? 0;
-      const { targetCompletionDate } = plan;
-      if (!targetCompletionDate) return res.status(400).json({ error: "No target date" });
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -1146,220 +1156,202 @@ export async function registerRoutes(
 
       const rows: DayRow[] = [];
 
-      // ── Per-section-phase algorithm ──────────────────────────────────────
-      const sections = await storage.getSectionsForPlan(planId);
+      // ── Full-coverage chunk-phase algorithm ──────────────────────────────
+      // Covers every non-ignored bar [1..totalMeasures]:
+      // - Bars inside a user-marked section inherit that section's difficulty
+      // - Bars inside an "ignored" section are excluded entirely
+      // - Bars outside every section get implicit difficulty 4 (baseline)
+      // Every chunk runs the full CHUNK_LEVEL_PHASES sequence regardless of
+      // whether it was explicitly marked.
+      const allSections = await storage.getSectionsForPlan(planId);
+      const activeSections = allSections.filter((s) => !(s as { ignored?: boolean }).ignored);
+      const ignoredSections = allSections.filter((s) => (s as { ignored?: boolean }).ignored);
+      // `sections` is referenced in the response metadata below.
+      const sections = activeSections;
 
-      if (sections.length > 0) {
-        // ── Sub-bar progressive scheduling ────────────────────────────────
-        // 1. Split each section into small bar-group chunks
-        // 2. Each chunk progresses through orient→decode→chunk→coordinate
-        // 3. Chunks within a section waterfall-stagger
-        // 4. Once all chunks in a section finish, progressively link them
-        // 5. Once all sections are internally linked, link sections together
-        // 6. Stabilize and shape the full piece
-
+      if (totalMeasures > 0) {
         const playingLevel: PlayingLevel =
-          ((userProfile as any)?.playingLevel as PlayingLevel) ?? "intermediate";
+          ((userProfile as { playingLevel?: PlayingLevel })?.playingLevel as PlayingLevel) ?? "intermediate";
 
-        type ChunkInfo = { start: number; end: number };
-        type SectionPlan = {
-          section: typeof sections[0];
-          sectionIdx: number;
-          chunks: ChunkInfo[];
-          chunkPhaseQueue: { phaseType: PhaseType; reps: number }[];
-          linkRepsPerStep: number;
-          stabilizeReps: number;
-          shapeReps: number;
+        // Build ignored mask + per-bar active-section assignment.
+        const ignoredMask = new Uint8Array(totalMeasures + 2);
+        for (const ig of ignoredSections) {
+          const lo = Math.max(1, ig.measureStart);
+          const hi = Math.min(totalMeasures, ig.measureEnd);
+          for (let m = lo; m <= hi; m++) ignoredMask[m] = 1;
+        }
+
+        type ActiveSec = typeof allSections[0];
+        const barSection: (ActiveSec | null)[] = new Array(totalMeasures + 2).fill(null);
+        for (const sec of activeSections) {
+          const lo = Math.max(1, sec.measureStart);
+          const hi = Math.min(totalMeasures, sec.measureEnd);
+          for (let m = lo; m <= hi; m++) {
+            if (!ignoredMask[m]) barSection[m] = sec;
+          }
+        }
+
+        // Walk bars, collapse into runs of the same assignment, then split into chunks.
+        type Chunk = {
+          start: number; end: number;
+          difficulty: number;
+          sectionId: number | null;
+          sectionName: string;
         };
+        const chunks: Chunk[] = [];
+        let m = 1;
+        while (m <= totalMeasures) {
+          if (ignoredMask[m]) { m++; continue; }
+          const sec = barSection[m];
+          const runStart = m;
+          while (m + 1 <= totalMeasures && !ignoredMask[m + 1] && barSection[m + 1] === sec) m++;
+          const runEnd = m;
+          const diff = sec?.difficulty ?? 4;
+          const name = sec?.name ?? "Unmarked";
+          const runBars = runEnd - runStart + 1;
+          const chSize = computeChunkSize(runBars, diff, playingLevel);
+          for (const c of splitIntoChunks(runStart, runEnd, chSize)) {
+            chunks.push({
+              start: c.start, end: c.end,
+              difficulty: diff,
+              sectionId: sec?.id ?? null,
+              sectionName: name,
+            });
+          }
+          m++;
+        }
 
-        const sectionPlans: SectionPlan[] = [];
-        for (let sIdx = 0; sIdx < sections.length; sIdx++) {
-          const section = sections[sIdx];
-          const bars = section.measureEnd - section.measureStart + 1;
-          const chSize = computeChunkSize(bars, section.difficulty, playingLevel);
-          const chunks = splitIntoChunks(section.measureStart, section.measureEnd, chSize);
+        // Reps per chunk/phase, difficulty-weighted.
+        const repsFor = (difficulty: number, pt: PhaseType) =>
+          Math.max(1, Math.round(PHASE_BASE_EFFORT[pt] * (DIFFICULTY_MULTIPLIER[difficulty] ?? 1)));
 
-          const phases = await storage.getPhasesForSection(section.id);
-          const chunkPhaseQueue = phases
-            .filter((p) => CHUNK_LEVEL_PHASES.has(p.phaseType as PhaseType))
-            .map((p) => ({ phaseType: p.phaseType as PhaseType, reps: p.repetitions }));
+        // Linking: progressive merge from chunk[0] through chunk[i].
+        type LinkStep = { start: number; end: number; seam: number };
+        const linkSteps: LinkStep[] = [];
+        for (let i = 1; i < chunks.length; i++) {
+          linkSteps.push({ start: chunks[0].start, end: chunks[i].end, seam: chunks[i].start });
+        }
 
-          const linkP = phases.find((p) => p.phaseType === "link");
-          const stabP = phases.find((p) => p.phaseType === "stabilize");
-          const shapeP = phases.find((p) => p.phaseType === "shape");
+        const allowedFirst = chunks.length > 0 ? chunks[0].start : 1;
+        const allowedLast = chunks.length > 0 ? chunks[chunks.length - 1].end : totalMeasures;
+        const stabReps = 2;
+        const shapeReps = 2;
 
-          sectionPlans.push({
-            section, sectionIdx: sIdx, chunks, chunkPhaseQueue,
-            linkRepsPerStep: linkP?.repetitions ?? 1,
-            stabilizeReps: stabP?.repetitions ?? 2,
-            shapeReps: shapeP?.repetitions ?? 2,
+        // Flat, phase-interleaved work list. Phases sweep across all chunks before
+        // moving to the next phase, keeping progress even across the whole piece.
+        type WorkItem = {
+          weight: number;
+          mStart: number;
+          mEnd: number;
+          build: () => SessionSection;
+        };
+        const items: WorkItem[] = [];
+
+        const chunkPhases = (PHASE_TYPES as readonly PhaseType[]).filter((pt) => CHUNK_LEVEL_PHASES.has(pt));
+        for (const pt of chunkPhases) {
+          for (const c of chunks) {
+            const reps = repsFor(c.difficulty, pt);
+            for (let r = 0; r < reps; r++) {
+              items.push({
+                weight: PHASE_BASE_EFFORT[pt] ?? 1,
+                mStart: c.start, mEnd: c.end,
+                build: () => {
+                  const range = c.start === c.end ? `m. ${c.start}` : `mm. ${c.start}–${c.end}`;
+                  return {
+                    type: "piece_practice",
+                    label: `${c.sectionName} ${range} — ${PHASE_LABELS[pt].label}`,
+                    durationMin: 0,
+                    tasks: chunkPhaseTasks(pt, c.start, c.end, instrument).map((t) => ({ text: t })),
+                    sectionId: c.sectionId ?? undefined,
+                    phaseType: pt,
+                  };
+                },
+              });
+            }
+          }
+        }
+
+        for (const step of linkSteps) {
+          items.push({
+            weight: PHASE_BASE_EFFORT.link,
+            mStart: step.start, mEnd: step.end,
+            build: () => ({
+              type: "piece_practice",
+              label: `Link mm. ${step.start}–${step.end}`,
+              durationMin: 0,
+              tasks: [
+                { text: `Play mm. ${step.start}–${step.end} without stopping` },
+                { text: `Focus on the join at m. ${step.seam}` },
+                { text: "Smooth out any hesitations at transitions" },
+              ],
+              phaseType: "link" as const,
+            }),
           });
         }
 
-        // ── Chunk-level work items with stagger offsets ──
-        type ChunkState = {
-          sectionIdx: number;
-          sectionId: number;
-          sectionName: string;
-          chunk: ChunkInfo;
-          phaseQueue: { phaseType: PhaseType; reps: number }[];
-          phaseIndex: number;
-          sessionsInPhase: number;
-          staggerOffset: number;
-          finished: boolean;
-        };
-
-        const chunkStates: ChunkState[] = [];
-        let globalOffset = 0;
-
-        for (const sp of sectionPlans) {
-          if (sp.chunkPhaseQueue.length === 0) continue;
-          let chunkOffset = globalOffset;
-          for (const chunk of sp.chunks) {
-            chunkStates.push({
-              sectionIdx: sp.sectionIdx,
-              sectionId: sp.section.id,
-              sectionName: sp.section.name,
-              chunk,
-              phaseQueue: sp.chunkPhaseQueue.map((p) => ({ ...p })),
-              phaseIndex: 0,
-              sessionsInPhase: 0,
-              staggerOffset: chunkOffset,
-              finished: false,
-            });
-            chunkOffset += sp.chunkPhaseQueue[0]?.reps ?? 1;
-          }
-          globalOffset += sp.chunkPhaseQueue.slice(0, 2).reduce((s, p) => s + p.reps, 0);
+        const stabTasks = [
+          `Three clean runs mm. ${allowedFirst}–${allowedLast} from memory`,
+          "Identify and drill any remaining weak bars",
+          "Start from random points to test memory",
+          "Slow down passages that break and rebuild at tempo",
+        ];
+        const shapeTasks = [
+          "Full piece at performance tempo with dynamics",
+          "Shape phrasing, voicing, and character throughout",
+          "Record yourself and review critically",
+          "Make final interpretive decisions",
+        ];
+        for (let r = 0; r < stabReps; r++) {
+          items.push({
+            weight: PHASE_BASE_EFFORT.stabilize,
+            mStart: allowedFirst, mEnd: allowedLast,
+            build: () => ({
+              type: "piece_practice", label: "Stabilize: Full piece",
+              durationMin: 0,
+              tasks: stabTasks.map((t) => ({ text: t })),
+              phaseType: "stabilize" as const,
+            }),
+          });
+        }
+        for (let r = 0; r < shapeReps; r++) {
+          items.push({
+            weight: PHASE_BASE_EFFORT.shape,
+            mStart: allowedFirst, mEnd: allowedLast,
+            build: () => ({
+              type: "piece_practice", label: "Shape: Full piece",
+              durationMin: 0,
+              tasks: shapeTasks.map((t) => ({ text: t })),
+              phaseType: "shape" as const,
+            }),
+          });
         }
 
-        // ── Intra-section link items ──
-        type IntraLinkState = {
-          sectionIdx: number;
-          sectionId: number;
-          sectionName: string;
-          mergeSteps: { start: number; end: number; seam: number }[];
-          currentStep: number;
-          sessionsInStep: number;
-          repsPerStep: number;
-          active: boolean;
-          finished: boolean;
-        };
+        // Pack items into targetDays sessions.
+        const targetDate = plan.targetCompletionDate ? new Date(plan.targetCompletionDate) : null;
+        const targetDays = targetDate
+          ? Math.max(1, Math.ceil((targetDate.getTime() - today.getTime()) / 86400000))
+          : Math.max(1, items.length);
+        const itemsPerDay = Math.max(1, Math.ceil(items.length / targetDays));
+        const totalDays = Math.ceil(items.length / itemsPerDay);
 
-        const intraLinks: IntraLinkState[] = sectionPlans.map((sp) => {
-          const steps: { start: number; end: number; seam: number }[] = [];
-          for (let i = 1; i < sp.chunks.length; i++) {
-            steps.push({ start: sp.chunks[0].start, end: sp.chunks[i].end, seam: sp.chunks[i].start });
-          }
-          return {
-            sectionIdx: sp.sectionIdx,
-            sectionId: sp.section.id,
-            sectionName: sp.section.name,
-            mergeSteps: steps,
-            currentStep: 0,
-            sessionsInStep: 0,
-            repsPerStep: sp.linkRepsPerStep,
-            active: false,
-            finished: steps.length === 0,
-          };
-        });
+        for (let dayIndex = 0; dayIndex < totalDays; dayIndex++) {
+          const slice = items.slice(dayIndex * itemsPerDay, (dayIndex + 1) * itemsPerDay);
+          if (slice.length === 0) break;
 
-        const sectionChunksDone = new Set<number>();
-        let dayIndex = 0;
-
-        // ── Main simulation: chunk phases + intra-section links ──
-        while (dayIndex < 500) {
-          const anyChunkWork = chunkStates.some((s) => !s.finished);
-          const anyLinkWork = intraLinks.some((s) => !s.finished);
-          if (!anyChunkWork && !anyLinkWork) break;
-
-          for (let sIdx = 0; sIdx < sectionPlans.length; sIdx++) {
-            if (!sectionChunksDone.has(sIdx)) {
-              const sc = chunkStates.filter((cs) => cs.sectionIdx === sIdx);
-              if (sc.length > 0 && sc.every((cs) => cs.finished)) {
-                sectionChunksDone.add(sIdx);
-                intraLinks[sIdx].active = true;
-              }
-            }
-          }
-
-          const activeChunks = chunkStates.filter((s) => !s.finished && dayIndex >= s.staggerOffset);
-          const activeLinks = intraLinks.filter((s) => s.active && !s.finished);
-          if (activeChunks.length === 0 && activeLinks.length === 0) { dayIndex++; continue; }
-
-          type ActiveItem = { weight: number; mStart: number; mEnd: number; build: () => SessionSection; advance: () => void };
-          const items: ActiveItem[] = [];
-
-          for (const cs of activeChunks) {
-            const phase = cs.phaseQueue[cs.phaseIndex];
-            items.push({
-              weight: PHASE_BASE_EFFORT[phase.phaseType] ?? 1,
-              mStart: cs.chunk.start, mEnd: cs.chunk.end,
-              build: () => {
-                const range = cs.chunk.start === cs.chunk.end ? `m. ${cs.chunk.start}` : `mm. ${cs.chunk.start}–${cs.chunk.end}`;
-                return {
-                  type: "piece_practice",
-                  label: `${cs.sectionName} ${range} — ${PHASE_LABELS[phase.phaseType].label}`,
-                  durationMin: 0,
-                  tasks: chunkPhaseTasks(phase.phaseType, cs.chunk.start, cs.chunk.end, instrument).map((t) => ({ text: t })),
-                  sectionId: cs.sectionId,
-                  phaseType: phase.phaseType,
-                };
-              },
-              advance: () => {
-                cs.sessionsInPhase++;
-                if (cs.sessionsInPhase >= phase.reps) {
-                  cs.phaseIndex++;
-                  cs.sessionsInPhase = 0;
-                  if (cs.phaseIndex >= cs.phaseQueue.length) cs.finished = true;
-                }
-              },
-            });
-          }
-
-          for (const ls of activeLinks) {
-            const step = ls.mergeSteps[ls.currentStep];
-            items.push({
-              weight: PHASE_BASE_EFFORT.link,
-              mStart: step.start, mEnd: step.end,
-              build: () => ({
-                type: "piece_practice",
-                label: `${ls.sectionName} — Link mm. ${step.start}–${step.end}`,
-                durationMin: 0,
-                tasks: [
-                  { text: `Play mm. ${step.start}–${step.end} without stopping` },
-                  { text: `Focus on the join at m. ${step.seam} — drill 2 bars either side` },
-                  { text: "Smooth out any hesitations at transitions" },
-                  { text: `Full run mm. ${step.start}–${step.end} at comfortable tempo` },
-                ],
-                sectionId: ls.sectionId,
-                phaseType: "link" as const,
-              }),
-              advance: () => {
-                ls.sessionsInStep++;
-                if (ls.sessionsInStep >= ls.repsPerStep) {
-                  ls.currentStep++;
-                  ls.sessionsInStep = 0;
-                  if (ls.currentStep >= ls.mergeSteps.length) ls.finished = true;
-                }
-              },
-            });
-          }
-
-          const totalWeight = items.reduce((s, it) => s + it.weight, 0);
+          const totalWeight = slice.reduce((s, it) => s + it.weight, 0);
           const taskSections: SessionSection[] = [{
             type: "warmup", label: "Warmup", durationMin: warmupMins,
             tasks: getWarmupTasks(instrument).map((t) => ({ text: t })),
           }];
           let minM = Infinity, maxM = 0;
 
-          for (const item of items) {
-            const dur = Math.max(3, Math.round((item.weight / totalWeight) * practiceSectionMins));
+          for (const item of slice) {
+            const dur = Math.max(2, Math.round((item.weight / totalWeight) * practiceSectionMins));
             const block = item.build();
             block.durationMin = dur;
             taskSections.push(block);
             minM = Math.min(minM, item.mStart);
             maxM = Math.max(maxM, item.mEnd);
-            item.advance();
           }
 
           const d = new Date(today);
@@ -1371,142 +1363,20 @@ export async function registerRoutes(
             status: "upcoming", sectionId: null, phaseType: null,
             tasks: taskSections,
           });
-          dayIndex++;
         }
-
-        // ── Inter-section linking ──
-        if (sections.length > 1) {
-          const avgLinkReps = Math.max(1, Math.round(
-            sectionPlans.reduce((s, sp) => s + sp.linkRepsPerStep, 0) / sectionPlans.length,
-          ));
-          for (let i = 1; i < sections.length; i++) {
-            const mStart = sections[0].measureStart;
-            const mEnd = sections[i].measureEnd;
-            const names = sections.slice(0, i + 1).map((s) => s.name);
-            for (let rep = 0; rep < avgLinkReps; rep++) {
-              const d = new Date(today);
-              d.setDate(d.getDate() + dayIndex);
-              rows.push({
-                learningPlanId: planId,
-                scheduledDate: d.toISOString().split("T")[0],
-                measureStart: mStart, measureEnd: mEnd,
-                status: "upcoming", sectionId: null, phaseType: "link",
-                tasks: [
-                  { type: "warmup", label: "Warmup", durationMin: warmupMins, tasks: getWarmupTasks(instrument).map((t) => ({ text: t })) },
-                  {
-                    type: "piece_practice",
-                    label: `Link: ${names.join(" + ")}`,
-                    durationMin: practiceSectionMins,
-                    tasks: [
-                      { text: `Play mm. ${mStart}–${mEnd} — all sections through` },
-                      { text: `Focus on transition into ${sections[i].name}` },
-                      { text: "Maintain consistent tempo across section boundaries" },
-                      { text: `Full run mm. ${mStart}–${mEnd} without stopping` },
-                    ],
-                    phaseType: "link",
-                  },
-                ],
-              });
-              dayIndex++;
-            }
-          }
-        }
-
-        // ── Piece-level: stabilize + shape ──
-        const pieceStart = Math.min(...sections.map((s) => s.measureStart));
-        const pieceEnd = Math.max(...sections.map((s) => s.measureEnd));
-        const avgStabReps = Math.max(1, Math.round(sectionPlans.reduce((s, sp) => s + sp.stabilizeReps, 0) / sectionPlans.length));
-        const avgShapeReps = Math.max(1, Math.round(sectionPlans.reduce((s, sp) => s + sp.shapeReps, 0) / sectionPlans.length));
-
-        for (const { pt, reps, pLabel, taskTexts } of [
-          {
-            pt: "stabilize" as PhaseType, reps: avgStabReps, pLabel: "Stabilize: Full piece",
-            taskTexts: [
-              `Three clean runs of full piece (mm. ${pieceStart}–${pieceEnd}) from memory`,
-              "Identify and drill any remaining weak bars",
-              "Start from random points to test memory",
-              "Slow down passages that break and rebuild at tempo",
-            ],
-          },
-          {
-            pt: "shape" as PhaseType, reps: avgShapeReps, pLabel: "Shape: Full piece",
-            taskTexts: [
-              `Full piece at performance tempo with dynamics`,
-              "Shape phrasing, voicing, and character throughout",
-              "Record yourself and review critically",
-              "Make final interpretive decisions",
-            ],
-          },
-        ]) {
-          for (let rep = 0; rep < reps; rep++) {
-            const d = new Date(today);
-            d.setDate(d.getDate() + dayIndex);
-            rows.push({
-              learningPlanId: planId,
-              scheduledDate: d.toISOString().split("T")[0],
-              measureStart: pieceStart, measureEnd: pieceEnd,
-              status: "upcoming", sectionId: null, phaseType: pt,
-              tasks: [
-                { type: "warmup", label: "Warmup", durationMin: warmupMins, tasks: getWarmupTasks(instrument).map((t) => ({ text: t })) },
-                { type: "piece_practice", label: pLabel, durationMin: practiceSectionMins, tasks: taskTexts.map((t) => ({ text: t })), phaseType: pt },
-              ],
-            });
-            dayIndex++;
-          }
-        }
-
       } else {
-        // ── Flat distribution fallback (original algorithm) ───────────────
-        const buildFlatTasks = (start: number, end: number): SessionSection[] => {
-          const warmupTasks = getWarmupTasks(instrument);
-          const practiceTasks = getPracticeTasks(start, end);
-          return [
-            { type: "warmup", label: "Warmup", durationMin: warmupMins, tasks: warmupTasks.map((t) => ({ text: t })) },
-            { type: "piece_practice", label: "Piece Practice", durationMin: practiceSectionMins, tasks: practiceTasks.map((t) => ({ text: t })) },
-          ];
-        };
-
-        const target = new Date(targetCompletionDate);
-        const totalDays = Math.max(1, Math.ceil((target.getTime() - today.getTime()) / 86400000));
-
-        if (totalMeasures <= 0) {
-          for (let i = 0; i < totalDays; i++) {
-            const d = new Date(today);
-            d.setDate(d.getDate() + i);
-            rows.push({
-              learningPlanId: planId,
-              scheduledDate: d.toISOString().split("T")[0],
-              measureStart: 1,
-              measureEnd: 1,
-              status: "upcoming",
-              tasks: buildFlatTasks(1, 1),
-            });
-          }
-        } else {
-          const base = Math.floor(totalMeasures / totalDays);
-          let extra = totalMeasures % totalDays;
-          let cursor = 1;
-          let dayIndex = 0;
-          while (cursor <= totalMeasures && dayIndex < totalDays) {
-            const n = base + (extra > 0 ? 1 : 0);
-            if (extra > 0) extra--;
-            if (n <= 0) break;
-            const start = cursor;
-            const end = Math.min(cursor + n - 1, totalMeasures);
-            const d = new Date(today);
-            d.setDate(d.getDate() + dayIndex);
-            rows.push({
-              learningPlanId: planId,
-              scheduledDate: d.toISOString().split("T")[0],
-              measureStart: start,
-              measureEnd: end,
-              status: "upcoming",
-              tasks: buildFlatTasks(start, end),
-            });
-            cursor = end + 1;
-            dayIndex++;
-          }
-        }
+        // No bars known yet — create a single placeholder day.
+        const d = new Date(today);
+        rows.push({
+          learningPlanId: planId,
+          scheduledDate: d.toISOString().split("T")[0],
+          measureStart: 1, measureEnd: 1,
+          status: "upcoming",
+          tasks: [
+            { type: "warmup", label: "Warmup", durationMin: warmupMins, tasks: getWarmupTasks(instrument).map((t) => ({ text: t })) },
+            { type: "piece_practice", label: "Piece Practice", durationMin: practiceSectionMins, tasks: getPracticeTasks(1, 1).map((t) => ({ text: t })) },
+          ],
+        });
       }
 
       const created = await storage.createLessonDays(rows);
@@ -1791,7 +1661,7 @@ export async function registerRoutes(
     try {
       const score = await storage.getCommunityScoreByPiece(pieceId, movementId);
       if (!score) return res.status(404).json(null);
-      const totalMeasures = await storage.getMeasureCount(score.sheetMusicId);
+      const totalMeasures = await storage.getMeasureCount(score.sheetMusicId, score.movementId);
       res.json({ ...score, totalMeasures });
     } catch {
       res.status(500).json({ error: "Failed to fetch community score" });
@@ -1907,8 +1777,8 @@ export async function registerRoutes(
       const plan = await storage.getLearningPlanById(planId);
       if (!plan) return res.status(404).json({ error: "Plan not found" });
       if (plan.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      const { name, measureStart, measureEnd, difficulty, displayOrder } = req.body;
-      const section = await storage.createSection({ learningPlanId: planId, name, measureStart, measureEnd, difficulty: typeof difficulty === "number" ? difficulty : 3, displayOrder: displayOrder ?? 0 });
+      const { name, measureStart, measureEnd, difficulty, ignored, displayOrder } = req.body;
+      const section = await storage.createSection({ learningPlanId: planId, name, measureStart, measureEnd, difficulty: typeof difficulty === "number" ? difficulty : 4, ignored: !!ignored, displayOrder: displayOrder ?? 0 });
       res.status(201).json(section);
     } catch (err) {
       console.error("Failed to create section:", err);

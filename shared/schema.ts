@@ -133,7 +133,7 @@ export const LEVEL_MULTIPLIER: Record<PlayingLevel, number> = {
 };
 
 export const DIFFICULTY_MULTIPLIER: Record<number, number> = {
-  1: 0.6, 2: 0.8, 3: 1.0, 4: 1.3, 5: 1.6,
+  1: 0.5, 2: 0.7, 3: 0.85, 4: 1.0, 5: 1.2, 6: 1.45, 7: 1.7,
 };
 
 export const PHASE_LABELS: Record<PhaseType, { label: string; description: string }> = {
@@ -236,6 +236,9 @@ export const measures = pgTable("measures", {
   movementNumber: integer("movement_number").notNull().default(1), // 1-indexed; bar numbers reset per movement
   userCorrected: boolean("user_corrected").notNull().default(false),
   confirmedAt: timestamp("confirmed_at"),
+  displayLabel: text("display_label"),
+  ignored: boolean("ignored").notNull().default(false),
+  movementId: integer("movement_id").references(() => movements.id),
 });
 
 export const insertMeasureSchema = createInsertSchema(measures).omit({ id: true });
@@ -263,7 +266,8 @@ export const planSections = pgTable("plan_sections", {
   name: text("name").notNull(), // e.g. "Exposition", "Development"
   measureStart: integer("measure_start").notNull(),
   measureEnd: integer("measure_end").notNull(),
-  difficulty: integer("difficulty").notNull().default(3), // 1 (easiest) … 5 (hardest)
+  difficulty: integer("difficulty").notNull().default(4), // 1 (easiest) … 7 (hardest); 4 = baseline/unmarked
+  ignored: boolean("ignored").notNull().default(false), // excluded from the schedule; kept for UI display
   displayOrder: integer("display_order").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });

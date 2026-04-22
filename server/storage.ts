@@ -146,8 +146,8 @@ export interface IStorage {
   getSheetMusicPages(sheetMusicId: number): Promise<SheetMusicPage[]>;
   saveMeasures(measureList: InsertMeasure[]): Promise<Measure[]>;
   replaceMeasures(sheetMusicId: number, measureList: InsertMeasure[]): Promise<Measure[]>;
-  getMeasures(sheetMusicId: number): Promise<Measure[]>;
-  getMeasureCount(sheetMusicId: number): Promise<number>;
+  getMeasures(sheetMusicId: number, movementId?: number | null): Promise<Measure[]>;
+  getMeasureCount(sheetMusicId: number, movementId?: number | null): Promise<number>;
   batchGetMeasureCounts(sheetMusicIds: number[]): Promise<Map<number, number>>;
   clearMeasuresForSheetMusic(sheetMusicId: number): Promise<void>;
   updateMeasure(id: number, updates: Partial<InsertMeasure>): Promise<Measure | undefined>;
@@ -893,15 +893,21 @@ export class DatabaseStorage implements IStorage {
     return rows;
   }
 
-  async getMeasures(sheetMusicId: number): Promise<Measure[]> {
-    return db.select().from(measures).where(eq(measures.sheetMusicId, sheetMusicId)).orderBy(measures.measureNumber);
+  async getMeasures(sheetMusicId: number, movementId?: number | null): Promise<Measure[]> {
+    const cond = movementId != null
+      ? and(eq(measures.sheetMusicId, sheetMusicId), eq(measures.movementId, movementId))
+      : eq(measures.sheetMusicId, sheetMusicId);
+    return db.select().from(measures).where(cond).orderBy(measures.measureNumber);
   }
 
-  async getMeasureCount(sheetMusicId: number): Promise<number> {
+  async getMeasureCount(sheetMusicId: number, movementId?: number | null): Promise<number> {
+    const cond = movementId != null
+      ? and(eq(measures.sheetMusicId, sheetMusicId), eq(measures.movementId, movementId))
+      : eq(measures.sheetMusicId, sheetMusicId);
     const [result] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(measures)
-      .where(eq(measures.sheetMusicId, sheetMusicId));
+      .where(cond);
     return result?.count ?? 0;
   }
 

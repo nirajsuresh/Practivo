@@ -5,6 +5,9 @@ import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -22,6 +25,7 @@ type LearningPlan = {
   id: number;
   repertoireEntryId: number;
   sheetMusicId: number | null;
+  movementId: number | null;
   dailyPracticeMinutes: number;
   targetCompletionDate: string | null;
   totalMeasures: number | null;
@@ -372,6 +376,150 @@ function PlanScoreView({
   );
 }
 
+type Tempo = "slow" | "medium" | "fast" | "aggressive";
+const TEMPO_DAYS_PER_PAGE: Record<Tempo, number> = { slow: 14, medium: 7, fast: 4, aggressive: 2 };
+const TEMPO_LABELS: Record<Tempo, { title: string; blurb: string }> = {
+  slow:       { title: "Slow",       blurb: "2 weeks per page" },
+  medium:     { title: "Medium",     blurb: "1 week per page" },
+  fast:       { title: "Fast",       blurb: "4 days per page" },
+  aggressive: { title: "Aggressive", blurb: "2 days per page" },
+};
+
+function RegeneratePaceDialog({
+  open, onOpenChange, planId, sheetMusicId, movementId, initialDailyMinutes,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  planId: number;
+  sheetMusicId: number | null;
+  movementId: number | null;
+  initialDailyMinutes: number;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [tempo, setTempo] = useState<Tempo>("medium");
+  const [dailyMinutes, setDailyMinutes] = useState(initialDailyMinutes);
+
+  const pagesUrl = sheetMusicId
+    ? `/api/sheet-music/${sheetMusicId}/pages${movementId != null ? `?movementId=${movementId}` : ""}`
+    : null;
+  const { data: pagesList } = useQuery<{ pageNumber: number }[]>({
+    queryKey: [pagesUrl],
+    enabled: !!pagesUrl && open,
+  });
+  const pageCount = pagesList?.length ?? 0;
+
+  const targetDate = (() => {
+    const pages = Math.max(1, pageCount);
+    const timeFactor = 30 / Math.max(1, dailyMinutes);
+    const days = Math.max(1, Math.ceil(pages * TEMPO_DAYS_PER_PAGE[tempo] * timeFactor));
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  })();
+  const targetDays = Math.max(1, Math.ceil((new Date(targetDate).getTime() - Date.now()) / 86400000));
+
+  const regenerate = useMutation({
+    mutationFn: async () => {
+      await apiRequest("PATCH", `/api/learning-plans/${planId}`, {
+        dailyPracticeMinutes: dailyMinutes,
+        targetCompletionDate: targetDate,
+      });
+      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/lessons`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/sections`] });
+      toast({ title: "Plan regenerated", description: "Your schedule has been updated." });
+      onOpenChange(false);
+    },
+    onError: () => toast({ title: "Couldn't regenerate plan", variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !regenerate.isPending && onOpenChange(v)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-serif">Adjust pace</DialogTitle>
+          <DialogDescription>
+            Keep your sections, regenerate the daily schedule with new inputs.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-5">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium">Daily practice</Label>
+              <span className="text-sm font-bold text-primary">{dailyMinutes} min</span>
+            </div>
+            <Slider
+              min={10} max={120} step={5}
+              value={[dailyMinutes]}
+              onValueChange={([v]) => setDailyMinutes(v)}
+            />
+          </div>
+
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Pace</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["slow", "medium", "fast", "aggressive"] as Tempo[]).map((t) => {
+                const active = tempo === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTempo(t)}
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-left transition-all",
+                      active
+                        ? "border-primary bg-primary/10 ring-1 ring-primary"
+                        : "border-border bg-muted/20 hover:bg-muted/40",
+                    )}
+                  >
+                    <div className="text-sm font-semibold">{TEMPO_LABELS[t].title}</div>
+                    <div className="text-xs text-muted-foreground">{TEMPO_LABELS[t].blurb}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Pages</span>
+              <span className="font-medium">{pageCount > 0 ? pageCount : "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Estimated duration</span>
+              <span className="font-medium">{targetDays} days</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Target date</span>
+              <span className="font-medium">
+                {new Date(targetDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            This replaces all upcoming lessons. Completed sessions and flags are kept.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={regenerate.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={() => regenerate.mutate()} disabled={regenerate.isPending}>
+            {regenerate.isPending ? "Regenerating..." : "Regenerate plan"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function PlanPage() {
   const params = useParams<{ planId: string }>();
   const planId = parseInt(params.planId ?? "", 10);
@@ -415,13 +563,15 @@ export default function PlanPage() {
   });
 
   const sheetId = plan?.sheetMusicId ?? null;
+  const mvtParam = plan?.movementId ? `?movementId=${plan.movementId}` : "";
 
   const { data: measures = [] } = useQuery<MeasureRow[]>({
-    queryKey: [`/api/sheet-music/${sheetId}/measures`],
+    queryKey: [`/api/sheet-music/${sheetId}/measures${mvtParam}`],
     enabled: sheetId != null && sheetId > 0,
   });
 
   const [showAllCompleted, setShowAllCompleted] = useState(false);
+  const [paceDialogOpen, setPaceDialogOpen] = useState(false);
 
   const sortedSections = [...sections].sort((a, b) => a.measureStart - b.measureStart);
   const sectionColorMap = new Map(sortedSections.map((s, i) => [s.id, getSectionColor(i)]));
@@ -684,18 +834,36 @@ export default function PlanPage() {
           <>
             <div className="flex items-start justify-between gap-3">
               <h1 className="font-serif text-2xl font-semibold tracking-tight">Learning plan</h1>
-              {sheetId != null && (
-                <a
-                  href={`/score/${sheetId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="shrink-0 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md border border-border/60 px-2.5 py-1.5 bg-card"
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setPaceDialogOpen(true)}
                 >
-                  <Music2 className="w-3.5 h-3.5" />
-                  Full score
-                </a>
-              )}
+                  Adjust pace
+                </Button>
+                {sheetId != null && (
+                  <a
+                    href={`/score/${sheetId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md border border-border/60 px-2.5 py-1.5 bg-card"
+                  >
+                    <Music2 className="w-3.5 h-3.5" />
+                    Full score
+                  </a>
+                )}
+              </div>
             </div>
+            <RegeneratePaceDialog
+              open={paceDialogOpen}
+              onOpenChange={setPaceDialogOpen}
+              planId={plan.id}
+              sheetMusicId={plan.sheetMusicId}
+              movementId={plan.movementId}
+              initialDailyMinutes={plan.dailyPracticeMinutes}
+            />
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
               {plan.targetCompletionDate && (
                 <span className="inline-flex items-center gap-1">
