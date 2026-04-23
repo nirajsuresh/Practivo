@@ -2,7 +2,11 @@ services:
   - type: web
     name: practivo
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: >-
+      apt-get install -y poppler-utils &&
+      (pip3 install opencv-python-headless numpy ||
+       pip3 install --break-system-packages opencv-python-headless numpy) &&
+      npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV

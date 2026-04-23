@@ -10,7 +10,10 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "mockups": "npx serve design/practice-mockups -p 4444 --no-clipboard"
+    "mockups": "npx serve design/practice-mockups -p 4444 --no-clipboard",
+    "cleanup:db": "tsx --env-file=.env server/scripts/cleanup-orphan-sheet-music.ts",
+    "cleanup:r2": "tsx --env-file=.env server/scripts/cleanup-orphan-r2.ts",
+    "cleanup:r2:delete": "tsx --env-file=.env server/scripts/cleanup-orphan-r2.ts --delete"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1029.0",

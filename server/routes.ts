@@ -2100,7 +2100,12 @@ export async function registerRoutes(
     try {
       const score = await storage.getCommunityScoreByPiece(pieceId, movementId);
       if (!score) return res.status(404).json(null);
-      const totalMeasures = await storage.getMeasureCount(score.sheetMusicId, score.movementId);
+      let totalMeasures = await storage.getMeasureCount(score.sheetMusicId, score.movementId);
+      // Bar detection doesn't tag measures with movementId, so fall back to the
+      // full sheet's measure count when movement-scoped query returns nothing.
+      if (score.movementId != null && totalMeasures === 0) {
+        totalMeasures = await storage.getMeasureCount(score.sheetMusicId);
+      }
       res.json({ ...score, totalMeasures });
     } catch {
       res.status(500).json({ error: "Failed to fetch community score" });
