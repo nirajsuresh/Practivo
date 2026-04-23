@@ -145,17 +145,17 @@ export function getSectionColor(index: number) {
 
 
 /**
- * Fixed per-phase colors — painterly pigment palette spanning the full spectrum.
- * Cerulean → Cobalt → Viridian → Ochre → Vermillion → Magenta → Indigo.
+ * Fixed per-phase colors — temperature ramp from cool (early learning) to warm (mastery).
+ * Cornflower → Teal → Forest → Amber → Brick.
+ * Each step reads as "further along" so a glance at the score shows where in the journey
+ * a passage sits.
  */
 export const PHASE_COLORS: Record<string, { border: string; bg: string }> = {
-  orient:     { border: "#0ea5e9", bg: "rgba(14,165,233,0.15)"  }, // cerulean
-  decode:     { border: "#2563eb", bg: "rgba(37,99,235,0.15)"   }, // cobalt
-  chunk:      { border: "#059669", bg: "rgba(5,150,105,0.15)"   }, // viridian
-  coordinate: { border: "#ca8a04", bg: "rgba(202,138,4,0.15)"   }, // ochre
-  link:       { border: "#dc2626", bg: "rgba(220,38,38,0.13)"   }, // vermillion
-  stabilize:  { border: "#c026d3", bg: "rgba(192,38,211,0.13)"  }, // magenta
-  shape:      { border: "#4f46e5", bg: "rgba(79,70,229,0.15)"   }, // indigo
+  decode:  { border: "#4a80d2", bg: "rgba(74,128,210,0.13)"  }, // cornflower — analytical, first encounter
+  build:   { border: "#2e9e8e", bg: "rgba(46,158,142,0.13)"  }, // teal — methodical drilling
+  connect: { border: "#5e9f65", bg: "rgba(94,159,101,0.13)"  }, // forest — bridging, flourishing
+  shape:   { border: "#c8953a", bg: "rgba(200,149,58,0.13)"  }, // amber — warmth, expression forming
+  perform: { border: "#b84545", bg: "rgba(184,69,69,0.13)"   }, // brick — full voice, performance
 };
 
 /** Return the fixed color for a given phase type. */

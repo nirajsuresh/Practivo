@@ -1,6 +1,6 @@
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
 import { apiRequest } from "@/lib/queryClient";
 import { getSectionColor, getPhaseColor, PHASE_COLORS } from "@/lib/palette";
+import { RecalibratePrompt } from "@/components/recalibrate-prompt";
 import { PHASE_TYPES, PHASE_LABELS, type PhaseType } from "@shared/schema";
 
 type LearningPlan = {
@@ -205,7 +206,17 @@ function PlanScoreView({
 
   // measureColor: measureNumber → { border, bg }
   const measureColorMap = new Map<number, { border: string; bg: string }>();
-  const practiceTasks = lesson.tasks?.filter((t) => t.type === "piece_practice") ?? [];
+  // Include v1 "piece_practice" sections AND v2 phase-typed sections (type = phase name,
+  // e.g. "chunk"/"orient"). Exclude warmups. Any section with a phaseType or a bar range
+  // counts as practice for coloring purposes.
+  const practiceTasks = lesson.tasks?.filter(
+    (t) =>
+      t.type !== "warmup" &&
+      (t.type === "piece_practice" ||
+        t.phaseType != null ||
+        t.measureStart != null ||
+        t.measureEnd != null),
+  ) ?? [];
 
   if (practiceTasks.length > 0) {
     for (const task of practiceTasks) {
@@ -425,7 +436,7 @@ function RegeneratePaceDialog({
         dailyPracticeMinutes: dailyMinutes,
         targetCompletionDate: targetDate,
       });
-      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons`, {});
+      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons?v=2`, { schedulerVersion: 2 });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}`] });
@@ -572,6 +583,22 @@ export default function PlanPage() {
 
   const [showAllCompleted, setShowAllCompleted] = useState(false);
   const [paceDialogOpen, setPaceDialogOpen] = useState(false);
+  const [recalibrateDismissed, setRecalibrateDismissed] = useState(
+    () => !!localStorage.getItem(`reperto_recalibrate_dismissed_${planId}`),
+  );
+  const showRecalibratePrompt = useMemo(() => {
+    if (recalibrateDismissed || !plan || sections.length === 0) return false;
+    const completedCount = lessons.filter((l) => l.status === "completed").length;
+    if (completedCount === 0) return false;
+    let horizonDays = 30;
+    if (plan.targetCompletionDate) {
+      const msLeft = new Date(plan.targetCompletionDate).getTime() - Date.now();
+      horizonDays = Math.max(7, Math.ceil(msLeft / 86_400_000));
+    }
+    const loThreshold = Math.max(1, Math.ceil(horizonDays * 0.1));
+    const hiThreshold = Math.ceil(horizonDays * 0.3);
+    return completedCount >= loThreshold && completedCount < hiThreshold;
+  }, [recalibrateDismissed, plan, sections, lessons]);
 
   const sortedSections = [...sections].sort((a, b) => a.measureStart - b.measureStart);
   const sectionColorMap = new Map(sortedSections.map((s, i) => [s.id, getSectionColor(i)]));
@@ -907,6 +934,18 @@ export default function PlanPage() {
               </div>
             ))}
           </div>
+        )}
+
+        {/* ── Recalibrate prompt ─────────────────────────────────────────── */}
+        {showRecalibratePrompt && (
+          <RecalibratePrompt
+            planId={planId}
+            sections={sections}
+            onDismiss={() => {
+              localStorage.setItem(`reperto_recalibrate_dismissed_${planId}`, "1");
+              setRecalibrateDismissed(true);
+            }}
+          />
         )}
 
         {/* ── Trouble spots card ─────────────────────────────────────────── */}

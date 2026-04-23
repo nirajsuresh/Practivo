@@ -16,6 +16,8 @@ import {
   type InsertPlanSuggestion,
 } from "@shared/schema";
 import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
+import { generatePlanV2, applySessionOutcome, replanUpcomingSessions, checkPlanFeasibility, computePaceGap } from "./scheduler/index.js";
+import type { SectionInput } from "./scheduler/index.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -67,15 +69,6 @@ function buildPhaseTasks(
   let practiceTasks: string[];
 
   switch (phaseType) {
-    case "orient":
-      practiceTasks = [
-        `Listen to a recording of mm. ${measureStart}–${measureEnd}`,
-        "Read through silently — follow the structure",
-        "Identify key signatures, time changes, repeats",
-        "Note overall character and any challenging passages",
-      ];
-      break;
-
     case "decode": {
       practiceTasks = [];
       for (let s = measureStart; s <= measureEnd; s += chunkSize) {
@@ -88,28 +81,19 @@ function buildPhaseTasks(
       break;
     }
 
-    case "chunk":
-      practiceTasks = [
-        `Identify repeating patterns in mm. ${measureStart}–${measureEnd}`,
-        "Isolate each pattern as a unit and practice until automatic",
-        "Map the harmonic skeleton through the section",
-        `Drill any sequences or difficult figurations`,
-      ];
-      break;
-
-    case "coordinate": {
+    case "build": {
       practiceTasks = [];
       for (let s = measureStart; s <= measureEnd; s += chunkSize) {
         const e = Math.min(s + chunkSize - 1, measureEnd);
         const range = s === e ? `m. ${s}` : `mm. ${s}–${e}`;
         practiceTasks.push(`${range}, hands together ♩=46`);
-        practiceTasks.push(`${range}, hands together ♩=52`);
+        practiceTasks.push(`${range}, hands together ♩=56`);
       }
-      practiceTasks.push(`Play mm. ${measureStart}–${measureEnd} hands together, full section`);
+      practiceTasks.push("Drill any sequences or technically demanding passages until automatic");
       break;
     }
 
-    case "link":
+    case "connect":
       practiceTasks = [
         `Connect mm. ${measureStart}–${measureEnd} to adjacent material`,
         "Identify and drill the seam bars at each join",
@@ -118,7 +102,7 @@ function buildPhaseTasks(
       ];
       break;
 
-    case "stabilize":
+    case "shape":
       practiceTasks = [
         `Three clean runs of mm. ${measureStart}–${measureEnd} from memory`,
         "Identify and drill any remaining weak bars",
@@ -127,7 +111,7 @@ function buildPhaseTasks(
       ];
       break;
 
-    case "shape":
+    case "perform":
       practiceTasks = [
         `mm. ${measureStart}–${measureEnd} at performance tempo with full dynamics`,
         "Shape phrasing, voicing, and character throughout",
@@ -164,15 +148,11 @@ function chunkPhaseTasks(phaseType: PhaseType, start: number, end: number, instr
   const range = start === end ? `m. ${start}` : `mm. ${start}–${end}`;
   const isPiano = instrument.includes("piano");
   switch (phaseType) {
-    case "orient":
-      return [`Listen to ${range}`, `Read through ${range} silently — note the structure`, "Identify key, time, repeats"];
     case "decode":
       return isPiano
         ? [`${range} — right hand only ♩=40`, `${range} — left hand only ♩=40`, "Mark fingering decisions"]
         : [`${range} — slowly, note by note ♩=40`, "Mark fingering and bowing", "Identify tricky intervals"];
-    case "chunk":
-      return [`Identify repeating patterns in ${range}`, "Isolate each pattern and drill until automatic", "Map the harmonic skeleton"];
-    case "coordinate":
+    case "build":
       return isPiano
         ? [`${range} hands together ♩=46`, `${range} hands together ♩=52`, `${range} hands together ♩=60`]
         : [`${range} at ♩=46 with full technique`, `${range} at ♩=52`, `${range} at ♩=60`];
@@ -227,8 +207,8 @@ function computeSuggestions(
     });
   }
 
-  // Rule 2: End of Coordinate phase with flags → suggest revisiting Decode
-  if (phaseType === "coordinate" && phaseCompletionRate === 1 && unresolvedFlags > 0) {
+  // Rule 2: End of Build phase with flags → suggest revisiting Decode
+  if (phaseType === "build" && phaseCompletionRate === 1 && unresolvedFlags > 0) {
     suggestions.push({
       learningPlanId: planId,
       triggeredByLessonId: triggerLesson.id,
@@ -236,9 +216,9 @@ function computeSuggestions(
       sectionId,
       status: "pending",
       payload: {
-        message: `"${sectionName}" still has unresolved bars after Coordinate — consider revisiting Decode before moving to Link.`,
-        fromPhase: "coordinate",
-        targetPhase: "decode",
+        message: `"${sectionName}" still has unresolved bars after Build — consider revisiting Decode before moving to Connect.`,
+        fromPhase: "build" as PhaseType,
+        targetPhase: "decode" as PhaseType,
       },
     });
   }
@@ -305,26 +285,25 @@ export function computeAllocation(
 
   // Estimate total calendar days using the chunk-aware simulation approximation.
   // For chunk-level phases, per-chunk reps are staggered so calendar days ≈
-  // total_phase_reps + (numChunks-1) * orient_reps per section.
-  // Sections are staggered by orient+decode reps.
+  // total_phase_reps + (numChunks-1) * decode_reps per section.
   let estimatedDays = 0;
   let sectionStagger = 0;
   for (const sec of rawAllocations) {
     const chunkPhases = sec.phases.filter((p) => CHUNK_LEVEL_PHASES.has(p.phaseType as PhaseType));
     const totalChunkReps = chunkPhases.reduce((s, p) => s + p.repetitions, 0);
-    const orientReps = chunkPhases.find((p) => p.phaseType === "orient")?.repetitions ?? 1;
-    const sectionChunkDays = totalChunkReps + (sec.numChunks - 1) * orientReps;
-    const linkPhase = sec.phases.find((p) => p.phaseType === "link");
-    const linkDays = (linkPhase?.repetitions ?? 1) * Math.max(0, sec.numChunks - 1);
-    const sectionTotal = sectionChunkDays + linkDays;
+    const decodeReps = chunkPhases.find((p) => p.phaseType === "decode")?.repetitions ?? 1;
+    const sectionChunkDays = totalChunkReps + (sec.numChunks - 1) * decodeReps;
+    const connectPhase = sec.phases.find((p) => p.phaseType === "connect");
+    const connectDays = (connectPhase?.repetitions ?? 1) * Math.max(0, sec.numChunks - 1);
+    const sectionTotal = sectionChunkDays + connectDays;
     estimatedDays = Math.max(estimatedDays, sectionStagger + sectionTotal);
     const introReps = chunkPhases.slice(0, 2).reduce((s, p) => s + p.repetitions, 0);
     sectionStagger += introReps;
   }
-  const interLinkDays = Math.max(0, sections.length - 1);
-  const stabReps = rawAllocations[0]?.phases.find((p) => p.phaseType === "stabilize")?.repetitions ?? 2;
+  const interConnectDays = Math.max(0, sections.length - 1);
   const shapeReps = rawAllocations[0]?.phases.find((p) => p.phaseType === "shape")?.repetitions ?? 2;
-  estimatedDays += interLinkDays + stabReps + shapeReps;
+  const performReps = rawAllocations[0]?.phases.find((p) => p.phaseType === "perform")?.repetitions ?? 2;
+  estimatedDays += interConnectDays + shapeReps + performReps;
 
   if (estimatedDays > 0 && estimatedDays !== totalDays) {
     const scale = totalDays / estimatedDays;
@@ -1127,6 +1106,69 @@ export async function registerRoutes(
       const plan = await storage.getLearningPlanById(planId);
       if (!plan) return res.status(404).json({ error: "Plan not found" });
 
+      // v2 scheduler: passage-state-machine model with SR + modalities.
+      // Opt-in via ?v=2 query param, body.schedulerVersion === 2, or the plan
+      // itself is already v2 (e.g. regenerating from Adjust-pace — keep it v2).
+      const wantV2 =
+        req.query.v === "2" ||
+        (req.body && (req.body as any).schedulerVersion === 2) ||
+        plan.schedulerVersion === 2;
+      if (wantV2) {
+        try {
+          // Only forward horizonDays if the caller explicitly set it — otherwise
+          // let generatePlanV2 derive horizon from the plan's targetCompletionDate.
+          const rawHorizon = (req.body as any)?.horizonDays;
+          const horizonDays = typeof rawHorizon === "number" && rawHorizon > 0 ? rawHorizon : undefined;
+
+          // M5: Feasibility pre-check — hard block before materializing a FRESH plan
+          // if required passage touches exceed what the horizon can hold. Skip for
+          // regeneration (plan.schedulerVersion already 2) so "Adjust pace" always works.
+          const isFirstGeneration = plan.schedulerVersion !== 2;
+          if (isFirstGeneration) {
+            const profile = await storage.getUserProfile?.(plan.userId);
+            const level = (profile?.playingLevel as import("@shared/schema").PlayingLevel | null) ?? "intermediate";
+            const userSections = (await storage.getSectionsForPlan(planId)) as SectionInput[];
+            const totalMeasures = plan.totalMeasures ?? 0;
+            const effectiveHorizon =
+              horizonDays ??
+              (() => {
+                if (plan.targetCompletionDate) {
+                  const today = new Date(); today.setHours(0, 0, 0, 0);
+                  const target = new Date(plan.targetCompletionDate as unknown as string);
+                  target.setHours(0, 0, 0, 0);
+                  const d = Math.ceil((target.getTime() - today.getTime()) / 86_400_000);
+                  if (d >= 7) return Math.min(180, d);
+                }
+                return 30;
+              })();
+            const feasibility = checkPlanFeasibility(
+              userSections, totalMeasures, level, effectiveHorizon, plan.dailyPracticeMinutes,
+            );
+            if (!feasibility.feasible) {
+              return res.status(422).json({
+                error: "plan_infeasible",
+                message: `This plan needs ${feasibility.requiredTouches} practice slots but only ${feasibility.availableSessions} are available in ${effectiveHorizon} days. Extend your deadline by ${feasibility.shortfallDays} days, increase daily practice time, or remove some sections.`,
+                requiredTouches: feasibility.requiredTouches,
+                availableSessions: feasibility.availableSessions,
+                daysNeeded: feasibility.daysNeeded,
+                shortfallDays: feasibility.shortfallDays,
+              });
+            }
+          }
+
+          const result = await generatePlanV2({ planId, storage, horizonDays });
+          await storage.updateLearningPlan(planId, { status: "active" });
+          return res.status(201).json({
+            lessonDays: result.lessonsCreated,
+            passagesCreated: result.passagesCreated,
+            schedulerVersion: 2,
+          });
+        } catch (err) {
+          console.error("generate-lessons v2 error:", err);
+          return res.status(500).json({ error: "v2 scheduler failed", detail: String(err) });
+        }
+      }
+
       const totalMeasures = plan.totalMeasures ?? 0;
 
       const today = new Date();
@@ -1273,47 +1315,35 @@ export async function registerRoutes(
 
         for (const step of linkSteps) {
           items.push({
-            weight: PHASE_BASE_EFFORT.link,
+            weight: PHASE_BASE_EFFORT.connect,
             mStart: step.start, mEnd: step.end,
             build: () => ({
               type: "piece_practice",
-              label: `Link mm. ${step.start}–${step.end}`,
+              label: `Connect mm. ${step.start}–${step.end}`,
               durationMin: 0,
               tasks: [
                 { text: `Play mm. ${step.start}–${step.end} without stopping` },
                 { text: `Focus on the join at m. ${step.seam}` },
                 { text: "Smooth out any hesitations at transitions" },
               ],
-              phaseType: "link" as const,
+              phaseType: "connect" as const,
             }),
           });
         }
 
-        const stabTasks = [
+        const shapeTasks = [
           `Three clean runs mm. ${allowedFirst}–${allowedLast} from memory`,
           "Identify and drill any remaining weak bars",
           "Start from random points to test memory",
           "Slow down passages that break and rebuild at tempo",
         ];
-        const shapeTasks = [
+        const performTasks = [
           "Full piece at performance tempo with dynamics",
           "Shape phrasing, voicing, and character throughout",
           "Record yourself and review critically",
           "Make final interpretive decisions",
         ];
         for (let r = 0; r < stabReps; r++) {
-          items.push({
-            weight: PHASE_BASE_EFFORT.stabilize,
-            mStart: allowedFirst, mEnd: allowedLast,
-            build: () => ({
-              type: "piece_practice", label: "Stabilize: Full piece",
-              durationMin: 0,
-              tasks: stabTasks.map((t) => ({ text: t })),
-              phaseType: "stabilize" as const,
-            }),
-          });
-        }
-        for (let r = 0; r < shapeReps; r++) {
           items.push({
             weight: PHASE_BASE_EFFORT.shape,
             mStart: allowedFirst, mEnd: allowedLast,
@@ -1322,6 +1352,18 @@ export async function registerRoutes(
               durationMin: 0,
               tasks: shapeTasks.map((t) => ({ text: t })),
               phaseType: "shape" as const,
+            }),
+          });
+        }
+        for (let r = 0; r < shapeReps; r++) {
+          items.push({
+            weight: PHASE_BASE_EFFORT.perform,
+            mStart: allowedFirst, mEnd: allowedLast,
+            build: () => ({
+              type: "piece_practice", label: "Perform: Full piece",
+              durationMin: 0,
+              tasks: performTasks.map((t) => ({ text: t })),
+              phaseType: "perform" as const,
             }),
           });
         }
@@ -1404,9 +1446,35 @@ export async function registerRoutes(
     try {
       const id = parseInt(req.params.id);
       const body = { ...req.body };
+      // Pull out v2-only field (user rating) before persisting.
+      const rawRating = body.userRating;
+      delete body.userRating;
       if (typeof body.completedAt === "string") body.completedAt = new Date(body.completedAt);
       const updated = await storage.updateLessonDay(id, body);
       if (!updated) return res.status(404).json({ error: "Lesson not found" });
+
+      // v2 feedback loop: if the lesson just got marked completed on a v2 plan,
+      // update passage state and replan upcoming days.
+      if (body.status === "completed") {
+        const plan = await storage.getLearningPlanById(updated.learningPlanId);
+        if (plan && plan.schedulerVersion === 2) {
+          const userRating =
+            typeof rawRating === "number" && rawRating >= 1 && rawRating <= 4
+              ? (rawRating as 1 | 2 | 3 | 4)
+              : undefined;
+          // Fire-and-await: errors here shouldn't block the PATCH response.
+          try {
+            await applySessionOutcome({
+              planId: updated.learningPlanId,
+              lessonDayId: updated.id,
+              userRating,
+              storage,
+            });
+          } catch (e) {
+            console.error("applySessionOutcome failed:", e);
+          }
+        }
+      }
       res.json(updated);
     } catch (err) {
       console.error("update lesson error:", err);
@@ -1984,6 +2052,60 @@ export async function registerRoutes(
     }
   });
 
+  // ── Session Task Feedback ─────────────────────────────────────────────────
+
+  app.post("/api/lessons/:lessonId/feedback", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const lessonId = parseInt(req.params.lessonId, 10);
+      const { taskFeedback } = req.body as {
+        taskFeedback?: Array<{
+          passageId?: number;
+          comfort?: string;
+          completion?: string;
+          flags?: string[];
+          minutesSpent?: number;
+          notes?: string;
+        }>;
+      };
+      if (!Array.isArray(taskFeedback) || taskFeedback.length === 0) {
+        return res.status(400).json({ error: "taskFeedback array required" });
+      }
+      const bundle = await storage.getLessonSessionBundle(lessonId, userId);
+      if (!bundle) return res.status(404).json({ error: "Lesson not found" });
+      const created = await Promise.all(
+        taskFeedback.map((item) =>
+          storage.createSessionTaskFeedback({
+            lessonDayId: lessonId,
+            learningPlanId: bundle.plan.id,
+            userId,
+            passageId: item.passageId ?? null,
+            comfort: item.comfort ?? null,
+            completion: item.completion ?? null,
+            flags: item.flags ?? null,
+            minutesSpent: item.minutesSpent ?? null,
+            notes: item.notes ?? null,
+          })
+        )
+      );
+      res.status(201).json({ created: created.length });
+    } catch (err) {
+      console.error("create session feedback error:", err);
+      res.status(500).json({ error: "Failed to create session feedback" });
+    }
+  });
+
+  app.get("/api/lessons/:lessonId/feedback", async (req, res) => {
+    try {
+      const lessonId = parseInt(req.params.lessonId, 10);
+      const rows = await storage.getSessionTaskFeedbackForLesson(lessonId);
+      res.json(rows);
+    } catch {
+      res.status(500).json({ error: "Failed to get session feedback" });
+    }
+  });
+
   // ── Bar Annotations ───────────────────────────────────────────────────────
 
   app.get("/api/lessons/:lessonId/annotations", async (req, res) => {
@@ -2170,9 +2292,37 @@ export async function registerRoutes(
       if (!plan) return;
 
       const triggerLesson = lessons.find((l) => l.id === triggerLessonId);
-      if (!triggerLesson || !triggerLesson.sectionId || !triggerLesson.phaseType) return;
+      if (!triggerLesson) return;
 
-      const newSuggestions = computeSuggestions(planId, triggerLesson, lessons, sections, flagSummary);
+      const newSuggestions: InsertPlanSuggestion[] = [];
+
+      // v2 plans: use passage-state catch-up detection instead of the v1 flag heuristic.
+      if (plan.schedulerVersion === 2 && storage.getPassagesForPlan && storage.getPassageProgressForPlan) {
+        const [passages, progresses] = await Promise.all([
+          storage.getPassagesForPlan(planId),
+          storage.getPassageProgressForPlan(planId),
+        ]);
+        const completedLessons = lessons.filter((l) => l.status === "completed");
+        const dayIndex = completedLessons.length;
+        const horizonDays = lessons.length;
+        const { paceGap, touchesRemaining } = computePaceGap(passages ?? [], progresses ?? [], dayIndex, horizonDays);
+        if (paceGap > 0.2) {
+          const daysLeft = horizonDays - dayIndex;
+          newSuggestions.push({
+            learningPlanId: planId,
+            triggeredByLessonId: triggerLessonId,
+            type: "catch_up",
+            sectionId: null,
+            status: "pending",
+            payload: {
+              message: `You're ${Math.round(paceGap * 100)}% behind pace — ${touchesRemaining} practice slots remaining over ${daysLeft} day${daysLeft === 1 ? "" : "s"}. Add a daily session or extend your deadline to stay on track.`,
+            },
+          });
+        }
+      } else if (triggerLesson.sectionId && triggerLesson.phaseType) {
+        // v1 flag-based suggestions.
+        newSuggestions.push(...computeSuggestions(planId, triggerLesson, lessons, sections, flagSummary));
+      }
 
       for (const s of newSuggestions) {
         // Deduplicate: skip if identical pending suggestion already exists
@@ -2186,6 +2336,36 @@ export async function registerRoutes(
       }
     } catch (err) {
       console.error("suggestions/compute error:", err);
+    }
+  });
+
+  // ── Recalibrate passage difficulties + replan ───────────────────────────
+  app.post("/api/learning-plans/:planId/recalibrate", async (req, res) => {
+    try {
+      const planId = parseInt(req.params.planId, 10);
+      const { adjustments } = req.body as {
+        adjustments: Array<{ sectionId: number; newDifficulty: number }>;
+      };
+      if (!Array.isArray(adjustments) || adjustments.length === 0) {
+        return res.status(400).json({ error: "adjustments must be a non-empty array" });
+      }
+      const plan = await storage.getLearningPlanById(planId);
+      if (!plan) return res.status(404).json({ error: "plan not found" });
+
+      await storage.recalibratePassageDifficulties(planId, adjustments);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const { lessonsCreated } = await replanUpcomingSessions({
+        planId,
+        storage,
+        fromDateISO: today,
+        horizonDays: 14,
+      });
+
+      return res.json({ ok: true, lessonsReplanned: lessonsCreated });
+    } catch (err) {
+      console.error("recalibrate error:", err);
+      return res.status(500).json({ error: "recalibration failed" });
     }
   });
 

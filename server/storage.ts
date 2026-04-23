@@ -19,13 +19,17 @@ import {
   type BarFlag, type InsertBarFlag, type BarFlagSummary,
   type PlanSuggestion, type InsertPlanSuggestion,
   type BarAnnotation, type InsertBarAnnotation,
+  type Passage, type InsertPassage,
+  type PassageProgress, type InsertPassageProgress,
+  type SessionTaskFeedback, type InsertSessionTaskFeedback,
   users, composers, pieces, movements, repertoireEntries, userProfiles,
   pieceAnalyses, pieceMilestones,
   learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
   sheetMusicPages, planSections, planSectionPhases, barFlags, planSuggestions, barAnnotations,
+  passages, passageProgress, sessionTaskFeedback,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, sql, ne, inArray, isNull, count } from "drizzle-orm";
+import { eq, ilike, and, desc, sql, ne, inArray, isNull, count, gte } from "drizzle-orm";
 
 const CANONICAL_REPERTOIRE_STATUSES = [
   "Want to learn",
@@ -156,6 +160,7 @@ export interface IStorage {
   // ── Lesson Days ──────────────────────────────────────────────────────────
   getLessonDays(learningPlanId: number): Promise<LessonDay[]>;
   getLessonDay(learningPlanId: number, date: string): Promise<LessonDay | undefined>;
+  getLessonDayById(id: number): Promise<LessonDay | undefined>;
   getLessonSessionBundle(
     lessonId: number,
     userId: string,
@@ -169,7 +174,22 @@ export interface IStorage {
   } | null>;
   createLessonDays(days: InsertLessonDay[]): Promise<LessonDay[]>;
   deleteLessonDaysForPlan(learningPlanId: number): Promise<void>;
+  /** v2 scheduler: delete upcoming (non-completed) lessons on/after fromDateISO. */
+  deleteUpcomingLessonsFromDate(learningPlanId: number, fromDateISO: string): Promise<void>;
   updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined>;
+
+  // ── Passages (v2 scheduler) ──────────────────────────────────────────────
+  getPassagesForPlan(learningPlanId: number): Promise<Passage[]>;
+  getPassageById(id: number): Promise<Passage | undefined>;
+  createPassage(data: InsertPassage): Promise<Passage>;
+  deletePassagesForPlan(learningPlanId: number): Promise<void>;
+
+  // ── Passage Progress (v2 scheduler) ──────────────────────────────────────
+  getPassageProgressForPlan(learningPlanId: number): Promise<PassageProgress[]>;
+  getPassageProgress(passageId: number, learningPlanId: number): Promise<PassageProgress | undefined>;
+  createPassageProgress(data: InsertPassageProgress): Promise<PassageProgress>;
+  updatePassageProgress(id: number, updates: Partial<InsertPassageProgress>): Promise<PassageProgress | undefined>;
+  recalibratePassageDifficulties(planId: number, adjustments: Array<{ sectionId: number; newDifficulty: number }>): Promise<void>;
 
   // ── Measure Progress ─────────────────────────────────────────────────────
   getMeasureProgress(learningPlanId: number): Promise<MeasureProgress[]>;
@@ -200,6 +220,11 @@ export interface IStorage {
   updateBarFlag(id: number, updates: Partial<InsertBarFlag>): Promise<BarFlag | undefined>;
   deleteBarFlag(id: number): Promise<boolean>;
   getFlagSummaryForPlan(planId: number): Promise<BarFlagSummary[]>;
+
+  // ── Session Task Feedback ─────────────────────────────────────────────────
+  createSessionTaskFeedback(data: InsertSessionTaskFeedback): Promise<SessionTaskFeedback>;
+  getSessionTaskFeedbackForLesson(lessonDayId: number): Promise<SessionTaskFeedback[]>;
+  getSessionTaskFeedbackForPassage(passageId: number, planId: number): Promise<SessionTaskFeedback[]>;
 
   // ── Bar Annotations ───────────────────────────────────────────────────────
   getAnnotationsForLesson(lessonId: number): Promise<BarAnnotation[]>;
@@ -953,6 +978,11 @@ export class DatabaseStorage implements IStorage {
     return lesson;
   }
 
+  async getLessonDayById(id: number): Promise<LessonDay | undefined> {
+    const [lesson] = await db.select().from(lessonDays).where(eq(lessonDays.id, id));
+    return lesson;
+  }
+
   async getLessonSessionBundle(
     lessonId: number,
     userId: string,
@@ -1001,9 +1031,85 @@ export class DatabaseStorage implements IStorage {
     await db.delete(lessonDays).where(eq(lessonDays.learningPlanId, learningPlanId));
   }
 
+  async deleteUpcomingLessonsFromDate(learningPlanId: number, fromDateISO: string): Promise<void> {
+    // Only wipe lessons that are not yet completed (status != 'completed'),
+    // scheduled on/after the given date. Completed sessions are immutable.
+    await db.delete(lessonDays).where(and(
+      eq(lessonDays.learningPlanId, learningPlanId),
+      gte(lessonDays.scheduledDate, fromDateISO),
+      ne(lessonDays.status, "completed"),
+    ));
+  }
+
   async updateLessonDay(id: number, updates: Partial<InsertLessonDay>): Promise<LessonDay | undefined> {
     const [updated] = await db.update(lessonDays).set(updates).where(eq(lessonDays.id, id)).returning();
     return updated;
+  }
+
+  // ── Passages (v2 scheduler) ──────────────────────────────────────────────
+
+  async getPassagesForPlan(learningPlanId: number): Promise<Passage[]> {
+    return db.select().from(passages)
+      .where(eq(passages.learningPlanId, learningPlanId))
+      .orderBy(passages.displayOrder, passages.measureStart);
+  }
+
+  async getPassageById(id: number): Promise<Passage | undefined> {
+    const [row] = await db.select().from(passages).where(eq(passages.id, id));
+    return row;
+  }
+
+  async createPassage(data: InsertPassage): Promise<Passage> {
+    const [row] = await db.insert(passages).values(data).returning();
+    return row;
+  }
+
+  async deletePassagesForPlan(learningPlanId: number): Promise<void> {
+    // ON DELETE CASCADE on passageProgress handles the progress rows.
+    await db.delete(passages).where(eq(passages.learningPlanId, learningPlanId));
+  }
+
+  // ── Passage Progress (v2 scheduler) ──────────────────────────────────────
+
+  async getPassageProgressForPlan(learningPlanId: number): Promise<PassageProgress[]> {
+    return db.select().from(passageProgress)
+      .where(eq(passageProgress.learningPlanId, learningPlanId));
+  }
+
+  async getPassageProgress(passageId: number, learningPlanId: number): Promise<PassageProgress | undefined> {
+    const [row] = await db.select().from(passageProgress)
+      .where(and(eq(passageProgress.passageId, passageId), eq(passageProgress.learningPlanId, learningPlanId)));
+    return row;
+  }
+
+  async createPassageProgress(data: InsertPassageProgress): Promise<PassageProgress> {
+    const [row] = await db.insert(passageProgress).values(data).returning();
+    return row;
+  }
+
+  async updatePassageProgress(id: number, updates: Partial<InsertPassageProgress>): Promise<PassageProgress | undefined> {
+    const [row] = await db.update(passageProgress)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(passageProgress.id, id))
+      .returning();
+    return row;
+  }
+
+  async recalibratePassageDifficulties(planId: number, adjustments: Array<{ sectionId: number; newDifficulty: number }>): Promise<void> {
+    for (const { sectionId, newDifficulty } of adjustments) {
+      await db.update(passages)
+        .set({ difficulty: newDifficulty })
+        .where(and(eq(passages.learningPlanId, planId), eq(passages.sectionId, sectionId)));
+      const affected = await db.select({ id: passages.id })
+        .from(passages)
+        .where(and(eq(passages.learningPlanId, planId), eq(passages.sectionId, sectionId)));
+      const ids = affected.map((r) => r.id);
+      if (ids.length > 0) {
+        await db.update(passageProgress)
+          .set({ srDifficulty: newDifficulty, updatedAt: new Date() })
+          .where(and(eq(passageProgress.learningPlanId, planId), inArray(passageProgress.passageId, ids)));
+      }
+    }
   }
 
   // ── Measure Progress ─────────────────────────────────────────────────────
@@ -1143,6 +1249,28 @@ export class DatabaseStorage implements IStorage {
       .groupBy(barFlags.measureId, measures.measureNumber, measures.imageUrl)
       .orderBy(measures.measureNumber);
     return rows;
+  }
+
+  // ── Session Task Feedback ─────────────────────────────────────────────────
+
+  async createSessionTaskFeedback(data: InsertSessionTaskFeedback): Promise<SessionTaskFeedback> {
+    const [row] = await db.insert(sessionTaskFeedback).values(data).returning();
+    return row;
+  }
+
+  async getSessionTaskFeedbackForLesson(lessonDayId: number): Promise<SessionTaskFeedback[]> {
+    return db.select().from(sessionTaskFeedback)
+      .where(eq(sessionTaskFeedback.lessonDayId, lessonDayId))
+      .orderBy(sessionTaskFeedback.createdAt);
+  }
+
+  async getSessionTaskFeedbackForPassage(passageId: number, planId: number): Promise<SessionTaskFeedback[]> {
+    return db.select().from(sessionTaskFeedback)
+      .where(and(
+        eq(sessionTaskFeedback.passageId, passageId),
+        eq(sessionTaskFeedback.learningPlanId, planId),
+      ))
+      .orderBy(desc(sessionTaskFeedback.createdAt));
   }
 
   // ── Bar Annotations ───────────────────────────────────────────────────────

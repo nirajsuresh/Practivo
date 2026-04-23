@@ -166,19 +166,19 @@ function computeAllocationLocal(
     const numChunks = phases[0]?.numChunks ?? 1;
     const chunkPhases = phases.filter((p) => CHUNK_LEVEL_PHASES.has(p.phaseType));
     const totalChunkReps = chunkPhases.reduce((s, p) => s + p.raw, 0);
-    const orientReps = chunkPhases.find((p) => p.phaseType === "orient")?.raw ?? 1;
-    const sectionChunkDays = totalChunkReps + (numChunks - 1) * orientReps;
-    const linkReps = phases.find((p) => p.phaseType === "link")?.raw ?? 1;
+    const decodeReps = chunkPhases.find((p) => p.phaseType === "decode")?.raw ?? 1;
+    const sectionChunkDays = totalChunkReps + (numChunks - 1) * decodeReps;
+    const linkReps = phases.find((p) => p.phaseType === "connect")?.raw ?? 1;
     const linkDays = linkReps * Math.max(0, numChunks - 1);
     const sectionTotal = sectionChunkDays + linkDays;
     estimatedDays = Math.max(estimatedDays, sectionStagger + sectionTotal);
     const introReps = chunkPhases.slice(0, 2).reduce((s, p) => s + p.raw, 0);
     sectionStagger += introReps;
   }
-  const interLinkDays = Math.max(0, sections.length - 1);
-  const stabRaw = rawMap[sections[0].localId]?.find((p) => p.phaseType === "stabilize")?.raw ?? 2;
+  const interConnectDays = Math.max(0, sections.length - 1);
   const shapeRaw = rawMap[sections[0].localId]?.find((p) => p.phaseType === "shape")?.raw ?? 2;
-  estimatedDays += interLinkDays + stabRaw + shapeRaw;
+  const performRaw = rawMap[sections[0].localId]?.find((p) => p.phaseType === "perform")?.raw ?? 2;
+  estimatedDays += interConnectDays + shapeRaw + performRaw;
 
   const scale = estimatedDays > 0 ? totalDays / estimatedDays : 1;
   const result: Record<string, DraftPhase[]> = {};
@@ -1525,7 +1525,7 @@ function buildTimelinePreview(
     const bars = sec.measureEnd - sec.measureStart + 1;
     const chSize = computeChunkSizeShared(bars, sec.difficulty, playingLevel);
     const numChunks = Math.ceil(bars / chSize);
-    const linkPhase = phases.find((p) => p.phaseType === "link");
+    const linkPhase = phases.find((p) => p.phaseType === "connect");
     const linkReps = linkPhase?.repetitions ?? 1;
 
     let chunkOffset = globalOffset;
@@ -1589,7 +1589,7 @@ function buildTimelinePreview(
       allWeights.push({ sectionIdx: cs.sectionIdx, weight: PHASE_BASE_EFFORT[pt] ?? 1 });
     }
     for (const ls of activeLinks) {
-      allWeights.push({ sectionIdx: ls.sectionIdx, weight: PHASE_BASE_EFFORT.link });
+      allWeights.push({ sectionIdx: ls.sectionIdx, weight: PHASE_BASE_EFFORT.connect });
     }
     const totalWeight = allWeights.reduce((s, w) => s + w.weight, 0);
 
@@ -1652,15 +1652,15 @@ function buildTimelinePreview(
     }
   }
 
-  // Stabilize + shape
-  const stabPhase = getPhasesFor(sections[0].localId, sections[0].difficulty).find((p) => p.phaseType === "stabilize");
-  const shapePhase = getPhasesFor(sections[0].localId, sections[0].difficulty).find((p) => p.phaseType === "shape");
+  // Shape + perform
+  const stabPhase = getPhasesFor(sections[0].localId, sections[0].difficulty).find((p) => p.phaseType === "shape");
+  const shapePhase = getPhasesFor(sections[0].localId, sections[0].difficulty).find((p) => p.phaseType === "perform");
   for (let r = 0; r < (stabPhase?.repetitions ?? 2); r++) {
-    days.push({ dayIndex: dayIdx, blocks: [{ sectionIdx: -1, sectionName: "Full piece", phaseLabel: "Stabilize", fraction: 1 }] });
+    days.push({ dayIndex: dayIdx, blocks: [{ sectionIdx: -1, sectionName: "Full piece", phaseLabel: "Shape", fraction: 1 }] });
     dayIdx++;
   }
   for (let r = 0; r < (shapePhase?.repetitions ?? 2); r++) {
-    days.push({ dayIndex: dayIdx, blocks: [{ sectionIdx: -1, sectionName: "Full piece", phaseLabel: "Shape", fraction: 1 }] });
+    days.push({ dayIndex: dayIdx, blocks: [{ sectionIdx: -1, sectionName: "Full piece", phaseLabel: "Perform", fraction: 1 }] });
     dayIdx++;
   }
 
@@ -2170,7 +2170,9 @@ export function LearningPlanWizard({
         }
       }
 
-      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons`, {});
+      // Scheduler v2: passage-state-machine model with spaced repetition +
+      // modality library + dynamic replanning. Opt-in via schedulerVersion=2.
+      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons?v=2`, { schedulerVersion: 2 });
       return planId;
     },
     onSuccess: (planId) => {

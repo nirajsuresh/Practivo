@@ -4,7 +4,7 @@
     {
       "name": "Reperto Dev",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "NODE_ENV=development npx tsx --env-file='/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/.claude/worktrees/beautiful-murdock/.env' '/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/.claude/worktrees/beautiful-murdock/server/index.ts'"],
+      "runtimeArgs": ["-c", "NODE_ENV=development npx tsx --env-file='/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/.env' '/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/server/index.ts'"],
       "port": 5000,
       "autoPort": true
     }

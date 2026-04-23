@@ -89,13 +89,11 @@ export type MilestoneType = (typeof MILESTONE_TYPES)[number];
 
 // ── Learning phase types (in pedagogical order) ──────────────────────────────
 export const PHASE_TYPES = [
-  "orient",
   "decode",
-  "chunk",
-  "coordinate",
-  "link",
-  "stabilize",
+  "build",
+  "connect",
   "shape",
+  "perform",
 ] as const;
 export type PhaseType = (typeof PHASE_TYPES)[number];
 
@@ -112,10 +110,10 @@ export const PLAYING_LEVEL_LABELS: Record<PlayingLevel, string> = {
 
 // ── Phase allocation constants ───────────────────────────────────────────────
 export const PHASE_BASE_EFFORT: Record<PhaseType, number> = {
-  orient: 1, decode: 3, chunk: 2, coordinate: 3, link: 2, stabilize: 2, shape: 2,
+  decode: 3, build: 4, connect: 2, shape: 2, perform: 2,
 };
 
-export const CHUNK_LEVEL_PHASES: Set<PhaseType> = new Set<PhaseType>(["orient", "decode", "chunk", "coordinate"]);
+export const CHUNK_LEVEL_PHASES: Set<PhaseType> = new Set<PhaseType>(["decode", "build"]);
 
 export const CHUNK_SIZE_BY_LEVEL: Record<PlayingLevel, number> = {
   beginner: 3, intermediate: 4, advanced: 6, professional: 8,
@@ -137,13 +135,11 @@ export const DIFFICULTY_MULTIPLIER: Record<number, number> = {
 };
 
 export const PHASE_LABELS: Record<PhaseType, { label: string; description: string }> = {
-  orient:     { label: "Sight & Map",      description: "Listen and map the structure — note keys, repeats, shapes" },
-  decode:     { label: "Note by Note",     description: "Read notes and rhythm hands separate, slow tempo" },
-  chunk:      { label: "Bar Work",         description: "Drill short segments until each feels automatic" },
-  coordinate: { label: "Both Hands",       description: "Combine hands slowly — focus on clean alignment" },
-  link:       { label: "String Together",  description: "Join segments into longer, unbroken phrases" },
-  stabilize:  { label: "Consolidate",      description: "Fix weak spots, build memory and consistency" },
-  shape:      { label: "Bring to Life",    description: "Add tempo, dynamics, phrasing — full run-throughs" },
+  decode:  { label: "Note by Note",    description: "Read notes and rhythm hands separate, slow tempo — map the score" },
+  build:   { label: "Bar Work",        description: "Drill short segments until each feels automatic and stable" },
+  connect: { label: "String Together", description: "Join segments into longer phrases; work transitions between chunks" },
+  shape:   { label: "Consolidate",     description: "Build memory and consistency; fix weak spots at tempo" },
+  perform: { label: "Bring to Life",   description: "Full musical expression — dynamics, phrasing, full run-throughs" },
 };
 
 export const pieceMilestones = pgTable("piece_milestones", {
@@ -218,6 +214,10 @@ export const learningPlans = pgTable("learning_plans", {
   targetCompletionDate: text("target_completion_date"), // YYYY-MM-DD
   totalMeasures: integer("total_measures"), // populated after sheet music processed
   status: text("status").notNull().default("setup"), // setup | active | paused | completed
+  /** Scheduler version: 1 = legacy waterfall, 2 = passage-state-machine scheduler. */
+  schedulerVersion: integer("scheduler_version").notNull().default(1),
+  /** Timestamp of most recent dynamic replan (v2 only). */
+  lastReplanAt: timestamp("last_replan_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -308,9 +308,50 @@ export const lessonDays = pgTable("lesson_days", {
   phaseType: text("phase_type"),
 });
 
-export type SessionTask = { text: string; tag?: string };
+export type SessionTask = {
+  /** Human-readable task line. Always present (legacy + v2). */
+  text: string;
+  /** Legacy free-form tag. */
+  tag?: string;
+
+  // ── v2 fields (scheduler v2; all optional for back-compat with legacy rows) ──
+  /** The passage this task targets (null for generic warmup/misc). */
+  passageId?: number;
+  /** Phase this task operates in — drives UI coloring + rationale. */
+  phase?: PhaseType;
+  /** Session-structural role: where this task sits in the session arc. */
+  role?: TaskRole;
+  /** Primary focus dimension for this task. */
+  focus?: TaskFocus;
+  /** Modality (practice variant) applied to the passage. */
+  modality?: ModalityKind;
+  /** Which hands are engaged. */
+  hands?: "left" | "right" | "both";
+  /** Target tempo as percent of performance tempo (e.g. 60 = 60%). */
+  tempoPct?: number;
+  /** Absolute target BPM, if known. */
+  tempoBpm?: number;
+  /** Allocated minutes for this task. */
+  durationMin?: number;
+  /** Explicit measure range this task covers (redundant with passage but useful for UI). */
+  measureStart?: number;
+  measureEnd?: number;
+  /** Explicit rep count (e.g. "3 clean run-throughs"). */
+  repetitions?: number;
+  /** User-visible success criterion (e.g. "3 clean at 80 BPM"). */
+  successCriteria?: string;
+  /** Short rationale ("why this task") for UI transparency. */
+  rationale?: string;
+  /** Utility priority score from M2 scorer — higher = more urgently needed. */
+  priorityScore?: number;
+  /** Reason codes explaining why this task was selected (M2). */
+  reasonCodes?: string[];
+  /** Mark-done tracking for the in-session checklist. */
+  completed?: boolean;
+};
+
 export type SessionSection = {
-  type: string;        // e.g. "warmup" | "piece_practice" | "sight_reading"
+  type: string;        // e.g. "warmup" | "piece_practice" | "sight_reading" | "deep_work" | "new_material" | "consolidation" | "review" | "runthrough"
   label: string;       // display label
   durationMin?: number;
   tasks: SessionTask[];
@@ -318,6 +359,8 @@ export type SessionSection = {
   phaseType?: string;  // one of PHASE_TYPES when generated by waterfall scheduler
   measureStart?: number; // explicit measure range; when absent, parsed from label string
   measureEnd?: number;   // explicit measure range; when absent, parsed from label string
+  /** v2: structural role of this block within the session arc. */
+  role?: TaskRole;
 };
 
 export const insertLessonDaySchema = createInsertSchema(lessonDays).omit({ id: true });
@@ -377,6 +420,26 @@ export const insertBarFlagSchema = createInsertSchema(barFlags).omit({ id: true,
 export type InsertBarFlag = z.infer<typeof insertBarFlagSchema>;
 export type BarFlag = typeof barFlags.$inferSelect;
 
+// ── Session Task Feedback (end-of-session modal; one row per task per session) ─
+
+export const sessionTaskFeedback = pgTable("session_task_feedback", {
+  id: serial("id").primaryKey(),
+  lessonDayId: integer("lesson_day_id").notNull().references(() => lessonDays.id, { onDelete: "cascade" }),
+  passageId: integer("passage_id").references(() => passages.id, { onDelete: "set null" }),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  comfort: text("comfort"),            // 'easier' | 'expected' | 'harder'
+  completion: text("completion"),      // 'done' | 'partial' | 'skipped'
+  flags: jsonb("flags").$type<string[]>(),  // ['needs-daily','ready-larger-chunk','transition-issue','memory-weak','tempo-weak']
+  minutesSpent: integer("minutes_spent"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSessionTaskFeedbackSchema = createInsertSchema(sessionTaskFeedback).omit({ id: true, createdAt: true });
+export type InsertSessionTaskFeedback = z.infer<typeof insertSessionTaskFeedbackSchema>;
+export type SessionTaskFeedback = typeof sessionTaskFeedback.$inferSelect;
+
 /** Aggregated flag data per measure across all lessons in a plan */
 export type BarFlagSummary = {
   measureId: number;
@@ -432,3 +495,160 @@ export const barAnnotations = pgTable("bar_annotations", {
 export const insertBarAnnotationSchema = createInsertSchema(barAnnotations).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertBarAnnotation = z.infer<typeof insertBarAnnotationSchema>;
 export type BarAnnotation = typeof barAnnotations.$inferSelect;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scheduler v2 — passage-state-machine model
+// ─────────────────────────────────────────────────────────────────────────────
+// A passage is a fine-grained unit of practice (typically 4–16 bars) that has
+// its own independent learning state (phase, maturity, spaced-repetition
+// parameters, outstanding challenges). Sessions are composed from the pool of
+// active passages based on their current state rather than marching all bars
+// through phases in lockstep.
+
+export const PASSAGE_KINDS = ["primary", "transition", "linking", "runthrough"] as const;
+export type PassageKind = (typeof PASSAGE_KINDS)[number];
+
+export const TASK_ROLES = [
+  "warmup",
+  "deep_work",
+  "new_material",
+  "consolidation",
+  "review",
+  "transition",
+  "runthrough",
+] as const;
+export type TaskRole = (typeof TASK_ROLES)[number];
+
+export const TASK_FOCUSES = [
+  "notes",
+  "rhythm",
+  "dynamics",
+  "articulation",
+  "fingering",
+  "memory",
+  "voicing",
+  "transitions",
+  "runthrough",
+  "tempo",
+] as const;
+export type TaskFocus = (typeof TASK_FOCUSES)[number];
+
+export const MODALITY_KINDS = [
+  "straight",
+  "slow",
+  "tempo_ramp",
+  "dotted",
+  "reverse_dotted",
+  "triplets",
+  "polyrhythm_3_2",
+  "polyrhythm_4_3",
+  "accent_shift",
+  "hands_separate_left",
+  "hands_separate_right",
+  "hands_together",
+  "mental",
+  "score_study",
+  "contrast_dynamics",
+  "articulation_drill",
+  "with_lead_in",
+  "with_tail",
+  "bridging",
+  "runthrough",
+] as const;
+export type ModalityKind = (typeof MODALITY_KINDS)[number];
+
+export const CHALLENGE_TAGS = [
+  "coordination",
+  "tempo",
+  "rhythm",
+  "dynamics",
+  "fingering",
+  "memory",
+  "voicing",
+  "endurance",
+  "leaps",
+  "polyphony",
+] as const;
+export type ChallengeTag = (typeof CHALLENGE_TAGS)[number];
+
+// Default review interval per phase (days) — used to seed FSRS stability when a
+// passage enters a phase and as a fallback when no review history exists.
+export const PHASE_REVIEW_INTERVAL_DAYS: Record<PhaseType, number> = {
+  decode: 1,
+  build: 2,
+  connect: 3,
+  shape: 5,
+  perform: 7,
+};
+
+// Initial FSRS stability (days) when a passage is first introduced.
+export const INITIAL_SR_STABILITY = 1.0;
+
+// Passage: a fine-grained practice unit within a plan. May be derived
+// automatically from a section (auto-subdivided by difficulty) or created
+// explicitly by the user. Each passage has its own state machine.
+export const passages = pgTable("passages", {
+  id: serial("id").primaryKey(),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id, { onDelete: "cascade" }),
+  sectionId: integer("section_id").references(() => planSections.id, { onDelete: "set null" }),
+  kind: text("kind").notNull().default("primary"), // one of PASSAGE_KINDS
+  label: text("label"), // optional display name, e.g. "Opening theme"
+  measureStart: integer("measure_start").notNull(),
+  measureEnd: integer("measure_end").notNull(),
+  /** Current estimated difficulty on a 1–10 scale (finer than section's 1–7).
+   * Updated over time based on observed struggle (flags, tempo achieved, user rating). */
+  difficulty: integer("difficulty").notNull().default(5),
+  /** Challenge profile — which dimensions make this passage hard. Drives modality selection. */
+  challenges: jsonb("challenges").$type<ChallengeTag[]>().default(sql`'[]'::jsonb`),
+  displayOrder: integer("display_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPassageSchema = createInsertSchema(passages).omit({ id: true, createdAt: true });
+export type InsertPassage = z.infer<typeof insertPassageSchema>;
+export type Passage = typeof passages.$inferSelect;
+
+// Per-passage learning state. One row per (passage, plan). Updated after every
+// session that touches the passage.
+export const passageProgress = pgTable("passage_progress", {
+  id: serial("id").primaryKey(),
+  passageId: integer("passage_id").notNull().references(() => passages.id, { onDelete: "cascade" }),
+  learningPlanId: integer("learning_plan_id").notNull().references(() => learningPlans.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  /** One of PHASE_TYPES. Starts at "orient", advances (or regresses) based on performance. */
+  currentPhase: text("current_phase").notNull().default("orient"),
+  /** ISO date "YYYY-MM-DD" when the passage entered its current phase. */
+  phaseStartedAt: text("phase_started_at"),
+  /** Number of sessions the passage has been touched while in the current phase. */
+  phaseTouchCount: integer("phase_touch_count").notNull().default(0),
+  /** Overall mastery estimate 0–1. Aggregates phase progress + flag rate + user ratings. */
+  maturity: integer("maturity").notNull().default(0), // stored as integer 0–100 (percent) for simplicity
+  /** FSRS-style stability: how many days can elapse before retention begins to degrade. */
+  srStability: integer("sr_stability").notNull().default(1), // days
+  /** FSRS-style inherent difficulty for this musician (1–10). Updates from user ratings + flags. */
+  srDifficulty: integer("sr_difficulty").notNull().default(5),
+  /** ISO date of most recent review (session that touched this passage). */
+  lastReviewedAt: text("last_reviewed_at"),
+  /** ISO date when the passage is next due for review (lastReviewedAt + srStability). */
+  nextDueAt: text("next_due_at"),
+  /** Total times the passage has been reviewed. */
+  reviewCount: integer("review_count").notNull().default(0),
+  /** Times the passage regressed a phase or had >threshold flags. */
+  lapseCount: integer("lapse_count").notNull().default(0),
+  /** Outstanding challenge tags — dynamically updated. Drives modality selection. */
+  outstandingChallenges: jsonb("outstanding_challenges").$type<ChallengeTag[]>().default(sql`'[]'::jsonb`),
+  /** Flag count from most recent session (for quick lookups). */
+  lastFlagCount: integer("last_flag_count").notNull().default(0),
+  /** ISO date when this passage was first introduced in the plan. */
+  introducedAt: text("introduced_at"),
+  /** ISO date when this passage reached full mastery and no longer needs active practice. */
+  retiredAt: text("retired_at"),
+  /** When true, this passage appears in every session until 3+ consecutive clean sessions
+   * AND maturity ≥ 80 auto-clears it. Set on regression (rating ≤ 2 or lapse). */
+  dailyMaintenanceFlag: boolean("daily_maintenance_flag").notNull().default(false),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [unique("passage_progress_unique").on(table.passageId, table.learningPlanId)]);
+
+export const insertPassageProgressSchema = createInsertSchema(passageProgress).omit({ id: true, updatedAt: true });
+export type InsertPassageProgress = z.infer<typeof insertPassageProgressSchema>;
+export type PassageProgress = typeof passageProgress.$inferSelect;

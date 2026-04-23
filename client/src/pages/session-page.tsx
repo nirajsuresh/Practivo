@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
+import { SessionFeedbackModal } from "@/components/session-feedback-modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft,
@@ -14,6 +15,7 @@ import {
   Music2,
   Play,
   Plus,
+  StickyNote,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,21 +24,9 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
 import { getPhaseColor } from "@/lib/palette";
-import { PHASE_LABELS, type PhaseType } from "@shared/schema";
+import { PHASE_LABELS, type PhaseType, type SessionSection, type SessionTask } from "@shared/schema";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-type SessionTask = { text: string; tag?: string };
-type SessionSection = {
-  type: string;
-  label: string;
-  durationMin?: number;
-  tasks: SessionTask[];
-  sectionId?: number;
-  phaseType?: string;
-  measureStart?: number;
-  measureEnd?: number;
-};
 
 type LessonDay = {
   id: number;
@@ -190,10 +180,12 @@ function ScoreStepView({
   getBarColor,
   barTooltip,
   onAddAnnotation,
+  annotations,
+  onAnnotationClick,
 }: {
-  bars: MeasureRow[];         // bars in this section's range (colored + interactive)
-  allBarsForIndex: MeasureRow[]; // same as bars; used for index lookup in FocusedBarViewer
-  contextBars: MeasureRow[];  // bars on same pages, outside section range (dimmed)
+  bars: MeasureRow[];
+  allBarsForIndex: MeasureRow[];
+  contextBars: MeasureRow[];
   sheetId: number | null;
   focusedBarIdx: number | null;
   onFocusBar: (idx: number | null) => void;
@@ -202,6 +194,8 @@ function ScoreStepView({
   getBarColor: BarColorFn;
   barTooltip: string | null;
   onAddAnnotation?: (measureStart: number, measureEnd: number) => void;
+  annotations?: BarAnnotation[];
+  onAnnotationClick?: (annotation: BarAnnotation) => void;
 }) {
   const pageUrl = useSheetPageUrl(sheetId);
   const [heightScale, setHeightScale] = useState(1);
@@ -261,6 +255,14 @@ function ScoreStepView({
     };
     window.addEventListener("touchmove", onMove, { passive: true });
     window.addEventListener("touchend", onUp);
+  }
+
+  // Build measure → annotation map for indicator display
+  const annotationByMeasure = new Map<number, BarAnnotation>();
+  for (const ann of (annotations ?? [])) {
+    for (let n = ann.measureStart; n <= ann.measureEnd; n++) {
+      annotationByMeasure.set(n, ann);
+    }
   }
 
   const useFullPageScore =
@@ -393,6 +395,17 @@ function ScoreStepView({
                                 <Plus className="w-3 h-3" />
                               </button>
                             )}
+                            {annotationByMeasure.has(bar.measureNumber) && !isSelectionEnd && (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => { e.stopPropagation(); onAnnotationClick?.(annotationByMeasure.get(bar.measureNumber)!); }}
+                                className="absolute bottom-0.5 left-0.5 w-4 h-4 flex items-center justify-center rounded pointer-events-auto z-20 bg-amber-400/90 text-white hover:bg-amber-500 transition-colors"
+                                title={`Note: ${annotationByMeasure.get(bar.measureNumber)!.text}`}
+                              >
+                                <StickyNote className="w-2.5 h-2.5" />
+                              </button>
+                            )}
                           </button>
                         </TooltipTrigger>
                         {barTooltip && (
@@ -511,6 +524,17 @@ function ScoreStepView({
                           title="Add note to selected bars"
                         >
                           <Plus className="w-3 h-3" />
+                        </button>
+                      )}
+                      {annotationByMeasure.has(bar.measureNumber) && !isSelectionEnd && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); onAnnotationClick?.(annotationByMeasure.get(bar.measureNumber)!); }}
+                          className="absolute bottom-0.5 left-0.5 w-4 h-4 flex items-center justify-center rounded pointer-events-auto z-20 bg-amber-400/90 text-white hover:bg-amber-500 transition-colors"
+                          title={`Note: ${annotationByMeasure.get(bar.measureNumber)!.text}`}
+                        >
+                          <StickyNote className="w-2.5 h-2.5" />
                         </button>
                       )}
                     </button>
@@ -782,6 +806,9 @@ export default function SessionPage() {
   const [stepElapsedSec, setStepElapsedSec] = useState(0);
   const [noteSheetOpen, setNoteSheetOpen] = useState(false);
 
+  // Feedback modal state
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+
   // Task check state: "sIdx:tIdx" → checked
   const [checkedTasks, setCheckedTasks] = useState<Set<string>>(new Set());
 
@@ -879,7 +906,10 @@ export default function SessionPage() {
   const currentSection = sections[currentStep] ?? null;
   const isLastStep = currentStep === sections.length - 1;
   const isScoreSection =
-    currentSection?.type === "piece_practice" || currentSection?.type === "sight_reading";
+    currentSection?.type === "piece_practice" ||
+    currentSection?.type === "sight_reading" ||
+    // v2 scheduler sections use phase names as type (decode/build/connect/shape/perform)
+    currentSection?.phaseType != null;
 
   // Effective phase type: lesson-level first, then fall back to piece_practice task phase
   const effectivePhaseType =
@@ -1042,7 +1072,8 @@ export default function SessionPage() {
       }
       queryClient.invalidateQueries({ queryKey: [`/api/lessons/${lessonId}/session`] });
       toast({ title: "Session complete", description: "Nice work — this day is marked complete." });
-      if (planId != null) navigate(`/plan/${planId}`);
+      // Show feedback modal before navigating away
+      setFeedbackModalOpen(true);
     },
     onError: () => {
       toast({ title: "Couldn't save", description: "Try again in a moment.", variant: "destructive" });
@@ -1248,10 +1279,20 @@ export default function SessionPage() {
                         </div>
                         <span className={cn("text-sm leading-snug flex-1", checked && "line-through text-muted-foreground")}>
                           {task.text}
+                          {task.rationale && (
+                            <span className="block text-xs text-muted-foreground/70 italic mt-0.5 font-normal">
+                              {task.rationale}
+                            </span>
+                          )}
                         </span>
                         {task.tag && (
                           <span className="shrink-0 text-xs text-muted-foreground/60 tabular-nums mt-[2px]">
                             {task.tag}
+                          </span>
+                        )}
+                        {task.durationMin != null && (
+                          <span className="shrink-0 text-xs text-muted-foreground/60 tabular-nums mt-[2px]">
+                            {task.durationMin}m
                           </span>
                         )}
                       </button>
@@ -1275,6 +1316,8 @@ export default function SessionPage() {
                     getBarColor={getBarColor}
                     barTooltip={barTooltip}
                     onAddAnnotation={(start, end) => setAnnotationTarget({ measureStart: start, measureEnd: end })}
+                    annotations={annotations}
+                    onAnnotationClick={(ann) => setAnnotationTarget({ measureStart: ann.measureStart, measureEnd: ann.measureEnd, existing: ann })}
                   />
                   <AnnotationPopover
                     open={annotationTarget !== null}
@@ -1378,6 +1421,22 @@ export default function SessionPage() {
               </div>{/* end max-w-lg */}
             </div>
           )}
+
+          {/* ── Session feedback modal ──────────────────────────────────── */}
+          <SessionFeedbackModal
+            open={feedbackModalOpen}
+            onClose={() => {
+              setFeedbackModalOpen(false);
+              // "Skip for now" — navigate away same as after submit
+              if (planId != null) navigate(`/plan/${planId}`);
+            }}
+            lessonDayId={bundle.lesson.id}
+            tasks={sections}
+            onSubmitted={() => {
+              setFeedbackModalOpen(false);
+              if (planId != null) navigate(`/plan/${planId}`);
+            }}
+          />
 
           {/* ── Bottom sheet: notes + flagged bars ─────────────────────── */}
           <div
