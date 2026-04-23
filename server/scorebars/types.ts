@@ -1,7 +1,7 @@
 /**
  * ScoreBars module types.
  *
- * This file has NO imports from the rest of the Reperto codebase.
+ * This file has NO imports from the rest of the Practivo codebase.
  * All types here are self-contained so the module can be extracted independently.
  */
 

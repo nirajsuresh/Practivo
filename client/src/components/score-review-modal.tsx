@@ -684,12 +684,12 @@ function PageViewer({
 
 // ─── Edit toolbar ─────────────────────────────────────────────────────────────
 
-const TOOLS: { id: Exclude<Tool, "barline-edit">; icon: React.ReactNode; label: string; hint: string }[] = [
+export const TOOLS: { id: Exclude<Tool, "barline-edit">; icon: React.ReactNode; label: string; hint: string }[] = [
   { id: "delete-system", icon: <Trash2 className="w-4 h-4" />,              label: "Delete system",  hint: "Click any bar in a row to remove the entire system." },
   { id: "draw-system",   icon: <RectangleHorizontal className="w-4 h-4" />, label: "Add system",     hint: "Drag a rectangle around a missed system to detect bars in it." },
 ];
 
-function EditToolbar({ activeTool, onTool }: { activeTool: Tool; onTool: (t: Tool) => void }) {
+export function EditToolbar({ activeTool, onTool }: { activeTool: Tool; onTool: (t: Tool) => void }) {
   return (
     <div className="flex items-center gap-1 px-4 py-1.5 border-b border-border bg-muted/40 shrink-0">
       <span className="text-xs text-muted-foreground mr-2 font-medium">Actions:</span>

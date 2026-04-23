@@ -14,23 +14,28 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   ChevronDown, ArrowLeft, CalendarDays, ArrowRight,
   Flag, Lightbulb, X, Check, Music2, HelpCircle,
+  Dumbbell, Shuffle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
 import { apiRequest } from "@/lib/queryClient";
+import { generateLessonsWithAutoExtend } from "@/lib/generate-lessons";
 import { getSectionColor, getPhaseColor, PHASE_COLORS } from "@/lib/palette";
 import { RecalibratePrompt } from "@/components/recalibrate-prompt";
 import { PHASE_TYPES, PHASE_LABELS, type PhaseType } from "@shared/schema";
 
 type LearningPlan = {
   id: number;
-  repertoireEntryId: number;
+  repertoireEntryId: number | null;
   sheetMusicId: number | null;
   movementId: number | null;
   dailyPracticeMinutes: number;
   targetCompletionDate: string | null;
   totalMeasures: number | null;
   status: string;
+  blockType?: string;
+  cadence?: string;
+  cadenceDays?: number[] | null;
 };
 
 type SessionTask = { text: string; tag?: string };
@@ -100,19 +105,32 @@ type MeasureRow = {
   imageUrl: string | null;
 };
 
+// ── Design tokens ─────────────────────────────────────────────────────────────
+const T = {
+  bg:     "#f5f1ea",
+  card:   "#ede8df",
+  border: "#ddd8cc",
+  navy:   "#0f2036",
+  gold:   "#c9a86a",
+  muted:  "#7a7166",
+} as const;
+
 // ── PhaseLegend ───────────────────────────────────────────────────────────────
 
 function PhaseLegend() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mt-4 rounded-xl border border-border bg-card overflow-hidden">
+    <div
+      className="mt-4 rounded-lg overflow-hidden"
+      style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between px-4 py-3 text-left"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {/* Mini swatches preview */}
           <div className="flex items-center gap-0.5">
             {PHASE_TYPES.map((pt) => (
@@ -123,32 +141,39 @@ function PhaseLegend() {
               />
             ))}
           </div>
-          <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
-            Phase legend
+          <span
+            className="text-[11px] font-bold uppercase tracking-[0.15em]"
+            style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+          >
+            Phase Legend
           </span>
         </div>
         <ChevronDown
           className={cn(
-            "w-4 h-4 text-muted-foreground transition-transform duration-200",
+            "w-4 h-4 transition-transform duration-200",
             open && "rotate-180",
           )}
+          style={{ color: T.muted }}
         />
       </button>
 
       {open && (
-        <div className="px-4 pb-4 border-t border-border/60 pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {PHASE_TYPES.map((pt, i) => {
+        <div
+          className="px-4 pb-4 pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2"
+          style={{ borderTop: `1px solid ${T.border}` }}
+        >
+          {PHASE_TYPES.map((pt) => {
             const color = PHASE_COLORS[pt];
             const info = PHASE_LABELS[pt];
             return (
               <div key={pt} className="flex items-start gap-2.5">
                 <div
                   className="mt-0.5 w-3 h-3 shrink-0 rounded-sm border-2"
-                  style={{ borderColor: color.border, backgroundColor: color.bg }}
+                  style={{ borderColor: color?.border ?? "#8A877F", backgroundColor: color?.bg ?? "transparent" }}
                 />
                 <div className="min-w-0">
-                  <span className="text-xs font-semibold text-foreground/90">{info.label}</span>
-                  <span className="text-[11px] text-muted-foreground/70 block leading-snug">{info.description}</span>
+                  <span className="text-xs font-semibold" style={{ color: T.navy }}>{info.label}</span>
+                  <span className="text-[11px] block leading-snug" style={{ color: T.muted }}>{info.description}</span>
                 </div>
               </div>
             );
@@ -193,7 +218,6 @@ function PlanScoreView({
   for (let n = lesson.measureStart; n <= lesson.measureEnd; n++) lessonMeasureSet.add(n);
 
   // Build a per-measure color map from individual piece_practice tasks.
-  // Each task covers a sub-range (parsed from label or explicit fields) with its own phase.
   const NEUTRAL = { border: "#8A877F", bg: "rgba(138,135,127,0.10)" };
 
   function parseLabelRange(label: string): { start: number; end: number } | null {
@@ -204,11 +228,7 @@ function PlanScoreView({
     return null;
   }
 
-  // measureColor: measureNumber → { border, bg }
   const measureColorMap = new Map<number, { border: string; bg: string }>();
-  // Include v1 "piece_practice" sections AND v2 phase-typed sections (type = phase name,
-  // e.g. "chunk"/"orient"). Exclude warmups. Any section with a phaseType or a bar range
-  // counts as practice for coloring purposes.
   const practiceTasks = lesson.tasks?.filter(
     (t) =>
       t.type !== "warmup" &&
@@ -232,7 +252,6 @@ function PlanScoreView({
     }
   }
 
-  // Fallback: if no task-level ranges resolved, color the whole lesson range uniformly
   if (measureColorMap.size === 0) {
     const effectivePhaseType =
       lesson.phaseType ??
@@ -242,17 +261,14 @@ function PlanScoreView({
     for (let n = lesson.measureStart; n <= lesson.measureEnd; n++) measureColorMap.set(n, fallback);
   }
 
-  // For the summary header: use the first practice task's phase
   const effectivePhaseType =
     lesson.phaseType ??
     lesson.tasks?.find((t) => t.type === "piece_practice" && t.phaseType)?.phaseType ??
     null;
 
-  // Summary line metadata
   const dateLabel = new Date(lesson.scheduledDate + "T12:00:00").toLocaleDateString("en-US", {
     month: "short", day: "numeric", year: "numeric",
   });
-  // lesson.sectionId may be null for older plans; fall back to task-level sectionId
   const effectiveSectionId =
     lesson.sectionId ??
     lesson.tasks?.find((t) => t.type === "piece_practice" && t.sectionId != null)?.sectionId ??
@@ -261,12 +277,26 @@ function PlanScoreView({
   const phaseInfo = effectivePhaseType ? PHASE_LABELS[effectivePhaseType as PhaseType] : null;
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}
+    >
       {/* Sticky header — slider + summary */}
-      <div className="sticky top-0 z-20 bg-card/95 backdrop-blur-sm px-5 pt-4 pb-3 border-b border-border/60 space-y-2.5">
+      <div
+        className="sticky top-0 z-20 backdrop-blur-sm px-5 pt-4 pb-3 space-y-2.5"
+        style={{ backgroundColor: T.card + "f5", borderBottom: `1px solid ${T.border}` }}
+      >
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Score</h2>
-          <span className="text-xs text-muted-foreground tabular-nums">
+          <h2
+            className="text-[11px] font-bold uppercase tracking-[0.15em]"
+            style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+          >
+            Score
+          </h2>
+          <span
+            className="text-xs tabular-nums"
+            style={{ color: T.muted, fontFamily: "JetBrains Mono, monospace" }}
+          >
             Day {selectedIdx + 1} of {sortedLessons.length}
           </span>
         </div>
@@ -279,17 +309,17 @@ function PlanScoreView({
           className="w-full"
         />
         <div className="flex items-center gap-1.5 text-xs flex-wrap">
-          <span className="font-medium text-foreground">{dateLabel}</span>
+          <span className="font-medium" style={{ color: T.navy }}>{dateLabel}</span>
           {sectionForLesson && (
-            <><span className="text-muted-foreground/40">·</span>
-            <span className="text-muted-foreground">{sectionForLesson.name}</span></>
+            <><span style={{ color: T.muted }}>·</span>
+            <span style={{ color: T.muted }}>{sectionForLesson.name}</span></>
           )}
           {phaseInfo && (
-            <><span className="text-muted-foreground/40">·</span>
-            <span className="font-medium text-foreground/70">{phaseInfo.label}</span></>
+            <><span style={{ color: T.muted }}>·</span>
+            <span className="font-medium" style={{ color: T.navy + "b0" }}>{phaseInfo.label}</span></>
           )}
-          <span className="text-muted-foreground/40">·</span>
-          <span className="font-mono text-muted-foreground">
+          <span style={{ color: T.muted }}>·</span>
+          <span style={{ color: T.muted, fontFamily: "JetBrains Mono, monospace" }}>
             m.{lesson.measureStart}–{lesson.measureEnd}
           </span>
         </div>
@@ -311,11 +341,14 @@ function PlanScoreView({
           return (
             <div
               key={pageNum}
-              className="relative rounded overflow-hidden border border-border/30 bg-neutral-50"
+              className="relative rounded overflow-hidden bg-neutral-50"
+              style={{ border: `1px solid ${T.border}` }}
             >
-              {/* Page label — first in each row only */}
               {isFirstInRow && (
-                <span className="absolute top-1 left-1 z-10 text-[9px] text-white/80 font-bold bg-black/35 rounded px-1 py-0.5 leading-none select-none">
+                <span
+                  className="absolute top-1 left-1 z-10 text-[9px] font-bold rounded px-1 py-0.5 leading-none select-none"
+                  style={{ color: "rgba(255,255,255,0.9)", backgroundColor: "rgba(15,32,54,0.55)" }}
+                >
                   p.{pageNum}
                 </span>
               )}
@@ -327,7 +360,6 @@ function PlanScoreView({
                 loading="lazy"
               />
 
-              {/* Context bars — very faint dim, no interaction */}
               {contextBars.map((m) => (
                 <div
                   key={m.id}
@@ -343,10 +375,8 @@ function PlanScoreView({
                 />
               ))}
 
-              {/* Lesson bars — colored per task phase + tooltip */}
               {lessonBars.map((m) => {
                 const barColor = measureColorMap.get(m.measureNumber) ?? NEUTRAL;
-                // Find which task this bar belongs to for the tooltip
                 const ownerTask = practiceTasks.find((t) => {
                   const range =
                     t.measureStart != null && t.measureEnd != null
@@ -373,7 +403,7 @@ function PlanScoreView({
                       />
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs max-w-[220px]">
-                      <p className="font-mono text-muted-foreground">m.{m.measureNumber}</p>
+                      <p className="font-mono" style={{ color: T.muted }}>m.{m.measureNumber}</p>
                       {barPhaseInfo && <p>{barPhaseInfo.label} — {barPhaseInfo.description}</p>}
                     </TooltipContent>
                   </Tooltip>
@@ -386,6 +416,117 @@ function PlanScoreView({
     </div>
   );
 }
+
+// ── MovementMap ───────────────────────────────────────────────────────────────
+
+function MovementMap({ lessons }: { lessons: LessonDay[] }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const sorted = [...lessons].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate));
+  const completedCount = sorted.filter((l) => l.status === "completed").length;
+  const totalCount = sorted.length;
+
+  if (totalCount === 0) return null;
+
+  return (
+    <div
+      className="rounded-lg p-4 sticky top-4"
+      style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}
+    >
+      {/* Title */}
+      <p
+        className="text-[11px] font-bold uppercase tracking-[0.15em] mb-1"
+        style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+      >
+        Movement Map
+      </p>
+      <p className="text-xs mb-4" style={{ color: T.muted }}>
+        {completedCount} of {totalCount} sessions complete
+      </p>
+
+      {/* Calendar grid — 6 columns */}
+      <div className="grid gap-1.5" style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+        {sorted.map((lesson, i) => {
+          const isCompleted = lesson.status === "completed";
+          const isToday = lesson.scheduledDate === todayIso;
+
+          let cellStyle: React.CSSProperties = {
+            width: "100%",
+            aspectRatio: "1",
+            borderRadius: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            fontFamily: "JetBrains Mono, monospace",
+            cursor: "default",
+            transition: "opacity 0.15s",
+          };
+
+          if (isCompleted) {
+            cellStyle = {
+              ...cellStyle,
+              backgroundColor: T.navy,
+              color: T.bg,
+              border: "none",
+            };
+          } else if (isToday) {
+            cellStyle = {
+              ...cellStyle,
+              backgroundColor: "transparent",
+              color: T.navy,
+              border: `2px solid ${T.gold}`,
+              fontWeight: 600,
+            };
+          } else {
+            cellStyle = {
+              ...cellStyle,
+              backgroundColor: T.bg,
+              color: T.muted,
+              border: `1px solid ${T.border}`,
+            };
+          }
+
+          return (
+            <Tooltip key={lesson.id}>
+              <TooltipTrigger asChild>
+                <Link href={`/session/${lesson.id}`}>
+                  <div style={cellStyle}>
+                    {i + 1}
+                  </div>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <p className="font-mono">Day {i + 1}</p>
+                <p style={{ color: T.muted }}>
+                  {new Date(lesson.scheduledDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                </p>
+                <p style={{ color: T.muted, textTransform: "capitalize" }}>{lesson.status}</p>
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: T.navy }} />
+          <span className="text-[10px]" style={{ color: T.muted }}>Completed</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm border-2" style={{ borderColor: T.gold, backgroundColor: "transparent" }} />
+          <span className="text-[10px]" style={{ color: T.muted }}>Today</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm border" style={{ backgroundColor: T.bg, borderColor: T.border }} />
+          <span className="text-[10px]" style={{ color: T.muted }}>Upcoming</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── RegeneratePaceDialog ──────────────────────────────────────────────────────
 
 type Tempo = "slow" | "medium" | "fast" | "aggressive";
 const TEMPO_DAYS_PER_PAGE: Record<Tempo, number> = { slow: 14, medium: 7, fast: 4, aggressive: 2 };
@@ -436,13 +577,20 @@ function RegeneratePaceDialog({
         dailyPracticeMinutes: dailyMinutes,
         targetCompletionDate: targetDate,
       });
-      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons?v=2`, { schedulerVersion: 2 });
+      return generateLessonsWithAutoExtend(planId);
     },
-    onSuccess: () => {
+    onSuccess: (extended) => {
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/lessons`] });
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/sections`] });
-      toast({ title: "Plan regenerated", description: "Your schedule has been updated." });
+      if (extended.extendedDays) {
+        toast({
+          title: "Plan regenerated — deadline extended",
+          description: `Needed ${extended.extendedDays} days. Target moved to ${extended.newTargetDate}.`,
+        });
+      } else {
+        toast({ title: "Plan regenerated", description: "Your schedule has been updated." });
+      }
       onOpenChange(false);
     },
     onError: () => toast({ title: "Couldn't regenerate plan", variant: "destructive" }),
@@ -531,6 +679,182 @@ function RegeneratePaceDialog({
   );
 }
 
+// ── StubBlockPlanView — simplified detail page for Exercise / Sight-reading ──
+
+const CADENCE_LABELS_MAP: Record<string, string> = {
+  daily: "Daily", weekdays: "Weekdays", weekends: "Weekends", custom: "Custom",
+};
+
+function StubBlockPlanView({ plan, planId }: { plan: LearningPlan; planId: number }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const isExercise = plan.blockType === "exercise";
+  const blockName = isExercise ? "Exercises" : "Sight-reading";
+  const Icon = isExercise ? Dumbbell : Shuffle;
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [minutes, setMinutes] = useState(plan.dailyPracticeMinutes);
+  const [cadence, setCadence] = useState<string>(plan.cadence ?? "daily");
+  const [customDays, setCustomDays] = useState<number[]>(
+    Array.isArray(plan.cadenceDays) ? plan.cadenceDays : [1, 2, 3, 4, 5],
+  );
+
+  const toggleDay = (dow: number) =>
+    setCustomDays((prev) => prev.includes(dow) ? prev.filter((d) => d !== dow) : [...prev, dow].sort());
+
+  const updateCadence = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/learning-plans/${planId}/cadence`, {
+        cadence,
+        cadenceDays: cadence === "custom" ? customDays : undefined,
+        dailyPracticeMinutes: minutes,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/blocks"] });
+      toast({ title: "Settings updated" });
+      setEditOpen(false);
+    },
+    onError: () => toast({ title: "Couldn't update settings", variant: "destructive" }),
+  });
+
+  const WEEKDAYS = [
+    { label: "Su", dow: 0 }, { label: "Mo", dow: 1 }, { label: "Tu", dow: 2 },
+    { label: "We", dow: 3 }, { label: "Th", dow: 4 }, { label: "Fr", dow: 5 },
+    { label: "Sa", dow: 6 },
+  ];
+
+  return (
+    <Layout>
+      <div style={{ backgroundColor: T.bg, minHeight: "100vh" }}>
+        {/* Header */}
+        <div style={{ backgroundColor: T.bg, borderBottom: `1px solid ${T.border}`, padding: "24px 32px" }}>
+          <div className="mb-4">
+            <Button variant="ghost" size="sm" className="gap-1 -ml-2 hover:bg-black/8" style={{ color: T.muted }} asChild>
+              <Link href="/home"><ArrowLeft className="w-4 h-4" /> Back</Link>
+            </Button>
+          </div>
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div style={{
+                width: 44, height: 44, borderRadius: 10,
+                background: T.card, display: "flex", alignItems: "center", justifyContent: "center",
+                color: T.gold, border: `1px solid ${T.border}`,
+              }}>
+                <Icon size={20} />
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.15em] mb-0.5" style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}>
+                  Learning block
+                </p>
+                <h1 style={{ fontFamily: "Cormorant Garamond, Georgia, serif", fontSize: 32, fontWeight: 400, color: T.navy }}>
+                  {blockName}
+                </h1>
+              </div>
+            </div>
+            <Button size="sm" style={{ backgroundColor: T.navy, color: T.bg }} onClick={() => setEditOpen(true)}>
+              Settings
+            </Button>
+          </div>
+          <p className="mt-3" style={{ fontSize: 12, color: T.muted, fontFamily: "JetBrains Mono, monospace" }}>
+            {plan.dailyPracticeMinutes} min/day · {CADENCE_LABELS_MAP[plan.cadence ?? "daily"] ?? plan.cadence}
+          </p>
+        </div>
+
+        {/* Placeholder content */}
+        <div style={{ padding: "24px 32px", maxWidth: 720 }}>
+          <div style={{
+            background: T.card, border: `1px dashed ${T.border}`,
+            borderRadius: 12, padding: "32px 28px", textAlign: "center", color: T.muted,
+          }}>
+            <Icon size={28} style={{ margin: "0 auto 12px", opacity: 0.4 }} />
+            <p style={{ fontFamily: "Cormorant Garamond, serif", fontSize: 18, fontStyle: "italic", marginBottom: 6 }}>
+              {isExercise ? "Hanon exercises, scales, arpeggios" : "Random sight-reading material"}
+            </p>
+            <p style={{ fontSize: 12 }}>
+              Content for this block type is coming soon.
+              Your {blockName.toLowerCase()} session is included in Today's Practice.
+            </p>
+          </div>
+        </div>
+
+        {/* Settings dialog */}
+        <Dialog open={editOpen} onOpenChange={setEditOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Block settings</DialogTitle>
+            </DialogHeader>
+            <div style={{ display: "flex", flexDirection: "column", gap: 20, padding: "8px 0" }}>
+              <div>
+                <Label style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>
+                  Daily time ({minutes} min)
+                </Label>
+                <div className="mt-2">
+                  <Slider min={5} max={60} step={5} value={[minutes]} onValueChange={([v]) => setMinutes(v)} />
+                </div>
+              </div>
+              <div>
+                <Label style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", color: T.muted }}>Schedule</Label>
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  {(["daily", "weekdays", "weekends", "custom"] as const).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCadence(c)}
+                      style={{
+                        padding: "5px 14px", borderRadius: 20,
+                        border: `1px solid ${cadence === c ? T.navy : T.border}`,
+                        background: cadence === c ? T.navy : "transparent",
+                        color: cadence === c ? "#fff" : T.muted,
+                        fontSize: 12, fontWeight: 500, cursor: "pointer",
+                      }}
+                    >
+                      {CADENCE_LABELS_MAP[c]}
+                    </button>
+                  ))}
+                </div>
+                {cadence === "custom" && (
+                  <div className="flex gap-1.5 mt-2">
+                    {WEEKDAYS.map(({ label, dow }) => {
+                      const active = customDays.includes(dow);
+                      return (
+                        <button
+                          key={dow}
+                          type="button"
+                          onClick={() => toggleDay(dow)}
+                          style={{
+                            width: 34, height: 34, borderRadius: 7,
+                            border: `1px solid ${active ? T.gold : T.border}`,
+                            background: active ? T.gold : "transparent",
+                            color: active ? T.navy : T.muted,
+                            fontSize: 11, fontWeight: 600, cursor: "pointer",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button
+                onClick={() => updateCadence.mutate()}
+                disabled={updateCadence.isPending || (cadence === "custom" && customDays.length === 0)}
+                style={{ backgroundColor: T.navy, color: T.bg }}
+              >
+                {updateCadence.isPending ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </Layout>
+  );
+}
+
 export default function PlanPage() {
   const params = useParams<{ planId: string }>();
   const planId = parseInt(params.planId ?? "", 10);
@@ -584,7 +908,7 @@ export default function PlanPage() {
   const [showAllCompleted, setShowAllCompleted] = useState(false);
   const [paceDialogOpen, setPaceDialogOpen] = useState(false);
   const [recalibrateDismissed, setRecalibrateDismissed] = useState(
-    () => !!localStorage.getItem(`reperto_recalibrate_dismissed_${planId}`),
+    () => !!localStorage.getItem(`practivo_recalibrate_dismissed_${planId}`),
   );
   const showRecalibratePrompt = useMemo(() => {
     if (recalibrateDismissed || !plan || sections.length === 0) return false;
@@ -609,25 +933,29 @@ export default function PlanPage() {
         <div className="container max-w-3xl mx-auto px-4 py-12">
           <p className="text-muted-foreground">Invalid plan.</p>
           <Button variant="link" asChild className="mt-2 px-0">
-            <Link href="/profile">Back to profile</Link>
+            <Link href="/home">Back to home</Link>
           </Button>
         </div>
       </Layout>
     );
   }
 
+  // Non-piece blocks get a simplified view
+  if (plan && plan.blockType && plan.blockType !== "piece") {
+    return <StubBlockPlanView plan={plan} planId={planId} />;
+  }
+
   const sortedLessons = [...lessons].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate));
   const nextLesson = sortedLessons.find((l) => l.status !== "completed");
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  // ── Three time-state buckets for the 3-column layout ──────────────────────
   const completedLessons = sortedLessons.filter((l) => l.status === "completed");
   const futureLessons = sortedLessons.filter(
     (l) => l.status !== "completed" && l.id !== nextLesson?.id,
   );
   const visibleCompleted = showAllCompleted
     ? completedLessons
-    : completedLessons.slice(-5); // most recent 5
+    : completedLessons.slice(-5);
 
   const showMissing = !planLoading && (planError || plan === null);
 
@@ -646,34 +974,64 @@ export default function PlanPage() {
       <Collapsible
         key={lesson.id}
         defaultOpen={isNext}
-        className={cn(
-          "rounded-lg border bg-card overflow-hidden",
-          isDone && "border-l-2 border-l-[#729E8F]",
-          isNext && !isDone && "border-l-2 border-l-[#C8B388]",
-          !isDone && !isNext && variant === "future" && "border-l-2 border-l-sky-300",
-          !isDone && !isNext && variant !== "future" && "opacity-70",
-        )}
+        className="rounded-lg overflow-hidden"
+        style={{
+          backgroundColor: T.bg,
+          border: `1px solid ${T.border}`,
+          borderLeft: isDone
+            ? `3px solid ${T.navy}`
+            : isNext
+            ? `3px solid ${T.gold}`
+            : variant === "future"
+            ? `3px solid ${T.border}`
+            : `1px solid ${T.border}`,
+        }}
       >
         <div className="flex items-stretch gap-2 sm:gap-3 p-2 sm:p-3">
-          <CollapsibleTrigger className="flex flex-1 min-w-0 items-center justify-between gap-3 px-2 sm:px-3 py-2 text-left hover:bg-muted/40 rounded-lg transition-colors [&[data-state=open]>svg:first-of-type]:rotate-180">
+          <CollapsibleTrigger className="flex flex-1 min-w-0 items-center justify-between gap-3 px-2 sm:px-3 py-2 text-left rounded-lg transition-colors hover:bg-black/5 [&[data-state=open]>svg:first-of-type]:rotate-180">
             <div className="flex items-center gap-2 min-w-0">
-              <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground transition-transform" />
+              <ChevronDown className="w-4 h-4 shrink-0 transition-transform" style={{ color: T.muted }} />
               <div className="min-w-0">
-                <p className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
-                  Day {idx + 1}
+                <p className="font-medium text-sm flex items-center gap-1.5 flex-wrap" style={{ color: T.navy }}>
+                  {/* Day number badge */}
+                  <span
+                    className="inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[8px] font-bold tabular-nums shrink-0"
+                    style={{
+                      backgroundColor: T.navy,
+                      color: T.bg,
+                      fontFamily: "JetBrains Mono, monospace",
+                      minWidth: 22,
+                    }}
+                  >
+                    {idx + 1}
+                  </span>
                   {isDone && (
-                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#729E8F]/12 text-[#3d7065] border border-[#729E8F]/35">
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: `${T.navy}18`,
+                        color: T.navy,
+                        border: `1px solid ${T.navy}35`,
+                      }}
+                    >
                       Done
                     </span>
                   )}
                   {isNext && !isDone && (
-                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-[#DCCAA6]/35 text-[#6b5732] border border-[#C8B388]/50">
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                      style={{
+                        backgroundColor: `${T.gold}30`,
+                        color: "#6b4f1a",
+                        border: `1px solid ${T.gold}60`,
+                      }}
+                    >
                       {isToday ? "Today" : "Next"}
                     </span>
                   )}
-                  <span className="text-muted-foreground font-normal">&middot; {label}</span>
+                  <span style={{ color: T.muted, fontWeight: 400 }}>&middot; {label}</span>
                 </p>
-                <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                <p className="text-xs truncate flex items-center gap-1 mt-0.5" style={{ color: T.muted }}>
                   {(() => {
                     const allTasks = lesson.tasks ?? [];
                     const phaseBlocks = allTasks.filter((t) => t.phaseType);
@@ -708,9 +1066,11 @@ export default function PlanPage() {
             size="lg"
             className={cn(
               "shrink-0 gap-2 px-4 sm:px-5 font-semibold",
-              isDone && "shadow-none bg-muted text-muted-foreground hover:bg-muted",
-              isNext && !isDone && "shadow-md",
+              isDone && "shadow-none",
             )}
+            style={isDone
+              ? { backgroundColor: T.card, color: T.muted, border: `1px solid ${T.border}` }
+              : { backgroundColor: T.navy, color: T.bg }}
             asChild
           >
             <Link href={`/session/${lesson.id}`} title="Open practice session for this day">
@@ -721,7 +1081,7 @@ export default function PlanPage() {
         </div>
 
         <CollapsibleContent>
-          <div className="border-t border-border/60">
+          <div style={{ borderTop: `1px solid ${T.border}` }}>
             {/* Structured session sections */}
             {lesson.tasks && lesson.tasks.length > 0 ? (
               lesson.tasks.map((section, sIdx) => {
@@ -731,13 +1091,32 @@ export default function PlanPage() {
                 return (
                 <div
                   key={`${section.type}-${sIdx}`}
-                  className={cn(sIdx > 0 && "border-t border-border/40")}
-                  style={taskColor ? { borderLeft: `3px solid ${taskColor.border}`, backgroundColor: taskColor.bg } : undefined}
+                  className={cn(sIdx > 0 && "border-t")}
+                  style={{
+                    borderTopColor: sIdx > 0 ? T.border : undefined,
+                    borderLeft: taskColor ? `3px solid ${taskColor.border}` : undefined,
+                    backgroundColor: taskColor ? taskColor.bg : undefined,
+                  }}
                 >
                   <div className="px-4 pt-3 pb-1 flex items-baseline gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{section.label}</p>
+                    <p
+                      className="text-[10px] font-bold uppercase tracking-[0.15em]"
+                      style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+                    >
+                      {section.label}
+                    </p>
                     {section.durationMin && (
-                      <span className="text-[10px] text-muted-foreground/60">{section.durationMin} min</span>
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+                        style={{
+                          backgroundColor: `${T.gold}25`,
+                          color: "#6b4f1a",
+                          border: `1px solid ${T.gold}50`,
+                          fontFamily: "JetBrains Mono, monospace",
+                        }}
+                      >
+                        {section.durationMin} min
+                      </span>
                     )}
                     {section.phaseType && PHASE_LABELS[section.phaseType as PhaseType] && (
                       <span
@@ -753,22 +1132,26 @@ export default function PlanPage() {
                   <div className="px-4 pb-3 space-y-1.5">
                     {section.tasks.map((task, tIdx) => (
                       <div key={tIdx} className="flex items-start gap-2.5">
-                        <div className={cn(
-                          "mt-[3px] w-3.5 h-3.5 shrink-0 rounded-sm border flex items-center justify-center",
-                          isDone ? "border-[#729E8F] bg-[#729E8F]/15" : "border-border bg-transparent",
-                        )}>
+                        <div
+                          className="mt-[3px] w-3.5 h-3.5 shrink-0 rounded-sm border flex items-center justify-center"
+                          style={isDone
+                            ? { borderColor: T.navy, backgroundColor: `${T.navy}20` }
+                            : { borderColor: T.border, backgroundColor: "transparent" }}
+                        >
                           {isDone && (
                             <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-                              <path d="M1.5 4L3 5.5L6.5 2" stroke="#729E8F" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                              <path d="M1.5 4L3 5.5L6.5 2" stroke={T.navy} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
                             </svg>
                           )}
                         </div>
-                        <span className={cn(
-                          "text-xs leading-snug",
-                          isDone ? "text-muted-foreground line-through" : "text-foreground/85",
-                        )}>{task.text}</span>
+                        <span
+                          className={cn("text-xs leading-snug", isDone && "line-through")}
+                          style={{ color: isDone ? T.muted : T.navy + "d9" }}
+                        >
+                          {task.text}
+                        </span>
                         {task.tag && (
-                          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/60 italic">{task.tag}</span>
+                          <span className="ml-auto shrink-0 text-[10px] italic" style={{ color: T.muted }}>{task.tag}</span>
                         )}
                       </div>
                     ))}
@@ -779,23 +1162,34 @@ export default function PlanPage() {
             ) : (
               <>
                 <div className="px-4 pt-3 pb-1">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Warmup</p>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-[0.15em]"
+                    style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+                  >
+                    Warmup
+                  </p>
                 </div>
                 <div className="px-4 pb-2">
-                  <p className="text-xs text-muted-foreground italic">Scales, arpeggios, or exercises of your choice</p>
+                  <p className="text-xs italic" style={{ color: T.muted }}>Scales, arpeggios, or exercises of your choice</p>
                 </div>
-                <div className="px-4 pt-2 pb-1 border-t border-border/40">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Piece Practice</p>
+                <div className="px-4 pt-2 pb-1" style={{ borderTop: `1px solid ${T.border}` }}>
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-[0.15em]"
+                    style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+                  >
+                    Piece Practice
+                  </p>
                 </div>
                 <div className="px-4 pb-3 pt-1">
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs" style={{ color: T.muted }}>
                     m.{lesson.measureStart}–{lesson.measureEnd}
                     {sheetId != null && (
                       <a
                         href={`/score/${sheetId}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="ml-2 underline underline-offset-2 hover:text-foreground"
+                        className="ml-2 underline underline-offset-2"
+                        style={{ color: T.gold }}
                       >
                         view score ↗
                       </a>
@@ -806,8 +1200,14 @@ export default function PlanPage() {
             )}
 
             {isDone && (
-              <div className="mx-4 mb-4 rounded-md border border-[#729E8F]/35 bg-[#729E8F]/8 px-3 py-2.5 flex flex-wrap items-center gap-2">
-                <p className="text-xs text-[#3d7065] font-medium flex-1 min-w-0">
+              <div
+                className="mx-4 mb-4 rounded-md px-3 py-2.5 flex flex-wrap items-center gap-2"
+                style={{
+                  border: `1px solid ${T.navy}35`,
+                  backgroundColor: `${T.navy}0a`,
+                }}
+              >
+                <p className="text-xs font-medium flex-1 min-w-0" style={{ color: T.navy }}>
                   &#10003; Completed{lesson.completedAt
                     ? " " + new Date(lesson.completedAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
                       + " at " + new Date(lesson.completedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
@@ -822,9 +1222,17 @@ export default function PlanPage() {
               </div>
             )}
             {isDone && lesson.userNotes && (
-              <div className="mx-4 mb-4 rounded-md border border-border bg-background/50 px-3 py-2.5">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Session notes</p>
-                <p className="text-xs text-muted-foreground italic leading-relaxed line-clamp-3">{lesson.userNotes}</p>
+              <div
+                className="mx-4 mb-4 rounded-md px-3 py-2.5"
+                style={{ border: `1px solid ${T.border}`, backgroundColor: T.bg }}
+              >
+                <p
+                  className="text-[10px] font-bold uppercase tracking-[0.15em] mb-1"
+                  style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+                >
+                  Session notes
+                </p>
+                <p className="text-xs italic leading-relaxed line-clamp-3" style={{ color: T.muted }}>{lesson.userNotes}</p>
               </div>
             )}
           </div>
@@ -835,98 +1243,174 @@ export default function PlanPage() {
 
   return (
     <Layout>
-      <div className="container max-w-7xl mx-auto px-4 py-8 pb-20">
-        <Button variant="ghost" size="sm" className="mb-6 gap-1 -ml-2" asChild>
-          <Link href="/profile">
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Link>
-        </Button>
+      {/* ── Page wrapper ──────────────────────────────────────────────────── */}
+      <div style={{ backgroundColor: T.bg, minHeight: "100vh" }}>
 
-        {showMissing && (
-          <div className="mb-8 rounded-lg border border-border bg-card p-6">
-            <p className="text-muted-foreground">We couldn&apos;t load this plan.</p>
-            <Button variant="link" asChild className="mt-2 px-0">
-              <Link href="/profile">Back to profile</Link>
+        {/* ── Navy Header ───────────────────────────────────────────────── */}
+        <div
+          style={{
+            backgroundColor: T.bg,
+            borderBottom: `1px solid ${T.border}`,
+            padding: "24px 32px",
+          }}
+        >
+          {/* Back button row */}
+          <div className="mb-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 -ml-2 hover:bg-black/8"
+              style={{ color: T.muted }}
+              asChild
+            >
+              <Link href="/home">
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Link>
             </Button>
           </div>
-        )}
 
-        {planLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-8 w-2/3" />
-            <Skeleton className="h-4 w-1/2" />
-          </div>
-        ) : plan ? (
-          <>
-            <div className="flex items-start justify-between gap-3">
-              <h1 className="font-serif text-2xl font-semibold tracking-tight">Learning plan</h1>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => setPaceDialogOpen(true)}
+          {showMissing && (
+            <div
+              className="mb-6 rounded-lg p-6"
+              style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}
+            >
+              <p style={{ color: T.muted }}>We couldn&apos;t load this plan.</p>
+              <Button variant="link" asChild className="mt-2 px-0">
+                <Link href="/home">Back to home</Link>
+              </Button>
+            </div>
+          )}
+
+          {planLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-5 w-32" />
+              <Skeleton className="h-9 w-2/3" />
+              <Skeleton className="h-4 w-1/3" />
+            </div>
+          ) : plan ? (
+            <div className="flex items-end justify-between gap-4 flex-wrap">
+              {/* Left: titles */}
+              <div>
+                {/* Composer eyebrow — placeholder since plan doesn't carry composer name directly */}
+                <p
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] mb-1"
+                  style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
                 >
-                  Adjust pace
-                </Button>
+                  Learning Plan
+                </p>
+                {/* Piece title */}
+                <h1
+                  className="font-serif leading-tight"
+                  style={{
+                    fontSize: 36,
+                    fontWeight: 400,
+                    color: T.navy,
+                    fontFamily: "Cormorant Garamond, Georgia, serif",
+                  }}
+                >
+                  My Plan
+                </h1>
+                {/* Sub-row */}
+                <p
+                  className="mt-1"
+                  style={{
+                    fontSize: 12,
+                    color: T.muted,
+                    fontFamily: "JetBrains Mono, monospace",
+                  }}
+                >
+                  {plan.totalMeasures ?? "—"} measures · {plan.dailyPracticeMinutes} min/day
+                  {plan.targetCompletionDate && (
+                    <span>
+                      {" "}· Target{" "}
+                      {new Date(plan.targetCompletionDate).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Right: actions */}
+              <div className="flex items-center gap-2 shrink-0">
                 {sheetId != null && (
                   <a
                     href={`/score/${sheetId}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="shrink-0 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors rounded-md border border-border/60 px-2.5 py-1.5 bg-card"
+                    className="inline-flex items-center gap-1.5 text-sm rounded-md px-2.5 py-1.5 transition-colors hover:opacity-80"
+                    style={{
+                      color: T.muted,
+                      border: `1px solid ${T.border}`,
+                      backgroundColor: T.card,
+                    }}
                   >
                     <Music2 className="w-3.5 h-3.5" />
                     Full score
                   </a>
                 )}
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  style={{ backgroundColor: T.navy, color: T.bg }}
+                  onClick={() => setPaceDialogOpen(true)}
+                >
+                  Regenerate
+                </Button>
               </div>
             </div>
-            <RegeneratePaceDialog
-              open={paceDialogOpen}
-              onOpenChange={setPaceDialogOpen}
-              planId={plan.id}
-              sheetMusicId={plan.sheetMusicId}
-              movementId={plan.movementId}
-              initialDailyMinutes={plan.dailyPracticeMinutes}
-            />
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-              {plan.targetCompletionDate && (
-                <span className="inline-flex items-center gap-1">
-                  <CalendarDays className="w-3.5 h-3.5" />
-                  Target {new Date(plan.targetCompletionDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                </span>
-              )}
-              <span>{plan.dailyPracticeMinutes} min/day</span>
-              {plan.totalMeasures != null && <span>{plan.totalMeasures} bars</span>}
-            </div>
-          </>
-        ) : null}
+          ) : null}
+        </div>
+
+        {plan && (
+          <RegeneratePaceDialog
+            open={paceDialogOpen}
+            onOpenChange={setPaceDialogOpen}
+            planId={plan.id}
+            sheetMusicId={plan.sheetMusicId}
+            movementId={plan.movementId}
+            initialDailyMinutes={plan.dailyPracticeMinutes}
+          />
+        )}
 
         {/* ── Suggestions banner ─────────────────────────────────────────── */}
         {suggestions.length > 0 && (
-          <div className="mt-8 space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-1.5">
-              <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+          <div className="px-8 pt-6 space-y-2">
+            <h2
+              className="text-[11px] font-bold uppercase tracking-[0.15em] mb-3 flex items-center gap-1.5"
+              style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+            >
+              <Lightbulb className="w-3.5 h-3.5" style={{ color: T.gold }} />
               Suggestions
             </h2>
             {suggestions.map((s) => (
-              <div key={s.id} className="rounded-xl border border-amber-200 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20 p-4 flex gap-3">
-                <Lightbulb className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                <p className="text-sm flex-1 text-foreground/80">{s.payload.message}</p>
+              <div
+                key={s.id}
+                className="rounded-xl p-4 flex gap-3"
+                style={{
+                  border: `1px solid ${T.gold}50`,
+                  backgroundColor: `${T.gold}12`,
+                }}
+              >
+                <Lightbulb className="w-4 h-4 shrink-0 mt-0.5" style={{ color: T.gold }} />
+                <p className="text-sm flex-1" style={{ color: T.navy + "cc" }}>{s.payload.message}</p>
                 <div className="flex gap-1.5 shrink-0">
                   <button
                     onClick={() => acceptSuggestion.mutate(s.id)}
-                    className="p-1 rounded hover:bg-green-100 dark:hover:bg-green-900/30 text-green-600 transition-colors"
+                    className="p-1 rounded transition-colors hover:bg-green-100"
                     title="Accept suggestion"
+                    style={{ color: "#4a7c59" }}
                   >
                     <Check className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => dismissSuggestion.mutate(s.id)}
-                    className="p-1 rounded hover:bg-muted text-muted-foreground transition-colors"
+                    className="p-1 rounded transition-colors hover:bg-black/10"
                     title="Dismiss"
+                    style={{ color: T.muted }}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -938,56 +1422,87 @@ export default function PlanPage() {
 
         {/* ── Recalibrate prompt ─────────────────────────────────────────── */}
         {showRecalibratePrompt && (
-          <RecalibratePrompt
-            planId={planId}
-            sections={sections}
-            onDismiss={() => {
-              localStorage.setItem(`reperto_recalibrate_dismissed_${planId}`, "1");
-              setRecalibrateDismissed(true);
-            }}
-          />
+          <div className="px-8 pt-4">
+            <RecalibratePrompt
+              planId={planId}
+              sections={sections}
+              onDismiss={() => {
+                localStorage.setItem(`practivo_recalibrate_dismissed_${planId}`, "1");
+                setRecalibrateDismissed(true);
+              }}
+            />
+          </div>
         )}
 
         {/* ── Trouble spots card ─────────────────────────────────────────── */}
         {flagSummary.length > 0 && (
-          <Collapsible className="mt-6">
-            <CollapsibleTrigger className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground w-full hover:text-foreground transition-colors [&[data-state=open]>svg:last-child]:rotate-180">
-              <Flag className="w-3.5 h-3.5 text-amber-500" />
-              Trouble spots ({flagSummary.filter((f) => f.resolvedCount < f.flagCount).length})
-              <ChevronDown className="w-3.5 h-3.5 ml-auto transition-transform" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {flagSummary.map((f) => {
-                  const unresolved = f.flagCount - f.resolvedCount;
-                  return (
-                    <div key={f.measureId} className={cn("relative rounded-md border overflow-hidden", unresolved > 0 ? "border-amber-300" : "border-border opacity-50")}>
-                      {f.imageUrl ? (
-                        <img src={f.imageUrl} alt={`Bar ${f.measureNumber}`} className="w-[68px] h-16 object-cover object-top bg-white" />
-                      ) : (
-                        <div className="w-[68px] h-16 flex items-center justify-center text-[10px] text-muted-foreground bg-muted">
-                          m.{f.measureNumber}
+          <div className="px-8 pt-6">
+            <Collapsible>
+              <CollapsibleTrigger
+                className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.15em] w-full transition-colors hover:opacity-70 [&[data-state=open]>svg:last-child]:rotate-180"
+                style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+              >
+                <Flag className="w-3.5 h-3.5" style={{ color: T.gold }} />
+                Trouble spots ({flagSummary.filter((f) => f.resolvedCount < f.flagCount).length})
+                <ChevronDown className="w-3.5 h-3.5 ml-auto transition-transform" />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {flagSummary.map((f) => {
+                    const unresolved = f.flagCount - f.resolvedCount;
+                    return (
+                      <div
+                        key={f.measureId}
+                        className={cn("relative rounded-md border overflow-hidden", unresolved === 0 && "opacity-50")}
+                        style={{
+                          border: unresolved > 0 ? `1px solid ${T.gold}` : `1px solid ${T.border}`,
+                        }}
+                      >
+                        {f.imageUrl ? (
+                          <img src={f.imageUrl} alt={`Bar ${f.measureNumber}`} className="w-[68px] h-16 object-cover object-top bg-white" />
+                        ) : (
+                          <div
+                            className="w-[68px] h-16 flex items-center justify-center text-[10px]"
+                            style={{ color: T.muted, backgroundColor: T.card }}
+                          >
+                            m.{f.measureNumber}
+                          </div>
+                        )}
+                        <div
+                          className="text-[10px] text-center py-0.5"
+                          style={{ backgroundColor: T.card, color: T.muted }}
+                        >
+                          {f.measureNumber}
                         </div>
-                      )}
-                      <div className="text-[10px] text-center py-0.5 bg-muted/50 text-muted-foreground">
-                        {f.measureNumber}
+                        {unresolved > 0 && (
+                          <div
+                            className="absolute top-1 right-1 w-4 h-4 rounded-full text-white text-[9px] flex items-center justify-center font-bold"
+                            style={{ backgroundColor: T.gold }}
+                          >
+                            {unresolved}
+                          </div>
+                        )}
                       </div>
-                      {unresolved > 0 && (
-                        <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] flex items-center justify-center font-bold">
-                          {unresolved}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
+                    );
+                  })}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
         )}
 
-        <div className="mt-8 space-y-6">
-
-            {/* Score view */}
+        {/* ── Two-column section: Score + Movement Map ───────────────────── */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 300px",
+            gap: 24,
+            padding: "24px 32px",
+          }}
+          className="max-lg:block max-lg:px-4 max-lg:py-6"
+        >
+          {/* Left column: Score view */}
+          <div>
             {plan && sheetId != null && lessons.length > 0 && measuresUsePageGeometry(measures) && (
               <PlanScoreView
                 sheetMusicId={sheetId}
@@ -996,15 +1511,25 @@ export default function PlanPage() {
                 measures={measures}
               />
             )}
-
-            {/* Phase legend */}
             {plan && lessons.length > 0 && <PhaseLegend />}
+          </div>
 
+          {/* Right column: Movement Map */}
+          <div className="max-lg:mt-6">
+            {lessons.length > 0 && <MovementMap lessons={lessons} />}
+          </div>
+        </div>
+
+        {/* ── Lesson list ────────────────────────────────────────────────── */}
         {plan && (
-          <div className="mt-0">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">Days</h2>
+          <div style={{ padding: "0 32px 80px" }} className="max-lg:px-4">
+            <h2
+              className="text-[11px] font-bold uppercase tracking-[0.15em] mb-4"
+              style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+            >
+              Days
+            </h2>
 
-            {/* Loading skeletons */}
             {lessonsLoading && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                 {[1, 2, 3].map((i) => (
@@ -1016,30 +1541,46 @@ export default function PlanPage() {
             )}
 
             {!lessonsLoading && sortedLessons.length === 0 && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm" style={{ color: T.muted }}>
                 No lesson days yet. Finish creating your plan from the piece sidebar, or regenerate lessons from the wizard.
               </p>
             )}
 
             {!lessonsLoading && sortedLessons.length > 0 && (
               <>
-                {/* ── Desktop: 3 columns ───────────────────────────────────── */}
+                {/* ── Desktop: 3 columns ───────────────────────────────── */}
                 <div className="hidden lg:grid lg:grid-cols-3 lg:gap-5 lg:items-start">
 
                   {/* Completed column */}
-                  <div className="rounded-xl bg-[#729E8F]/5 border border-[#729E8F]/15 p-3">
+                  <div
+                    className="rounded-xl p-3"
+                    style={{
+                      backgroundColor: `${T.navy}06`,
+                      border: `1px solid ${T.navy}18`,
+                    }}
+                  >
                     <div className="flex items-center gap-2 mb-3 px-1">
-                      <div className="w-5 h-5 rounded-full bg-[#729E8F] flex items-center justify-center shrink-0">
+                      <div
+                        className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: T.navy }}
+                      >
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                           <path d="M2 5l2.5 2.5L8 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                         </svg>
                       </div>
-                      <span className="text-xs font-bold uppercase tracking-widest text-[#3d7065]">Completed</span>
-                      <span className="ml-auto text-xs tabular-nums text-muted-foreground">{completedLessons.length}</span>
+                      <span
+                        className="text-[11px] font-bold uppercase tracking-[0.15em]"
+                        style={{ color: T.navy, fontFamily: "Inter, sans-serif" }}
+                      >
+                        Completed
+                      </span>
+                      <span className="ml-auto text-xs tabular-nums" style={{ color: T.muted }}>
+                        {completedLessons.length}
+                      </span>
                     </div>
                     <div className="max-h-[70vh] overflow-y-auto space-y-2 pr-0.5">
                       {completedLessons.length === 0 ? (
-                        <p className="text-xs text-muted-foreground text-center py-6">No completed sessions yet.</p>
+                        <p className="text-xs text-center py-6" style={{ color: T.muted }}>No completed sessions yet.</p>
                       ) : (
                         <>
                           {visibleCompleted.map((lesson) =>
@@ -1048,7 +1589,8 @@ export default function PlanPage() {
                           {completedLessons.length > 5 && (
                             <button
                               onClick={() => setShowAllCompleted((v) => !v)}
-                              className="w-full text-xs text-muted-foreground hover:text-foreground py-2 text-center transition-colors"
+                              className="w-full text-xs py-2 text-center transition-opacity hover:opacity-70"
+                              style={{ color: T.muted }}
                             >
                               {showAllCompleted
                                 ? "Show less"
@@ -1061,10 +1603,19 @@ export default function PlanPage() {
                   </div>
 
                   {/* Current column */}
-                  <div className="rounded-xl bg-[#DCCAA6]/15 border border-[#C8B388]/30 p-3">
+                  <div
+                    className="rounded-xl p-3"
+                    style={{
+                      backgroundColor: `${T.gold}12`,
+                      border: `1px solid ${T.gold}40`,
+                    }}
+                  >
                     <div className="flex items-center gap-2 mb-3 px-1">
-                      <CalendarDays className="w-4 h-4 text-[#C8B388] shrink-0" />
-                      <span className="text-xs font-bold uppercase tracking-widest text-[#6b5732]">
+                      <CalendarDays className="w-4 h-4 shrink-0" style={{ color: T.gold }} />
+                      <span
+                        className="text-[11px] font-bold uppercase tracking-[0.15em]"
+                        style={{ color: "#6b4f1a", fontFamily: "Inter, sans-serif" }}
+                      >
                         {nextLesson?.scheduledDate === todayIso ? "Today" : "Next Session"}
                       </span>
                     </div>
@@ -1072,29 +1623,51 @@ export default function PlanPage() {
                       {nextLesson ? (
                         renderCard(nextLesson, sortedLessons.indexOf(nextLesson))
                       ) : (
-                        <div className="rounded-lg border border-[#729E8F]/40 p-6 text-center" style={{ backgroundColor: "rgba(114,158,143,0.08)" }}>
-                          <div className="w-8 h-8 rounded-full bg-[#729E8F] mx-auto mb-3 flex items-center justify-center">
+                        <div
+                          className="rounded-lg p-6 text-center"
+                          style={{
+                            border: `1px solid ${T.navy}35`,
+                            backgroundColor: `${T.navy}08`,
+                          }}
+                        >
+                          <div
+                            className="w-8 h-8 rounded-full mx-auto mb-3 flex items-center justify-center"
+                            style={{ backgroundColor: T.navy }}
+                          >
                             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                               <path d="M3 7l3 3 5-6" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
                             </svg>
                           </div>
-                          <p className="text-sm font-medium text-[#3d7065]">Plan complete!</p>
-                          <p className="text-xs text-muted-foreground mt-1">All sessions finished.</p>
+                          <p className="text-sm font-medium" style={{ color: T.navy }}>Plan complete!</p>
+                          <p className="text-xs mt-1" style={{ color: T.muted }}>All sessions finished.</p>
                         </div>
                       )}
                     </div>
                   </div>
 
                   {/* Upcoming column */}
-                  <div className="rounded-xl bg-sky-50/50 border border-sky-200/40 p-3">
+                  <div
+                    className="rounded-xl p-3"
+                    style={{
+                      backgroundColor: `${T.bg}`,
+                      border: `1px solid ${T.border}`,
+                    }}
+                  >
                     <div className="flex items-center gap-2 mb-3 px-1">
-                      <ArrowRight className="w-4 h-4 text-sky-400 shrink-0" />
-                      <span className="text-xs font-bold uppercase tracking-widest text-sky-600">Upcoming</span>
-                      <span className="ml-auto text-xs tabular-nums text-muted-foreground">{futureLessons.length}</span>
+                      <ArrowRight className="w-4 h-4 shrink-0" style={{ color: T.muted }} />
+                      <span
+                        className="text-[11px] font-bold uppercase tracking-[0.15em]"
+                        style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+                      >
+                        Upcoming
+                      </span>
+                      <span className="ml-auto text-xs tabular-nums" style={{ color: T.muted }}>
+                        {futureLessons.length}
+                      </span>
                     </div>
                     <div className="max-h-[70vh] overflow-y-auto space-y-2 pr-0.5">
                       {futureLessons.length === 0 && nextLesson && (
-                        <p className="text-xs text-muted-foreground text-center py-6">This is the last session.</p>
+                        <p className="text-xs text-center py-6" style={{ color: T.muted }}>This is the last session.</p>
                       )}
                       {futureLessons.map((lesson) =>
                         renderCard(lesson, sortedLessons.indexOf(lesson), "future")
@@ -1103,7 +1676,7 @@ export default function PlanPage() {
                   </div>
                 </div>
 
-                {/* ── Mobile: tabs ─────────────────────────────────────────── */}
+                {/* ── Mobile: tabs ─────────────────────────────────────── */}
                 <div className="lg:hidden">
                   <Tabs defaultValue="current">
                     <TabsList className="w-full grid grid-cols-3 mb-4">
@@ -1116,7 +1689,7 @@ export default function PlanPage() {
 
                     <TabsContent value="completed" className="space-y-2">
                       {completedLessons.length === 0 ? (
-                        <p className="text-xs text-muted-foreground text-center py-6">No completed sessions yet.</p>
+                        <p className="text-xs text-center py-6" style={{ color: T.muted }}>No completed sessions yet.</p>
                       ) : (
                         <>
                           {visibleCompleted.map((lesson) =>
@@ -1125,7 +1698,8 @@ export default function PlanPage() {
                           {completedLessons.length > 5 && (
                             <button
                               onClick={() => setShowAllCompleted((v) => !v)}
-                              className="w-full text-xs text-muted-foreground hover:text-foreground py-2 text-center"
+                              className="w-full text-xs py-2 text-center"
+                              style={{ color: T.muted }}
                             >
                               {showAllCompleted ? "Show less" : `Show ${completedLessons.length - 5} older`}
                             </button>
@@ -1137,13 +1711,13 @@ export default function PlanPage() {
                     <TabsContent value="current">
                       {nextLesson
                         ? renderCard(nextLesson, sortedLessons.indexOf(nextLesson))
-                        : <p className="text-sm text-center text-[#3d7065] py-6">Plan complete!</p>
+                        : <p className="text-sm text-center py-6" style={{ color: T.navy }}>Plan complete!</p>
                       }
                     </TabsContent>
 
                     <TabsContent value="upcoming" className="space-y-2">
                       {futureLessons.length === 0 ? (
-                        <p className="text-xs text-muted-foreground text-center py-6">This is the last session.</p>
+                        <p className="text-xs text-center py-6" style={{ color: T.muted }}>This is the last session.</p>
                       ) : (
                         futureLessons.map((lesson) =>
                           renderCard(lesson, sortedLessons.indexOf(lesson), "future")
@@ -1154,44 +1728,52 @@ export default function PlanPage() {
                 </div>
               </>
             )}
+
+            {/* ── About phases ─────────────────────────────────────────── */}
+            <Collapsible className="mt-8">
+              <CollapsibleTrigger
+                className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.15em] w-full transition-opacity hover:opacity-70 [&[data-state=open]>svg:last-child]:rotate-180"
+                style={{ color: T.muted, fontFamily: "Inter, sans-serif" }}
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                About phases
+                <ChevronDown className="w-3.5 h-3.5 ml-auto transition-transform" />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div
+                  className="mt-3 rounded-xl overflow-hidden divide-y"
+                  style={{
+                    border: `1px solid ${T.border}`,
+                    backgroundColor: T.card,
+                  }}
+                >
+                  {PHASE_TYPES.map((phase) => {
+                    const info = PHASE_LABELS[phase as PhaseType];
+                    const c = getPhaseColor(phase);
+                    return (
+                      <div
+                        key={phase}
+                        className="flex items-start gap-3 px-4 py-3"
+                        style={{ borderColor: T.border }}
+                      >
+                        <div
+                          className="mt-0.5 w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: c.bg, border: `2px solid ${c.border}` }}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold leading-tight" style={{ color: T.navy }}>{info.label}</p>
+                          <p className="text-xs mt-0.5 leading-snug" style={{ color: T.muted }}>{info.description}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         )}
 
-        {/* ── About phases legend ────────────────────────────────────────── */}
-        {plan && (
-          <Collapsible className="mt-6">
-            <CollapsibleTrigger className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-muted-foreground w-full hover:text-foreground transition-colors [&[data-state=open]>svg:last-child]:rotate-180">
-              <HelpCircle className="w-3.5 h-3.5" />
-              About phases
-              <ChevronDown className="w-3.5 h-3.5 ml-auto transition-transform" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="mt-3 rounded-xl border border-border bg-card overflow-hidden divide-y divide-border/60">
-                {PHASE_TYPES.map((phase) => {
-                  const info = PHASE_LABELS[phase as PhaseType];
-                  const c = getPhaseColor(phase);
-                  return (
-                    <div key={phase} className="flex items-start gap-3 px-4 py-3">
-                      <div
-                        className="mt-0.5 w-3 h-3 rounded-full shrink-0"
-                        style={{ backgroundColor: c.bg, border: `2px solid ${c.border}` }}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground leading-tight">{info.label}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{info.description}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-
-        </div>
-
       </div>
-
     </Layout>
   );
 }

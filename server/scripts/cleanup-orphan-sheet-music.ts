@@ -18,7 +18,7 @@ async function main() {
   const keepIds = new Set(
     [...lpRows, ...csRows].map((r) => r.id).filter((id): id is number => id != null),
   );
-  console.log("Keeping sheet_music ids:", [...keepIds].sort((a, b) => a - b).join(", "));
+  console.log("Keeping sheet_music ids:", Array.from(keepIds).sort((a, b) => a - b).join(", "));
 
   const allRows = await db.select({ id: sheetMusic.id, fileUrl: sheetMusic.fileUrl }).from(sheetMusic);
   const toDelete = allRows.filter((r) => !keepIds.has(r.id));

@@ -1507,6 +1507,7 @@ async function materializeUpcomingDays(args: {
 
 async function resolveInstrument(storage: IStorage, plan: LearningPlan): Promise<string | null> {
   try {
+    if (plan.repertoireEntryId == null) return null;
     const re = await storage.getRepertoireEntryById?.(plan.repertoireEntryId);
     if (!re) return null;
     const piece = await storage.getPieceById?.(re.pieceId);

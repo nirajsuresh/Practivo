@@ -30,11 +30,11 @@ Required in `.env`:
 - `GEMINI_API_KEY` — Google Gemini API for AI piece analysis
 - `NODE_ENV` — `development` or `production`
 - `SCOREBARS_PYTHON` — override Python command for bar detection (optional)
-- `REPERTO_PDFTOPPM_PATH` / `POPPLER_PATH` — override Poppler binary path for PDF rendering (optional; falls back to Homebrew locations)
+- `FERMATA_PDFTOPPM_PATH` / `POPPLER_PATH` — override Poppler binary path for PDF rendering (optional; falls back to Homebrew locations)
 
 ## Architecture
 
-Réperto is a full-stack TypeScript app for classical musicians to track and learn musical repertoire.
+Practivo is a full-stack TypeScript app for classical musicians to track and learn musical repertoire.
 
 ### Stack
 - **Frontend**: React 19 + Vite, Wouter (routing), TanStack React Query (server state), shadcn/ui + Tailwind CSS v4, Framer Motion, @dnd-kit
@@ -133,3 +133,21 @@ Key files in `server/scorebars/`:
 
 ### Sheet Music Rendering (frontend)
 `measuresUsePageGeometry(measures)` → `true` if every measure has `pageNumber` + `boundingBox`. When true, use full-page images with absolute overlays. When false (no geometry), render bar strip images. Both session-page and plan-page use this pattern via `useSheetPageUrl`.
+
+### Score markup views
+The learning-plan wizard has two full-screen score markup views that MUST stay visually in sync:
+
+1. **Mark sections** — `SectionMarkStep` inside `client/src/components/learning-plan-wizard.tsx`
+2. **Review detected barlines** — `client/src/components/score-markup/review-bars-step.tsx`
+
+Both compose their chrome out of shared primitives in `client/src/components/score-markup/shared.tsx`:
+- `ScoreMarkupShell` — the fixed full-screen shell (header + left rail + center + optional right panel)
+- `PageThumbRail` — the left column of page thumbnails
+- `ScorePagesGrid` — the center two-column page grid with absolute bar overlays (or strip fallback)
+- `SubtleHeaderButton` — the small text-style header action button
+
+**Invariants — do not break these:**
+- Never duplicate the outer layout, thumbnail rail, or page grid in either view. Edit `shared.tsx` and both views pick it up automatically.
+- The only intentional visual difference is the right panel: Mark Sections has a ranking column; Review Barlines has none.
+- Callers supply per-view concerns only: the `renderOverlay(measure)` callback (what a bar looks like) and an optional `renderStripRow` fallback. Cross-cutting chrome changes belong in `shared.tsx`.
+- The old `client/src/components/score-review-modal.tsx` is no longer wired into the wizard — do not re-introduce it without first discussing. If more barline-editing power is needed (e.g. detect-region, delete-row), add it inside `ReviewBarsStep` using the shared grid.

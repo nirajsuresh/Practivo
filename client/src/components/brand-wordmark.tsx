@@ -16,16 +16,10 @@ const rasterHeights = {
 export function BrandWordmark({ className, size = "md", inverse = false }: BrandWordmarkProps) {
   return (
     <img
-      src="/images/reperto-wordmark.png"
-      alt="Reperto"
-      width={468}
-      height={180}
-      className={cn(
-        "w-auto h-auto max-w-none",
-        rasterHeights[size],
-        inverse && "invert drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]",
-        className
-      )}
+      src="/images/practivo-wordmark.png"
+      alt="Practivo"
+      className={cn("w-auto h-auto max-w-none", rasterHeights[size], className)}
+      style={inverse ? { filter: "brightness(0) invert(1)" } : undefined}
     />
   );
 }

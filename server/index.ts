@@ -1,10 +1,19 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import pg from "pg";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { autoSeedIfEmpty } from "./auto-seed";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+
+declare module "express-session" {
+  interface SessionData {
+    userId: string;
+  }
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -14,6 +23,21 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+const PgStore = connectPgSimple(session);
+const pgPool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+
+app.use(session({
+  store: new PgStore({ pool: pgPool, createTableIfMissing: true }),
+  secret: process.env.SESSION_SECRET ?? "practivo-dev-secret-change-in-prod",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  },
+}));
 
 app.use(
   express.json({
@@ -219,6 +243,9 @@ app.use((req, res, next) => {
 
     // User profile: playing level
     await db.execute(sql`ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS playing_level text`);
+
+    // Data patches
+    await db.execute(sql`UPDATE pieces SET title = 'Bagatelle in A minor WoO 59 (Für Elise)' WHERE title = 'Bagatelle in A minor WoO 59'`);
 
     console.log("Schema migrations applied");
   } catch (err) {

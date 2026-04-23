@@ -86,7 +86,7 @@ export default function ComposerPage() {
       <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
 
         {/* Back */}
-        <Link href="/profile">
+        <Link href="/home">
           <Button variant="ghost" size="sm" className="gap-2 text-muted-foreground hover:text-foreground -ml-2">
             <ArrowLeft className="w-4 h-4" />
             Back

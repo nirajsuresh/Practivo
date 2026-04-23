@@ -2,11 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "Reperto Dev",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "NODE_ENV=development npx tsx --env-file='/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/.env' '/Users/nirajsuresh/Documents/HBS/2026_Spring/Reperto IP/Reperto/server/index.ts'"],
-      "port": 5000,
-      "autoPort": true
+      "name": "Practivo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5001,
+      "autoPort": false
     }
   ]
 }

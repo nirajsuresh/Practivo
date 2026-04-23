@@ -1,5 +1,6 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
+import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import {
   MILESTONE_TYPES,
@@ -14,6 +15,8 @@ import {
   type PhaseType,
   type PlayingLevel,
   type InsertPlanSuggestion,
+  type LearningPlan,
+  type PracticeSessionBlock,
 } from "@shared/schema";
 import { toInsertMeasures } from "./adapters/scorebars-adapter.js";
 import { generatePlanV2, applySessionOutcome, replanUpcomingSessions, checkPlanFeasibility, computePaceGap } from "./scheduler/index.js";
@@ -339,6 +342,288 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  // Propagate session userId into x-user-id header so all existing routes work unchanged
+  app.use((req, _res, next) => {
+    if (req.session?.userId && !req.headers["x-user-id"]) {
+      req.headers["x-user-id"] = req.session.userId;
+    }
+    next();
+  });
+
+  // ── Home dashboard summary ──────────────────────────────────────────────
+  app.get("/api/home/summary", async (req, res) => {
+    try {
+      const userId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = new Date().toISOString().split("T")[0];
+
+      const { entries } = await storage.getRepertoireByUser(userId);
+      const uniqueEntries = entries.filter(
+        (e, i, arr) => arr.findIndex((x) => x.id === e.id) === i,
+      );
+
+      // All plans for this user (one per eligible entry).
+      const planRecords = await Promise.all(
+        uniqueEntries.map(async (entry) => {
+          const plan = await storage.getLearningPlan(entry.id);
+          return plan ? { plan, entry } : null;
+        }),
+      );
+      const plans = planRecords.filter((p): p is NonNullable<typeof p> => p != null);
+
+      // Lesson-day rosters for every plan (parallel).
+      const planLessons = await Promise.all(
+        plans.map(async ({ plan, entry }) => ({
+          plan, entry,
+          lessons: await storage.getLessonDays(plan.id),
+        })),
+      );
+
+      // Aggregate minutes per lesson (sum of section durations, falling back to dailyPracticeMinutes).
+      const lessonMinutes = (sections: SessionSection[] | null | undefined, fallback: number): number => {
+        if (!Array.isArray(sections) || sections.length === 0) return fallback;
+        const sum = sections.reduce((s, sec) => s + (typeof sec.durationMin === "number" ? sec.durationMin : 0), 0);
+        return sum > 0 ? sum : fallback;
+      };
+
+      // Build a completion calendar {date → {sessionsCount, totalMinutes}}
+      const toDateKey = (d: unknown): string =>
+        typeof d === "string" ? d.slice(0, 10) : d instanceof Date ? d.toISOString().slice(0, 10) : "";
+      const completionsByDate = new Map<string, { sessions: number; minutes: number }>();
+      for (const { plan, lessons } of planLessons) {
+        for (const l of lessons) {
+          if (l.status !== "completed") continue;
+          const date = toDateKey(l.scheduledDate);
+          if (!date) continue;
+          const min = lessonMinutes(l.tasks ?? null, plan.dailyPracticeMinutes ?? 30);
+          const prev = completionsByDate.get(date) ?? { sessions: 0, minutes: 0 };
+          completionsByDate.set(date, { sessions: prev.sessions + 1, minutes: prev.minutes + min });
+        }
+      }
+
+      // Streak (consecutive days with ≥1 completion, walking back from today).
+      let streak = 0;
+      {
+        const d = new Date(today);
+        while (completionsByDate.has(d.toISOString().split("T")[0])) {
+          streak++;
+          d.setDate(d.getDate() - 1);
+        }
+      }
+      // Longest streak over last 180 days.
+      let longestStreak = 0;
+      {
+        let run = 0;
+        const d = new Date(today);
+        for (let i = 0; i < 180; i++) {
+          const key = d.toISOString().split("T")[0];
+          if (completionsByDate.has(key)) { run++; longestStreak = Math.max(longestStreak, run); }
+          else run = 0;
+          d.setDate(d.getDate() - 1);
+        }
+      }
+
+      // Week (ISO Monday-start) minutes + sessions.
+      const now = new Date(today);
+      const dow = now.getDay(); // 0 Sun..6 Sat
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - ((dow + 6) % 7));
+      let weekMinutes = 0, sessionsThisWeek = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        const key = d.toISOString().split("T")[0];
+        const e = completionsByDate.get(key);
+        if (e) { weekMinutes += e.minutes; sessionsThisWeek += e.sessions; }
+      }
+
+      // 14-day bar chart (oldest → newest).
+      const practiceHistory: { date: string; minutes: number }[] = [];
+      {
+        const d = new Date(today);
+        d.setDate(d.getDate() - 13);
+        for (let i = 0; i < 14; i++) {
+          const key = d.toISOString().split("T")[0];
+          practiceHistory.push({ date: key, minutes: completionsByDate.get(key)?.minutes ?? 0 });
+          d.setDate(d.getDate() + 1);
+        }
+      }
+
+      // Pieces in progress + composer count.
+      const piecesInProgress = new Set<number>();
+      const composersInPlay = new Set<number>();
+      for (const { plan, entry } of plans) {
+        if (plan.status === "active" || plan.status === "setup") {
+          piecesInProgress.add(entry.pieceId);
+          composersInPlay.add(entry.composerId);
+        }
+      }
+
+      // Phases cleared (count of section-phases where all their lessons are completed).
+      let phasesCleared = 0;
+      for (const { plan, lessons } of planLessons) {
+        const byKey = new Map<string, { total: number; done: number }>();
+        for (const l of lessons) {
+          if (!l.sectionId || !l.phaseType) continue;
+          const k = `${l.sectionId}:${l.phaseType}`;
+          const row = byKey.get(k) ?? { total: 0, done: 0 };
+          row.total++;
+          if (l.status === "completed") row.done++;
+          byKey.set(k, row);
+        }
+        byKey.forEach((v) => { if (v.total > 0 && v.done === v.total) phasesCleared++; });
+        void plan;
+      }
+
+      const weekGoal = 150; // constant for now
+      const sessionsGoal = 7;
+
+      // ── Active plans for today ──────────────────────────────────────────
+      type ActivePlan = {
+        planId: number;
+        repertoireEntryId: number;
+        lessonId: number | null;
+        sheetMusicId: number | null;
+        composer: string;
+        pieceTitle: string;
+        movement: string | null;
+        day: number;
+        totalDays: number;
+        minutesToday: number;
+        todayPages: number[];
+        pagesTotal: number;
+        focusMeasuresByPage: Record<number, { measureNumber: number; boundingBox: any }[]>;
+        pageImages: { pageNumber: number; imageUrl: string }[];
+        phase: string | null;
+        subFocus: string | null;
+        planProgress: number;
+        daysLeft: number;
+        status: string;
+        isCurrent: boolean;
+      };
+
+      const activePlans: (ActivePlan & { scheduledDate: string; isToday: boolean })[] = [];
+      const dateKey = (d: unknown): string =>
+        typeof d === "string" ? d.slice(0, 10) : d instanceof Date ? d.toISOString().slice(0, 10) : "";
+      for (const { plan, entry, lessons } of planLessons) {
+        if (plan.status !== "active" && plan.status !== "setup") continue;
+        // Prefer today's lesson; fall back to the next upcoming (not completed) lesson.
+        let todayLesson = lessons.find((l) => dateKey(l.scheduledDate) === today);
+        let isToday = !!todayLesson;
+        if (!todayLesson) {
+          const future = lessons
+            .filter((l) => l.status !== "completed" && dateKey(l.scheduledDate) >= today)
+            .sort((a, b) => dateKey(a.scheduledDate).localeCompare(dateKey(b.scheduledDate)));
+          todayLesson = future[0];
+        }
+        if (!todayLesson) continue;
+
+        const totalDays = lessons.length;
+        const completedLessonsBefore = lessons.filter(
+          (l) => l.status === "completed" && dateKey(l.scheduledDate) < today,
+        ).length;
+        const day = completedLessonsBefore + 1;
+        const completedAll = lessons.filter((l) => l.status === "completed").length;
+        const planProgress = totalDays > 0 ? completedAll / totalDays : 0;
+        const upcomingCount = lessons.filter(
+          (l) => l.status !== "completed" && dateKey(l.scheduledDate) >= today,
+        ).length;
+
+        // Sum measure range over today's tasks; resolve to pages.
+        const taskSections: SessionSection[] = Array.isArray(todayLesson.tasks)
+          ? (todayLesson.tasks as SessionSection[])
+          : [];
+        const ranges: { start: number; end: number }[] = [];
+        for (const sec of taskSections) {
+          if (typeof sec.measureStart === "number" && typeof sec.measureEnd === "number") {
+            ranges.push({ start: sec.measureStart, end: sec.measureEnd });
+          }
+        }
+        if (ranges.length === 0 && typeof todayLesson.measureStart === "number") {
+          ranges.push({ start: todayLesson.measureStart, end: todayLesson.measureEnd ?? todayLesson.measureStart });
+        }
+        const minutesToday = lessonMinutes(taskSections, plan.dailyPracticeMinutes ?? 30);
+
+        const focusMeasuresByPage: Record<number, { measureNumber: number; boundingBox: any }[]> = {};
+        let pagesTotal = 0;
+        const todayPagesSet = new Set<number>();
+        let pageImages: { pageNumber: number; imageUrl: string }[] = [];
+        if (plan.sheetMusicId) {
+          const [dbPages, measureList] = await Promise.all([
+            storage.getSheetMusicPages(plan.sheetMusicId),
+            storage.getMeasures(plan.sheetMusicId),
+          ]);
+          pagesTotal = dbPages.length;
+          pageImages = dbPages.map((p) => ({ pageNumber: p.pageNumber, imageUrl: p.imageUrl }));
+          for (const m of measureList) {
+            const inRange = ranges.some((r) => m.measureNumber >= r.start && m.measureNumber <= r.end);
+            if (inRange) {
+              todayPagesSet.add(m.pageNumber);
+              const arr = focusMeasuresByPage[m.pageNumber] ?? [];
+              arr.push({ measureNumber: m.measureNumber, boundingBox: m.boundingBox });
+              focusMeasuresByPage[m.pageNumber] = arr;
+            }
+          }
+        }
+
+        const phaseType = todayLesson.phaseType as string | null;
+        const phaseLabel = phaseType && PHASE_LABELS[phaseType as keyof typeof PHASE_LABELS]
+          ? PHASE_LABELS[phaseType as keyof typeof PHASE_LABELS].label
+          : phaseType;
+
+        activePlans.push({
+          planId: plan.id,
+          repertoireEntryId: entry.id,
+          lessonId: todayLesson.id,
+          sheetMusicId: plan.sheetMusicId ?? null,
+          composer: entry.composerName,
+          pieceTitle: entry.pieceTitle,
+          movement: entry.movementName ?? null,
+          day,
+          totalDays,
+          minutesToday,
+          todayPages: Array.from(todayPagesSet).sort((a, b) => a - b),
+          pagesTotal,
+          focusMeasuresByPage,
+          pageImages,
+          phase: phaseLabel ?? null,
+          subFocus: null,
+          planProgress,
+          daysLeft: upcomingCount,
+          status: todayLesson.status,
+          isCurrent: false,
+          scheduledDate: dateKey(todayLesson.scheduledDate),
+          isToday,
+        });
+      }
+
+      // Sort: today's lessons first, then by scheduled date ascending.
+      activePlans.sort((a, b) => {
+        if (a.isToday !== b.isToday) return a.isToday ? -1 : 1;
+        return a.scheduledDate.localeCompare(b.scheduledDate);
+      });
+      // "Current" = first active plan whose lesson isn't completed.
+      const firstPendingIdx = activePlans.findIndex((p) => p.status !== "completed");
+      if (firstPendingIdx >= 0) activePlans[firstPendingIdx].isCurrent = true;
+
+      res.json({
+        stats: {
+          streak, longestStreak,
+          weekMinutes, weekGoal,
+          sessionsThisWeek, sessionsGoal,
+          piecesInProgress: piecesInProgress.size,
+          composers: composersInPlay.size,
+          phasesCleared,
+          practiceHistory,
+        },
+        activePlans,
+      });
+    } catch (err) {
+      console.error("home summary error:", err);
+      res.status(500).json({ error: "Failed to load home summary" });
+    }
+  });
+
   // ── Composers ────────────────────────────────────────────────────────────
 
   app.get("/api/composers/search", async (req, res) => {
@@ -382,6 +667,27 @@ export async function registerRoutes(
       res.json(pieces);
     } catch {
       res.status(500).json({ error: "Failed to search pieces" });
+    }
+  });
+
+  app.get("/api/pieces/presets", async (_req, res) => {
+    try {
+      const presets = await storage.getPiecePresets();
+      res.json(presets);
+    } catch {
+      res.status(500).json({ error: "Failed to fetch piece presets" });
+    }
+  });
+
+  app.get("/api/pieces/suggestions", async (req, res) => {
+    try {
+      const n = Math.min(parseInt((req.query.n as string) || "4", 10), 20);
+      const excludeParam = (req.query.exclude as string) || "";
+      const excludedIds = excludeParam ? excludeParam.split(",").map(Number).filter(Boolean) : [];
+      const suggestions = await storage.getPieceSuggestions(n, excludedIds);
+      res.json(suggestions);
+    } catch {
+      res.status(500).json({ error: "Failed to fetch suggestions" });
     }
   });
 
@@ -684,7 +990,9 @@ export async function registerRoutes(
       const plan = await storage.getLearningPlanById(planId);
       if (!plan) return res.json(null);
       if (userId && plan.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      const entry = await storage.getRepertoireEntryById(plan.repertoireEntryId);
+      const entry = plan.repertoireEntryId != null
+        ? await storage.getRepertoireEntryById(plan.repertoireEntryId)
+        : null;
       res.json({ ...plan, movementId: entry?.movementId ?? null });
     } catch {
       res.status(500).json({ error: "Failed to get learning plan" });
@@ -695,10 +1003,34 @@ export async function registerRoutes(
     try {
       const userId = req.headers["x-user-id"] as string;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const plan = await storage.createLearningPlan({ ...req.body, userId });
+      // Piece blocks start in the checklist flow ("needs_score"); non-piece
+      // blocks are fully configured at creation time ("complete").
+      const blockType = (req.body?.blockType as string | undefined) ?? "piece";
+      const defaultSetupState = blockType === "piece" ? "needs_score" : "complete";
+      const plan = await storage.createLearningPlan({
+        setupState: defaultSetupState,
+        ...req.body,
+        userId,
+      });
       res.status(201).json(plan);
     } catch {
       res.status(500).json({ error: "Failed to create learning plan" });
+    }
+  });
+
+  /** PATCH /api/learning-plans/reorder — batch-update sortOrder.
+   * Must be registered BEFORE `/:id` so Express doesn't treat "reorder" as an id. */
+  app.patch("/api/learning-plans/reorder", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const updates: { id: number; sortOrder: number }[] = req.body;
+      if (!Array.isArray(updates)) return res.status(400).json({ error: "body must be an array" });
+      await storage.updateLearningPlanOrder(updates);
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("reorder blocks error:", err);
+      return res.status(500).json({ error: "Failed to reorder" });
     }
   });
 
@@ -830,7 +1162,7 @@ export async function registerRoutes(
       const pageRange = { firstPdfPage: firstPage, lastPdfPage: lastPage };
 
       import("./scorebars/index.js").then(async ({ ScorebarService }) => {
-        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "reperto-proc-"));
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "practivo-proc-"));
         try {
           processingProgress.set(id, { page: 0, total: 0 });
 
@@ -913,14 +1245,17 @@ export async function registerRoutes(
       const movementIdRaw = req.query.movementId as string | undefined;
       const movementId = movementIdRaw ? parseInt(movementIdRaw, 10) : undefined;
 
-      const [dbPages, measureList] = await Promise.all([
-        storage.getSheetMusicPages(id),
-        storage.getMeasures(id, movementId),
-      ]);
+      const dbPages = await storage.getSheetMusicPages(id);
+      // Try movement-scoped first; if the sheet's measures were never tagged
+      // with a movementId (common — bar detection doesn't attach it), fall back
+      // to the full measure list for this sheet music.
+      let measureList = await storage.getMeasures(id, movementId);
+      if (movementId != null && measureList.length === 0) {
+        measureList = await storage.getMeasures(id);
+      }
 
-      // When scoped to a movement, only return pages that have measures for that movement
       const pageNumbersWithMeasures = new Set(measureList.map((m) => m.pageNumber));
-      const filteredPages = movementId != null
+      const filteredPages = measureList.length > 0 && movementId != null
         ? dbPages.filter((p) => pageNumbersWithMeasures.has(p.pageNumber))
         : dbPages;
 
@@ -948,7 +1283,10 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const movementIdRaw = req.query.movementId as string | undefined;
       const movementId = movementIdRaw ? parseInt(movementIdRaw, 10) : undefined;
-      const measureList = await storage.getMeasures(id, movementId);
+      let measureList = await storage.getMeasures(id, movementId);
+      if (movementId != null && measureList.length === 0) {
+        measureList = await storage.getMeasures(id);
+      }
       res.json(measureList.map((m) => ({ ...m, imageUrl: null })));
     } catch {
       res.status(500).json({ error: "Failed to get measures" });
@@ -1157,7 +1495,7 @@ export async function registerRoutes(
           }
 
           const result = await generatePlanV2({ planId, storage, horizonDays });
-          await storage.updateLearningPlan(planId, { status: "active" });
+          await storage.updateLearningPlan(planId, { status: "active", setupState: "complete" });
           return res.status(201).json({
             lessonDays: result.lessonsCreated,
             passagesCreated: result.passagesCreated,
@@ -1177,7 +1515,9 @@ export async function registerRoutes(
       await storage.deleteLessonDaysForPlan(planId);
 
       // Look up piece info for task generation
-      const entry = await storage.getRepertoireEntryById(plan.repertoireEntryId);
+      const entry = plan.repertoireEntryId != null
+        ? await storage.getRepertoireEntryById(plan.repertoireEntryId)
+        : undefined;
       const piece = entry ? await storage.getPieceById(entry.pieceId) : undefined;
       const userProfile = await storage.getUserProfile(plan.userId);
       const instrument = (userProfile?.instrument ?? piece?.instrument ?? "Piano").toLowerCase();
@@ -1422,7 +1762,7 @@ export async function registerRoutes(
       }
 
       const created = await storage.createLessonDays(rows);
-      await storage.updateLearningPlan(planId, { status: "active" });
+      await storage.updateLearningPlan(planId, { status: "active", setupState: "complete" });
       const usedSections = sections.length > 0;
       res.status(201).json({ lessonDays: created.length, usedSectionPhases: usedSections });
     } catch (err) {
@@ -1573,7 +1913,7 @@ export async function registerRoutes(
         const { learningPlans: lpTable, repertoireEntries: reTable } = await import("@shared/schema");
         const { eq } = await import("drizzle-orm");
         const [lp] = await db.select().from(lpTable).where(eq(lpTable.id, planId));
-        if (!lp) return;
+        if (!lp || lp.repertoireEntryId == null) return;
         const [entry] = await db.select().from(reTable).where(eq(reTable.id, lp.repertoireEntryId));
         if (!entry) return;
 
@@ -1594,16 +1934,30 @@ export async function registerRoutes(
 
   // ── Auth ─────────────────────────────────────────────────────────────────
 
+  app.get("/api/auth/me", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(401).json({ error: "Not authenticated" });
+      res.json({ id: user.id, username: user.username, email: user.email, firstName: user.firstName, lastName: user.lastName });
+    } catch {
+      res.status(500).json({ error: "Failed to get user" });
+    }
+  });
+
   app.post("/api/auth/register", async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const { username, email, firstName, lastName, password } = req.body;
       if (!username || !password) {
         return res.status(400).json({ error: "Username and password are required" });
       }
       const existing = await storage.getUserByUsername(username);
       if (existing) return res.status(409).json({ error: "Username already taken" });
-      const user = await storage.createUser({ username, password });
-      res.status(201).json({ id: user.id, username: user.username });
+      const hashedPassword = await bcrypt.hash(password, 12);
+      const user = await storage.createUser({ username, email: email || null, firstName: firstName || null, lastName: lastName || null, password: hashedPassword });
+      req.session.userId = user.id;
+      res.status(201).json({ id: user.id, username: user.username, email: user.email, firstName: user.firstName, lastName: user.lastName });
     } catch {
       res.status(500).json({ error: "Failed to register" });
     }
@@ -1616,13 +1970,30 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Username and password are required" });
       }
       const user = await storage.getUserByUsername(username);
-      if (!user || user.password !== password) {
-        return res.status(401).json({ error: "Invalid credentials" });
+      if (!user) return res.status(401).json({ error: "Invalid credentials" });
+      // Support migration: if not bcrypt hash yet, compare plain text and upgrade
+      const isBcrypt = user.password.startsWith("$2");
+      let valid = false;
+      if (isBcrypt) {
+        valid = await bcrypt.compare(password, user.password);
+      } else {
+        valid = user.password === password;
+        if (valid) {
+          const hashed = await bcrypt.hash(password, 12);
+          await storage.updateUserPassword(user.id, hashed);
+        }
       }
-      res.json({ id: user.id, username: user.username });
+      if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+      req.session.userId = user.id;
+      res.json({ id: user.id, username: user.username, email: user.email, firstName: user.firstName, lastName: user.lastName });
     } catch {
       res.status(500).json({ error: "Failed to login" });
     }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy(() => {});
+    res.json({ ok: true });
   });
 
   // ── Users ────────────────────────────────────────────────────────────────
@@ -1787,9 +2158,10 @@ export async function registerRoutes(
         submittedByUserId: userId,
         description: description ?? null,
       });
-      const totalMeasures = await storage.getMeasureCount(sheetMusicId);
+      const totalMeasures = await storage.getMeasureCount(sheetMusicId, resolvedMovementId);
       res.status(201).json({ ...created, totalMeasures });
-    } catch {
+    } catch (err) {
+      console.error("create community score error:", err);
       res.status(500).json({ error: "Failed to create community score" });
     }
   });
@@ -2366,6 +2738,436 @@ export async function registerRoutes(
     } catch (err) {
       console.error("recalibrate error:", err);
       return res.status(500).json({ error: "recalibration failed" });
+    }
+  });
+
+  // ── Practice Blocks ───────────────────────────────────────────────────────
+
+  function isScheduledToday(plan: LearningPlan, todayDow: number): boolean {
+    switch (plan.cadence) {
+      case "daily":    return true;
+      case "weekdays": return todayDow >= 1 && todayDow <= 5;
+      case "weekends": return todayDow === 0 || todayDow === 6;
+      case "custom":   return Array.isArray(plan.cadenceDays) && (plan.cadenceDays as number[]).includes(todayDow);
+      default:         return true;
+    }
+  }
+
+  function buildExerciseTasks(minutes: number): SessionSection[] {
+    return [{
+      type: "warmup",
+      label: "Exercises",
+      durationMin: minutes,
+      tasks: [
+        { text: "Hanon exercises (Nos. 1–5): 2× slowly, then 2× at tempo", completed: false },
+        { text: "Scales: C, G, D major — both hands, 2 octaves", completed: false },
+        { text: "Arpeggios: C, G major — both hands", completed: false },
+        { text: "Chromatic scale exercise (full range)", completed: false },
+      ],
+    }];
+  }
+
+  function buildSightReadingTasks(minutes: number): SessionSection[] {
+    return [{
+      type: "sight_reading",
+      label: "Sight-reading",
+      durationMin: minutes,
+      tasks: [
+        { text: "Choose a new piece or passage you haven't seen", completed: false },
+        { text: "Scan the score: key, time signature, tricky passages", completed: false },
+        { text: "Play through at a steady tempo — don't stop for mistakes", completed: false },
+        { text: "Try again if time allows, aiming for a cleaner read", completed: false },
+      ],
+    }];
+  }
+
+  async function getPieceBlockName(plan: LearningPlan): Promise<string> {
+    if (!plan.repertoireEntryId) return "Piece";
+    try {
+      const { entries } = await storage.getRepertoireByUser(plan.userId);
+      const entry = entries.find(e => e.id === plan.repertoireEntryId);
+      if (!entry) return "Piece";
+      return entry.movementName ? `${entry.pieceTitle}: ${entry.movementName}` : entry.pieceTitle;
+    } catch { return "Piece"; }
+  }
+
+  /** GET /api/blocks — all active blocks for the user with today-context. */
+  app.get("/api/blocks", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = new Date().toISOString().slice(0, 10);
+      const todayDow = new Date().getDay();
+
+      const plans = await storage.getActivePlansForUser(userId);
+      const { entries } = await storage.getRepertoireByUser(userId);
+      const entryById = new Map(entries.map(e => [e.id, e]));
+
+      const dateKey = (d: unknown): string =>
+        typeof d === "string" ? d.slice(0, 10) : d instanceof Date ? d.toISOString().slice(0, 10) : "";
+
+      const blocks = await Promise.all(plans.map(async (plan) => {
+        const scheduled = isScheduledToday(plan, todayDow);
+        const entry = plan.repertoireEntryId != null ? entryById.get(plan.repertoireEntryId) : null;
+        let blockName: string;
+        if (plan.blockType === "exercise") blockName = "Exercises";
+        else if (plan.blockType === "sight_reading") blockName = "Sight-reading";
+        else if (entry) blockName = entry.movementName ? `${entry.pieceTitle}: ${entry.movementName}` : entry.pieceTitle;
+        else blockName = "Piece";
+
+        // Resolve "active lesson day": today's if it exists, else the next upcoming non-completed.
+        let activeDay: { id: number; status: string; tasks: unknown; measureStart: number; measureEnd: number } | null = null;
+        let allDays: { id: number; status: string; scheduledDate: unknown; tasks: unknown; measureStart: number; measureEnd: number }[] = [];
+        if (plan.status === "active" || plan.status === "setup") {
+          allDays = await storage.getLessonDays(plan.id) as typeof allDays;
+          const todayLesson = allDays.find((d) => dateKey(d.scheduledDate) === today);
+          if (todayLesson) {
+            activeDay = todayLesson;
+          } else {
+            const upcoming = allDays
+              .filter((d) => d.status !== "completed" && dateKey(d.scheduledDate) >= today)
+              .sort((a, b) => dateKey(a.scheduledDate).localeCompare(dateKey(b.scheduledDate)));
+            activeDay = upcoming[0] ?? null;
+          }
+        }
+
+        let todayFocus: string | null = null;
+        if (activeDay?.tasks && Array.isArray(activeDay.tasks) && activeDay.tasks.length > 0) {
+          todayFocus = (activeDay.tasks as SessionSection[])[0]?.label ?? null;
+        }
+
+        // Compute day / progress info from lessonDays (only meaningful when lessons exist)
+        let dayNumber: number | null = null;
+        let totalDays: number | null = null;
+        let progressPercent: number | null = null;
+        let daysRemaining: number | null = null;
+        if (plan.status === "active" && allDays.length > 0) {
+          totalDays = allDays.length;
+          const completed = allDays.filter(d => d.status === "completed").length;
+          progressPercent = Math.round((completed / totalDays) * 100);
+          daysRemaining = Math.max(0, totalDays - completed);
+          if (activeDay) {
+            const idx = allDays.findIndex(d => d.id === activeDay!.id);
+            if (idx >= 0) dayNumber = idx + 1;
+          }
+        }
+
+        // Compute today's page numbers + measure range for piece blocks
+        let todayPageNumbers: number[] = [];
+        let totalPages: number | null = null;
+        let todayMeasureRange: string | null = null;
+        let todayActiveMeasures: { measureNumber: number; pageNumber: number; boundingBox: { x: number; y: number; w: number; h: number } | null }[] = [];
+        if (plan.blockType === "piece" && plan.sheetMusicId != null) {
+          // Prefer explicit task-level ranges (skips warmup). Fall back to the
+          // lessonDay's own measureStart/measureEnd columns, which are always
+          // populated by the scheduler.
+          let minMeasure: number | null = null;
+          let maxMeasure: number | null = null;
+          if (activeDay?.tasks && Array.isArray(activeDay.tasks)) {
+            const taskRanges = (activeDay.tasks as SessionSection[]).filter(
+              t => t.measureStart != null && t.measureEnd != null,
+            );
+            if (taskRanges.length > 0) {
+              minMeasure = Math.min(...taskRanges.map(t => t.measureStart!));
+              maxMeasure = Math.max(...taskRanges.map(t => t.measureEnd!));
+            }
+          }
+          if ((minMeasure == null || maxMeasure == null) && activeDay) {
+            if (activeDay.measureStart && activeDay.measureEnd && activeDay.measureEnd >= activeDay.measureStart) {
+              minMeasure = activeDay.measureStart;
+              maxMeasure = activeDay.measureEnd;
+            }
+          }
+
+          // Try movement-scoped measures first; fall back to the whole sheet
+          // if bar detection never tagged the measures with a movementId.
+          let allMeasures = await storage.getMeasures(plan.sheetMusicId, entry?.movementId ?? null);
+          if (allMeasures.length === 0 && entry?.movementId != null) {
+            allMeasures = await storage.getMeasures(plan.sheetMusicId);
+          }
+          totalPages = allMeasures.length > 0 ? new Set(allMeasures.map(m => m.pageNumber)).size : null;
+
+          if (minMeasure != null && maxMeasure != null) {
+            todayMeasureRange = minMeasure === maxMeasure
+              ? `m. ${minMeasure}`
+              : `mm. ${minMeasure}\u2013${maxMeasure}`;
+            const pageSet = new Set<number>();
+            for (const m of allMeasures) {
+              if (m.measureNumber >= minMeasure && m.measureNumber <= maxMeasure) {
+                pageSet.add(m.pageNumber);
+                todayActiveMeasures.push({
+                  measureNumber: m.measureNumber,
+                  pageNumber: m.pageNumber,
+                  boundingBox: (m.boundingBox as { x: number; y: number; w: number; h: number } | null) ?? null,
+                });
+              }
+            }
+            todayPageNumbers = Array.from(pageSet).sort((a, b) => a - b);
+          }
+        }
+
+        return {
+          planId: plan.id,
+          blockType: plan.blockType,
+          blockName,
+          composerName: entry?.composerName ?? null,
+          composerImageUrl: entry?.composer_image_url ?? null,
+          pieceTitle: entry?.pieceTitle ?? null,
+          movementName: entry?.movementName ?? null,
+          cadence: plan.cadence,
+          cadenceDays: plan.cadenceDays,
+          sortOrder: plan.sortOrder,
+          timeMin: plan.dailyPracticeMinutes,
+          sheetMusicId: plan.sheetMusicId ?? null,
+          status: plan.status,
+          setupState: plan.setupState,
+          sectionsSkipped: plan.sectionsSkipped,
+          totalMeasures: plan.totalMeasures ?? null,
+          pieceId: entry?.pieceId ?? null,
+          movementId: entry?.movementId ?? null,
+          dayNumber,
+          totalDays,
+          progressPercent,
+          daysRemaining,
+          todayPageNumbers,
+          totalPages,
+          todayMeasureRange,
+          todayActiveMeasures,
+          isScheduledToday: scheduled,
+          todayFocus,
+          lessonDayId: activeDay?.id ?? null,
+          lessonDayStatus: activeDay?.status ?? null,
+        };
+      }));
+
+      return res.json(blocks);
+    } catch (err) {
+      console.error("get blocks error:", err);
+      return res.status(500).json({ error: "Failed to load blocks" });
+    }
+  });
+
+  /** POST /api/blocks — create a new practice block. */
+  app.post("/api/blocks", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { blockType, cadence = "daily", cadenceDays, dailyPracticeMinutes = 30, sortOrder = 0, repertoireEntryId, sheetMusicId } = req.body;
+      if (!blockType) return res.status(400).json({ error: "blockType is required" });
+
+      const plan = await storage.createLearningPlan({
+        userId,
+        blockType,
+        cadence,
+        cadenceDays: cadenceDays ?? null,
+        dailyPracticeMinutes,
+        sortOrder,
+        status: blockType === "piece" ? "setup" : "active",
+        setupState: blockType === "piece" ? "needs_score" : "complete",
+        repertoireEntryId: repertoireEntryId ?? null,
+        sheetMusicId: sheetMusicId ?? null,
+        schedulerVersion: 1,
+      });
+
+      // For non-piece blocks, create today's stub lesson immediately.
+      if (blockType === "exercise" || blockType === "sight_reading") {
+        const today = new Date().toISOString().slice(0, 10);
+        const tasks = blockType === "exercise"
+          ? buildExerciseTasks(dailyPracticeMinutes)
+          : buildSightReadingTasks(dailyPracticeMinutes);
+        await storage.createLessonDays([{
+          learningPlanId: plan.id,
+          scheduledDate: today,
+          measureStart: 0,
+          measureEnd: 0,
+          status: "upcoming",
+          tasks,
+        }]);
+      }
+
+      return res.status(201).json(plan);
+    } catch (err) {
+      console.error("create block error:", err);
+      return res.status(500).json({ error: "Failed to create block" });
+    }
+  });
+
+  /** PATCH /api/learning-plans/:id/cadence — update cadence settings for a block. */
+  app.patch("/api/learning-plans/:id/cadence", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      const { cadence, cadenceDays, dailyPracticeMinutes } = req.body;
+      const updated = await storage.updateLearningPlan(id, {
+        ...(cadence && { cadence }),
+        ...(cadenceDays !== undefined && { cadenceDays }),
+        ...(dailyPracticeMinutes !== undefined && { dailyPracticeMinutes }),
+      });
+      if (!updated) return res.status(404).json({ error: "Block not found" });
+      return res.json(updated);
+    } catch (err) {
+      console.error("update cadence error:", err);
+      return res.status(500).json({ error: "Failed to update cadence" });
+    }
+  });
+
+  /** GET /api/practice/today — get or assemble today's unified session. */
+  app.get("/api/practice/today", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const today = new Date().toISOString().slice(0, 10);
+      const todayDow = new Date().getDay();
+
+      const plans = await storage.getActivePlansForUser(userId);
+      const existing = await storage.getPracticeSessionByDate(userId, today);
+      if (plans.length === 0) return res.json(existing ?? null);
+
+      // Assemble the current set of blocks + tasks from the user's active plans.
+      const blocks: PracticeSessionBlock[] = [];
+      const assembledTasks: SessionSection[] = [];
+
+      for (const plan of plans) {
+        const scheduled = isScheduledToday(plan, todayDow);
+
+        let lessonDay = await storage.getLessonDay(plan.id, today);
+        if (!lessonDay) {
+          let tasks: SessionSection[];
+          if (plan.blockType === "exercise") {
+            tasks = buildExerciseTasks(plan.dailyPracticeMinutes);
+          } else if (plan.blockType === "sight_reading") {
+            tasks = buildSightReadingTasks(plan.dailyPracticeMinutes);
+          } else {
+            // Piece block with no generated lesson yet — create a minimal placeholder.
+            tasks = [{
+              type: "piece_practice",
+              label: "Piece practice",
+              durationMin: plan.dailyPracticeMinutes,
+              tasks: [{ text: "Continue learning — generate a lesson plan first", completed: false }],
+            }];
+          }
+          const [created] = await storage.createLessonDays([{
+            learningPlanId: plan.id,
+            scheduledDate: today,
+            measureStart: 0,
+            measureEnd: plan.totalMeasures ?? 0,
+            status: "upcoming",
+            tasks,
+          }]);
+          lessonDay = created;
+        }
+
+        let blockName: string;
+        if (plan.blockType === "exercise") blockName = "Exercises";
+        else if (plan.blockType === "sight_reading") blockName = "Sight-reading";
+        else blockName = await getPieceBlockName(plan);
+
+        blocks.push({
+          planId: plan.id,
+          lessonDayId: lessonDay.id,
+          blockType: plan.blockType,
+          blockName,
+          timeMin: plan.dailyPracticeMinutes,
+          isOptional: !scheduled,
+          sheetMusicId: plan.sheetMusicId ?? undefined,
+        });
+
+        const sectionTasks: SessionSection[] = Array.isArray(lessonDay.tasks) ? (lessonDay.tasks as SessionSection[]) : [];
+        for (const s of sectionTasks) {
+          assembledTasks.push({
+            ...s,
+            planId: plan.id,
+            lessonDayId: lessonDay.id,
+            blockType: plan.blockType,
+            sheetMusicId: plan.sheetMusicId ?? undefined,
+          });
+        }
+      }
+
+      if (existing) {
+        // Refresh the session in-place if the set of plan IDs has changed, as
+        // long as the user hasn't completed any work yet. Once a task has been
+        // checked off (or the session was marked completed), preserve it so
+        // progress isn't clobbered.
+        const existingPlanIds = new Set(
+          (Array.isArray(existing.blocks) ? existing.blocks : []).map(
+            (b: unknown) => (b as { planId?: number }).planId,
+          ).filter((v): v is number => typeof v === "number"),
+        );
+        const currentPlanIds = new Set(blocks.map((b) => b.planId));
+        const sameSet = existingPlanIds.size === currentPlanIds.size
+          && [...currentPlanIds].every((id) => existingPlanIds.has(id));
+
+        const existingTasks: SessionSection[] = Array.isArray(existing.tasks) ? (existing.tasks as SessionSection[]) : [];
+        const hasProgress =
+          existing.status === "completed"
+          || existingTasks.some((s) => {
+            const subs = Array.isArray((s as { tasks?: unknown }).tasks) ? (s as { tasks: Array<{ completed?: boolean }> }).tasks : [];
+            return subs.some((t) => t?.completed === true);
+          });
+
+        if (sameSet || hasProgress) {
+          return res.json(existing);
+        }
+        const updated = await storage.updatePracticeSession(existing.id, {
+          blocks,
+          tasks: assembledTasks,
+          status: "upcoming",
+        });
+        return res.json(updated ?? existing);
+      }
+
+      const session = await storage.createPracticeSession({
+        userId,
+        sessionDate: today,
+        status: "upcoming",
+        blocks,
+        tasks: assembledTasks,
+      });
+
+      return res.json(session);
+    } catch (err) {
+      console.error("practice/today error:", err);
+      return res.status(500).json({ error: "Failed to build today's session" });
+    }
+  });
+
+  /** PATCH /api/practice/sessions/:id — update session (including completion). */
+  app.patch("/api/practice/sessions/:id", async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"] as string;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = parseInt(req.params.id, 10);
+      const { status, tasks, startedAt } = req.body;
+
+      const session = await storage.getPracticeSessionById(id);
+      if (!session) return res.status(404).json({ error: "Session not found" });
+      if (session.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+
+      const updates: Record<string, unknown> = {};
+      if (tasks) updates.tasks = tasks;
+      if (startedAt) updates.startedAt = new Date(startedAt);
+      if (status) {
+        updates.status = status;
+        if (status === "active" && !session.startedAt) updates.startedAt = new Date();
+        if (status === "completed") {
+          updates.completedAt = new Date();
+          // Mark each block's lessonDay as completed.
+          const blocks = (session.blocks ?? []) as PracticeSessionBlock[];
+          const uniqueLessonDayIds = Array.from(new Set(blocks.map(b => b.lessonDayId)));
+          await Promise.all(uniqueLessonDayIds.map(ldId =>
+            storage.updateLessonDay(ldId, { status: "completed", completedAt: new Date() })
+          ));
+        }
+      }
+
+      const updated = await storage.updatePracticeSession(id, updates as any);
+      return res.json(updated);
+    } catch (err) {
+      console.error("patch practice session error:", err);
+      return res.status(500).json({ error: "Failed to update session" });
     }
   });
 

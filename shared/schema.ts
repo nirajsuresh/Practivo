@@ -6,11 +6,17 @@ import { z } from "zod";
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
+  email: text("email").unique(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
   password: text("password").notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
+  email: true,
+  firstName: true,
+  lastName: true,
   password: true,
 });
 
@@ -207,17 +213,32 @@ export type SheetMusic = typeof sheetMusic.$inferSelect;
 export const learningPlans = pgTable("learning_plans", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().references(() => users.id),
-  repertoireEntryId: integer("repertoire_entry_id").notNull().references(() => repertoireEntries.id),
+  /** Null for exercise and sight_reading blocks (no repertoire entry required). */
+  repertoireEntryId: integer("repertoire_entry_id").references(() => repertoireEntries.id),
   /** Sheet music used for this plan (bars, thumbnails); set when plan is created from the wizard */
   sheetMusicId: integer("sheet_music_id").references(() => sheetMusic.id),
   dailyPracticeMinutes: integer("daily_practice_minutes").notNull().default(30),
   targetCompletionDate: text("target_completion_date"), // YYYY-MM-DD
   totalMeasures: integer("total_measures"), // populated after sheet music processed
   status: text("status").notNull().default("setup"), // setup | active | paused | completed
+  /** Piece-block checklist progression. Advances as user completes each setup step.
+   * 'needs_score' | 'needs_bars' | 'needs_sections' | 'needs_generation' | 'complete'
+   * Non-piece blocks (exercise/sight_reading) skip straight to 'complete'. */
+  setupState: text("setup_state").notNull().default("complete"),
+  /** True when the user explicitly skipped section marking rather than completing it. */
+  sectionsSkipped: boolean("sections_skipped").notNull().default(false),
   /** Scheduler version: 1 = legacy waterfall, 2 = passage-state-machine scheduler. */
   schedulerVersion: integer("scheduler_version").notNull().default(1),
   /** Timestamp of most recent dynamic replan (v2 only). */
   lastReplanAt: timestamp("last_replan_at"),
+  /** Block type determines how this plan participates in the unified daily session. */
+  blockType: text("block_type").notNull().default("piece"), // 'piece' | 'exercise' | 'sight_reading'
+  /** How often this block is scheduled. */
+  cadence: text("cadence").notNull().default("daily"), // 'daily' | 'weekdays' | 'weekends' | 'custom'
+  /** Weekday numbers [0–6] for custom cadence; null for non-custom. */
+  cadenceDays: jsonb("cadence_days").$type<number[]>(),
+  /** Position in the home page drag-and-drop order. Lower = earlier in session. */
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -361,6 +382,15 @@ export type SessionSection = {
   measureEnd?: number;   // explicit measure range; when absent, parsed from label string
   /** v2: structural role of this block within the session arc. */
   role?: TaskRole;
+  // ── Unified session fields — set when assembled across multiple blocks ───────
+  /** learningPlans.id this section came from; used to route completion. */
+  planId?: number;
+  /** lessonDays.id this section came from; marked complete at session end. */
+  lessonDayId?: number;
+  /** Block type for UI rendering decisions (score panel, placeholders). */
+  blockType?: string;
+  /** Sheet music id for the score panel; null for exercise/sight-reading sections. */
+  sheetMusicId?: number;
 };
 
 export const insertLessonDaySchema = createInsertSchema(lessonDays).omit({ id: true });
@@ -652,3 +682,36 @@ export const passageProgress = pgTable("passage_progress", {
 export const insertPassageProgressSchema = createInsertSchema(passageProgress).omit({ id: true, updatedAt: true });
 export type InsertPassageProgress = z.infer<typeof insertPassageProgressSchema>;
 export type PassageProgress = typeof passageProgress.$inferSelect;
+
+// ── Practice Sessions (unified daily sessions across all blocks) ─────────────
+// One row per user per calendar day. Assembles tasks from all active blocks
+// scheduled for that day. The session page renders this as a single scroll-snap flow.
+
+export type PracticeSessionBlock = {
+  planId: number;
+  lessonDayId: number;
+  blockType: string;      // 'piece' | 'exercise' | 'sight_reading'
+  blockName: string;      // display name (piece title or "Exercises" etc.)
+  timeMin: number;        // allocated minutes for this block
+  isOptional: boolean;    // true when block's cadence doesn't include today
+  sheetMusicId?: number;  // piece blocks only
+};
+
+export const practiceSessions = pgTable("practice_sessions", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  sessionDate: text("session_date").notNull(), // YYYY-MM-DD
+  status: text("status").notNull().default("upcoming"), // upcoming | active | completed
+  /** Snapshot of block order and metadata at session creation time. */
+  blocks: jsonb("blocks").notNull().$type<PracticeSessionBlock[]>().default(sql`'[]'::jsonb`),
+  /** Assembled SessionSection[] from all blocks (in block order). */
+  tasks: jsonb("tasks").notNull().$type<SessionSection[]>().default(sql`'[]'::jsonb`),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [unique("practice_sessions_user_date_unique").on(table.userId, table.sessionDate)]);
+
+export const insertPracticeSessionSchema = createInsertSchema(practiceSessions).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPracticeSession = z.infer<typeof insertPracticeSessionSchema>;
+export type PracticeSession = typeof practiceSessions.$inferSelect;

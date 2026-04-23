@@ -22,14 +22,15 @@ import {
   type Passage, type InsertPassage,
   type PassageProgress, type InsertPassageProgress,
   type SessionTaskFeedback, type InsertSessionTaskFeedback,
+  type PracticeSession, type InsertPracticeSession,
   users, composers, pieces, movements, repertoireEntries, userProfiles,
   pieceAnalyses, pieceMilestones,
   learningPlans, sheetMusic, measures, lessonDays, measureProgress, communityScores,
   sheetMusicPages, planSections, planSectionPhases, barFlags, planSuggestions, barAnnotations,
-  passages, passageProgress, sessionTaskFeedback,
+  passages, passageProgress, sessionTaskFeedback, practiceSessions,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, ilike, and, desc, sql, ne, inArray, isNull, count, gte } from "drizzle-orm";
+import { eq, ilike, and, desc, sql, ne, inArray, notInArray, isNull, count, gte } from "drizzle-orm";
 
 const CANONICAL_REPERTOIRE_STATUSES = [
   "Want to learn",
@@ -60,6 +61,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUserPassword(id: string, hashedPassword: string): Promise<void>;
 
   // ── Composers ────────────────────────────────────────────────────────────
   searchComposers(query: string): Promise<Composer[]>;
@@ -74,6 +76,12 @@ export interface IStorage {
   createPiece(piece: InsertPiece): Promise<Piece>;
   getPieceAnalysis(pieceId: number): Promise<PieceAnalysis | undefined>;
   savePieceAnalysis(data: InsertPieceAnalysis): Promise<PieceAnalysis>;
+  getPieceSuggestions(n: number, excludedPieceIds: number[]): Promise<(Piece & { composerName: string; composerImageUrl: string | null })[]>;
+  getPiecePresets(): Promise<Record<string, Array<{
+    id: number; title: string; displayTitle: string;
+    composerId: number; composerName: string; composerImageUrl: string | null;
+    movementId: number | null; movementName: string | null;
+  }>>>;
 
   // ── Movements ────────────────────────────────────────────────────────────
   getMovementsByPiece(pieceId: number): Promise<Movement[]>;
@@ -137,9 +145,17 @@ export interface IStorage {
   getLearningPlanById(id: number): Promise<LearningPlan | undefined>;
   getLearningPlanBySheetMusic(sheetMusicId: number): Promise<LearningPlan | undefined>;
   getLearningPlanBySheetAndUser(sheetMusicId: number, userId: string): Promise<LearningPlan | undefined>;
+  getActivePlansForUser(userId: string): Promise<LearningPlan[]>;
   createLearningPlan(plan: InsertLearningPlan): Promise<LearningPlan>;
   updateLearningPlan(id: number, updates: Partial<InsertLearningPlan>): Promise<LearningPlan | undefined>;
+  updateLearningPlanOrder(updates: { id: number; sortOrder: number }[]): Promise<void>;
   deleteLearningPlan(id: number, userId: string): Promise<boolean>;
+
+  // ── Practice Sessions ─────────────────────────────────────────────────────
+  createPracticeSession(data: InsertPracticeSession): Promise<PracticeSession>;
+  getPracticeSessionByDate(userId: string, date: string): Promise<PracticeSession | undefined>;
+  getPracticeSessionById(id: number): Promise<PracticeSession | undefined>;
+  updatePracticeSession(id: number, updates: Partial<InsertPracticeSession>): Promise<PracticeSession | undefined>;
 
   // ── Sheet Music ──────────────────────────────────────────────────────────
   createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic>;
@@ -258,6 +274,10 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async updateUserPassword(id: string, hashedPassword: string): Promise<void> {
+    await db.update(users).set({ password: hashedPassword }).where(eq(users.id, id));
+  }
+
   // ── Composers ────────────────────────────────────────────────────────────
 
   async searchComposers(query: string): Promise<Composer[]> {
@@ -365,6 +385,95 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return analysis;
+  }
+
+  async getPieceSuggestions(n: number, excludedPieceIds: number[]): Promise<(Piece & { composerName: string; composerImageUrl: string | null })[]> {
+    const selectFields = {
+      id: pieces.id,
+      title: pieces.title,
+      composerId: pieces.composerId,
+      instrument: pieces.instrument,
+      imslpUrl: pieces.imslpUrl,
+      keySignature: pieces.keySignature,
+      yearComposed: pieces.yearComposed,
+      difficulty: pieces.difficulty,
+      composerName: composers.name,
+      composerImageUrl: composers.imageUrl,
+    };
+    return db.select(selectFields).from(pieces)
+      .innerJoin(composers, eq(pieces.composerId, composers.id))
+      .where(excludedPieceIds.length > 0 ? notInArray(pieces.id, excludedPieceIds) : undefined)
+      .orderBy(sql`RANDOM()`)
+      .limit(n);
+  }
+
+  async getPiecePresets(): Promise<Record<string, Array<{
+    id: number; title: string; displayTitle: string;
+    composerId: number; composerName: string; composerImageUrl: string | null;
+    movementId: number | null; movementName: string | null;
+  }>>> {
+    type PresetDef = { pieceQuery: string; movementQuery?: string; displayTitle: string };
+    const LEVELS: Record<string, PresetDef[]> = {
+      beginner: [
+        { pieceQuery: "Für Elise",           displayTitle: "Für Elise" },
+        { pieceQuery: "Well-Tempered Clavier Book 1", movementQuery: "BWV 846, Prelude", displayTitle: "Prelude No. 1 in C Major" },
+        { pieceQuery: "Préludes Op. 28",     movementQuery: "E minor",  displayTitle: "Prelude No. 4 in E Minor" },
+      ],
+      novice: [
+        { pieceQuery: "Liebesträume",                                    displayTitle: "Liebestraum No. 3" },
+        { pieceQuery: "Suite bergamasque",   movementQuery: "lune",      displayTitle: "Clair de Lune" },
+        { pieceQuery: "Sonata KV 331",       movementQuery: "Turca",     displayTitle: "Turkish March" },
+      ],
+      intermediate: [
+        { pieceQuery: "Morceaux de fantaisie Op. 3", movementQuery: "Prélude", displayTitle: "Prélude in C-sharp minor" },
+        { pieceQuery: "Six Pieces Op. 118",          movementQuery: "A major", displayTitle: "Intermezzo Op. 118 No. 2" },
+        { pieceQuery: "Arabeske Op. 18",                                        displayTitle: "Arabeske Op. 18" },
+      ],
+      advanced: [
+        { pieceQuery: "Chopin Ballade no. 1 G minor Op. 23", displayTitle: "Ballade No. 1" },
+        { pieceQuery: "Jeux d'eau",          displayTitle: "Jeux d'eau" },
+        { pieceQuery: "Appassionata",        displayTitle: "Appassionata" },
+      ],
+      expert: [
+        { pieceQuery: "Gaspard de la nuit",             displayTitle: "Gaspard de la nuit" },
+        { pieceQuery: "Sonata no. 3 F-sharp minor",     displayTitle: "Sonata No. 3" },
+        { pieceQuery: "Liszt Piano Sonata B minor S.178", displayTitle: "Sonata in B Minor" },
+      ],
+    };
+
+    const result: Record<string, Array<{
+      id: number; title: string; displayTitle: string;
+      composerId: number; composerName: string; composerImageUrl: string | null;
+      movementId: number | null; movementName: string | null;
+    }>> = {};
+
+    for (const [level, defs] of Object.entries(LEVELS)) {
+      result[level] = (await Promise.all(defs.map(async (def) => {
+        const found = await this.searchPieces(def.pieceQuery);
+        if (!found.length) return null;
+        const piece = found[0];
+
+        const [comp] = await db.select({ imageUrl: composers.imageUrl })
+          .from(composers).where(eq(composers.id, piece.composerId));
+
+        let movementId: number | null = null;
+        let movementName: string | null = null;
+        if (def.movementQuery) {
+          const mvs = await this.getMovementsByPiece(piece.id);
+          const q = def.movementQuery.toLowerCase();
+          const match = mvs.find(m => m.name.toLowerCase().includes(q));
+          if (match) { movementId = match.id; movementName = match.name; }
+        }
+
+        return {
+          id: piece.id, title: piece.title, displayTitle: def.displayTitle,
+          composerId: piece.composerId, composerName: piece.composerName,
+          composerImageUrl: comp?.imageUrl ?? null,
+          movementId, movementName,
+        };
+      }))).filter((x): x is NonNullable<typeof x> => x !== null);
+    }
+    return result;
   }
 
   // ── Movements ────────────────────────────────────────────────────────────
@@ -871,6 +980,46 @@ export class DatabaseStorage implements IStorage {
     return true;
   }
 
+  async getActivePlansForUser(userId: string): Promise<LearningPlan[]> {
+    return db.select().from(learningPlans)
+      .where(and(eq(learningPlans.userId, userId), ne(learningPlans.status, "completed")))
+      .orderBy(learningPlans.sortOrder, learningPlans.createdAt);
+  }
+
+  async updateLearningPlanOrder(updates: { id: number; sortOrder: number }[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      for (const { id, sortOrder } of updates) {
+        await tx.update(learningPlans).set({ sortOrder, updatedAt: new Date() }).where(eq(learningPlans.id, id));
+      }
+    });
+  }
+
+  // ── Practice Sessions ─────────────────────────────────────────────────────
+
+  async createPracticeSession(data: InsertPracticeSession): Promise<PracticeSession> {
+    const [row] = await db.insert(practiceSessions).values(data).returning();
+    return row;
+  }
+
+  async getPracticeSessionByDate(userId: string, date: string): Promise<PracticeSession | undefined> {
+    const [row] = await db.select().from(practiceSessions)
+      .where(and(eq(practiceSessions.userId, userId), eq(practiceSessions.sessionDate, date)));
+    return row;
+  }
+
+  async getPracticeSessionById(id: number): Promise<PracticeSession | undefined> {
+    const [row] = await db.select().from(practiceSessions).where(eq(practiceSessions.id, id));
+    return row;
+  }
+
+  async updatePracticeSession(id: number, updates: Partial<InsertPracticeSession>): Promise<PracticeSession | undefined> {
+    const [row] = await db.update(practiceSessions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(practiceSessions.id, id))
+      .returning();
+    return row;
+  }
+
   // ── Sheet Music ──────────────────────────────────────────────────────────
 
   async createSheetMusic(data: InsertSheetMusic): Promise<SheetMusic> {
@@ -895,6 +1044,12 @@ export class DatabaseStorage implements IStorage {
 
   async saveSheetMusicPages(pages: Array<{ sheetMusicId: number; pageNumber: number; imageUrl: string; width: number; height: number }>): Promise<void> {
     if (!pages.length) return;
+    // Replace semantics: delete any pre-existing rows for these sheetMusicIds so
+    // re-processing doesn't leave duplicate (sheetMusicId, pageNumber) rows.
+    const ids = Array.from(new Set(pages.map((p) => p.sheetMusicId)));
+    if (ids.length > 0) {
+      await db.delete(sheetMusicPages).where(inArray(sheetMusicPages.sheetMusicId, ids));
+    }
     await db.insert(sheetMusicPages).values(pages);
   }
 
@@ -998,6 +1153,7 @@ export class DatabaseStorage implements IStorage {
     if (!lesson) return null;
     const plan = await this.getLearningPlanById(lesson.learningPlanId);
     if (!plan || plan.userId !== userId) return null;
+    if (!plan.repertoireEntryId) return null;
     const [ctx] = await db
       .select({ pieceTitle: pieces.title, composerName: composers.name })
       .from(repertoireEntries)

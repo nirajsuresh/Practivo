@@ -608,7 +608,7 @@ export default function ScorePage() {
       {/* Sticky header */}
       <div className="sticky top-0 z-40 flex items-center justify-between px-4 py-3 bg-[#F4F1EA]/95 backdrop-blur-sm border-b border-[#D6D1C7]">
         <button
-          onClick={() => { if (window.history.length > 1) window.history.back(); else setLocation("/"); }}
+          onClick={() => { if (window.history.length > 1) window.history.back(); else setLocation("/home"); }}
           className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ChevronLeft className="w-4 h-4" />

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: reperto
+    name: practivo
     runtime: node
     buildCommand: npm install && npm run build
     startCommand: npm start

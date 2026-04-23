@@ -1,7 +1,7 @@
 /**
  * PDF → page image renderer.
  * Uses pdftoppm (poppler) via child_process — reliable, no pdfjs Node.js compatibility issues.
- * No imports from Reperto application code.
+ * No imports from Practivo application code.
  *
  * Renders pages with bounded parallelism; onProgress reports completed count.
  */
@@ -24,10 +24,10 @@ function resolvePopplerBinary(tool: "pdfinfo" | "pdftoppm"): string {
   const candidates: string[] = [];
 
   if (tool === "pdfinfo") {
-    if (process.env.REPERTO_PDFINFO_PATH) candidates.push(process.env.REPERTO_PDFINFO_PATH);
+    if (process.env.FERMATA_PDFINFO_PATH) candidates.push(process.env.FERMATA_PDFINFO_PATH);
     if (process.env.PDFINFO_PATH) candidates.push(process.env.PDFINFO_PATH);
   } else {
-    if (process.env.REPERTO_PDFTOPPM_PATH) candidates.push(process.env.REPERTO_PDFTOPPM_PATH);
+    if (process.env.FERMATA_PDFTOPPM_PATH) candidates.push(process.env.FERMATA_PDFTOPPM_PATH);
     if (process.env.PDFTOPPM_PATH) candidates.push(process.env.PDFTOPPM_PATH);
   }
 

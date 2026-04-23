@@ -1,7 +1,7 @@
 /**
  * ScoreBars – PDF sheet music bar detection module.
  *
- * ISOLATION BOUNDARY: This module has no imports from the Reperto
+ * ISOLATION BOUNDARY: This module has no imports from the Practivo
  * application (no Drizzle, no shared/schema, no Express).
  * It takes a file path, returns typed plain objects.
  *

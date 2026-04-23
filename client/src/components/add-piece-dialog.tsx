@@ -10,8 +10,6 @@ import {
   DialogTrigger 
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableCombobox, MultiSelectCombobox } from "@/components/searchable-combobox";
 import { Plus, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -60,10 +58,19 @@ export interface NewPieceData {
 
 interface AddPieceDialogProps {
   onAdd?: (piece: NewPieceData) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  initialQuery?: string;
 }
 
-export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
-  const [open, setOpen] = useState(false);
+export function AddPieceDialog({ onAdd, open: controlledOpen, onOpenChange, initialQuery }: AddPieceDialogProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen! : internalOpen;
+  const setOpen = (val: boolean) => {
+    if (!isControlled) setInternalOpen(val);
+    onOpenChange?.(val);
+  };
   const [dialogContainer, setDialogContainer] = useState<HTMLDivElement | null>(null);
   const [composerQuery, setComposerQuery] = useState("");
   const [pieceQuery, setPieceQuery] = useState("");
@@ -72,8 +79,6 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   const [selectedComposerId, setSelectedComposerId] = useState("");
   const [selectedPieceId, setSelectedPieceId] = useState("");
   const [selectedMovementIds, setSelectedMovementIds] = useState<string[]>([]);
-  const [status, setStatus] = useState("In Progress");
-  const [startedDate, setStartedDate] = useState("");
 
   const autoFillRef = useRef(0);
   const [lastUnifiedResult, setLastUnifiedResult] = useState<UnifiedResult | null>(null);
@@ -147,10 +152,10 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
   }, [selectedPieceId]);
 
   useEffect(() => {
-    if (status === "Want to learn") {
-      setStartedDate("");
+    if (open && initialQuery) {
+      setUnifiedQuery(initialQuery);
     }
-  }, [status]);
+  }, [open, initialQuery]);
 
   const handleUnifiedSelect = (value: string) => {
     const result = unifiedResults.find(r => {
@@ -175,8 +180,6 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
     setSelectedComposerId("");
     setSelectedPieceId("");
     setSelectedMovementIds([]);
-    setStatus("Learning");
-    setStartedDate("");
     setComposerQuery("");
     setPieceQuery("");
     setUnifiedQuery("");
@@ -199,8 +202,8 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
       composer: composerName,
       piece: pieceTitle,
       movements: movementNames,
-      status,
-      date: status === "Want to learn" ? "—" : (startedDate || new Date().toISOString().split("T")[0]),
+      status: "In Progress",
+      date: new Date().toISOString().split("T")[0],
       composerId: Number(selectedComposerId),
       pieceId: Number(selectedPieceId),
       movementIds: selectedMovementIds.map(Number),
@@ -221,20 +224,25 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
 
   const composerOptions = composers.map(c => ({ value: c.id.toString(), label: c.name, sortKey: c.name.split(" ").pop() || c.name }));
   const pieceOptions = pieces.map(p => ({ value: p.id.toString(), label: p.title }));
-  const movementOptions = movements.map(m => ({ value: m.id.toString(), label: m.name }));
-
-  const isWantToLearn = status === "Want to learn";
+  const realMovements = movements.filter(m => {
+    const name = m.name?.trim();
+    return name && name !== "-" && name !== "—";
+  });
+  const movementOptions = realMovements.map(m => ({ value: m.id.toString(), label: m.name }));
+  const movementsDisabled = !selectedPieceId || realMovements.length === 0;
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
       setOpen(isOpen);
       if (!isOpen) handleReset();
     }}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="gap-2" data-testid="button-add-piece">
-          <Plus className="w-4 h-4" /> Add Piece
-        </Button>
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button size="sm" variant="outline" className="gap-2" data-testid="button-add-piece">
+            <Plus className="w-4 h-4" /> Add Piece
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent ref={setDialogContainer} className="sm:max-w-[425px] overflow-visible">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Add New Piece</DialogTitle>
@@ -301,44 +309,24 @@ export function AddPieceDialog({ onAdd }: AddPieceDialogProps) {
             />
           </div>
           <div className="grid gap-2">
-            <Label>Movement(s)</Label>
+            <Label className={movementsDisabled ? "text-muted-foreground" : ""}>Movement(s)</Label>
             <MultiSelectCombobox
               options={movementOptions}
               values={selectedMovementIds}
               onValuesChange={setSelectedMovementIds}
               onSearch={() => {}}
-              placeholder={movements.length === 0 ? "No movements available" : "Select movements (optional)..."}
+              placeholder={
+                !selectedPieceId
+                  ? "Select a piece first"
+                  : realMovements.length === 0
+                  ? "No movements available"
+                  : "Select movements (optional)..."
+              }
               searchPlaceholder="Search movements..."
               emptyMessage="No movements for this piece."
               isLoading={movementsLoading}
-              disabled={!selectedPieceId || movements.length === 0}
+              disabled={movementsDisabled}
               portalContainer={dialogContainer}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label>Status</Label>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger data-testid="select-status">
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Want to learn">Want to learn</SelectItem>
-                <SelectItem value="Up next">Up next</SelectItem>
-                <SelectItem value="In Progress">In Progress</SelectItem>
-                <SelectItem value="Maintaining">Maintaining</SelectItem>
-                <SelectItem value="Resting">Resting</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label className={isWantToLearn ? "text-muted-foreground" : ""}>Started</Label>
-            <Input 
-              type="date" 
-              value={startedDate} 
-              onChange={(e) => setStartedDate(e.target.value)}
-              disabled={isWantToLearn}
-              className={isWantToLearn ? "opacity-40" : ""}
-              data-testid="input-started-date"
             />
           </div>
         </div>

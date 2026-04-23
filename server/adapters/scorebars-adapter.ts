@@ -1,5 +1,5 @@
 /**
- * ScoreBars adapter — the only place in Reperto that imports from server/scorebars/.
+ * ScoreBars adapter — the only place in Practivo that imports from server/scorebars/.
  *
  * To switch to a remote ScoreBars microservice later, only this file changes:
  * replace the direct import with HTTP calls to the service URL.

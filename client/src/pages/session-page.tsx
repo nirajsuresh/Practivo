@@ -1,30 +1,23 @@
 import { useParams, Link, useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
-import { Layout } from "@/components/layout";
-import { Button } from "@/components/ui/button";
-import { SessionFeedbackModal } from "@/components/session-feedback-modal";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ArrowLeft,
-  Check,
+  ArrowUp,
+  ArrowDown,
   ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Flag,
   Music2,
-  Play,
-  Plus,
-  StickyNote,
 } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
-import { measuresUsePageGeometry, useSheetPageUrl } from "@/lib/sheet-page";
-import { getPhaseColor } from "@/lib/palette";
-import { PHASE_LABELS, type PhaseType, type SessionSection, type SessionTask } from "@shared/schema";
+import { type SessionSection } from "@shared/schema";
+import { SessionFeedbackModal } from "@/components/session-feedback-modal";
+import { AnnotationPopover, type BarAnnotation } from "@/components/session-score-view";
+import {
+  SegmentCard,
+  labelForSegment,
+  type MeasureRow,
+} from "@/components/session-rendering";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -45,29 +38,6 @@ type LessonDay = {
 
 type BarFlag = { id: number; measureId: number; note: string | null; resolved: boolean };
 
-type BarAnnotation = {
-  id: number;
-  lessonDayId: number;
-  learningPlanId: number;
-  userId: string;
-  measureStart: number;
-  measureEnd: number;
-  text: string;
-  sessionNumber: number;
-  sessionDate: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type PlanSection = {
-  id: number;
-  name: string;
-  measureStart: number;
-  measureEnd: number;
-  difficulty: number;
-  displayOrder: number;
-};
-
 type LearningPlan = {
   id: number;
   dailyPracticeMinutes: number;
@@ -83,79 +53,7 @@ type SessionBundle = {
   dayIndex: number;
 };
 
-type BoundingBox = { x: number; y: number; w: number; h: number };
-
-type MeasureRow = {
-  id: number;
-  measureNumber: number;
-  pageNumber: number | null;
-  boundingBox: BoundingBox | null;
-  imageUrl: string | null;
-};
-
-type BarColorFn = (measureNumber: number) => { border: string; bg: string } | null;
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Group a sorted list of measures into systems (horizontal rows as they appear in the score). */
-function groupIntoSystems(bars: MeasureRow[], tolerance = 0.04): MeasureRow[][] {
-  if (bars.length === 0) return [];
-  const sorted = [...bars].sort((a, b) => {
-    const pa = a.pageNumber ?? 0;
-    const pb = b.pageNumber ?? 0;
-    if (pa !== pb) return pa - pb;
-    const ya = a.boundingBox?.y ?? 0;
-    const yb = b.boundingBox?.y ?? 0;
-    if (Math.abs(ya - yb) > tolerance) return ya - yb;
-    return (a.boundingBox?.x ?? 0) - (b.boundingBox?.x ?? 0);
-  });
-
-  const systems: MeasureRow[][] = [];
-  let current: MeasureRow[] = [sorted[0]];
-
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = current[current.length - 1];
-    const curr = sorted[i];
-    const samePage = (prev.pageNumber ?? 0) === (curr.pageNumber ?? 0);
-    const sameRow =
-      samePage &&
-      Math.abs((prev.boundingBox?.y ?? 0) - (curr.boundingBox?.y ?? 0)) < tolerance;
-
-    if (sameRow) {
-      current.push(curr);
-    } else {
-      systems.push(current);
-      current = [curr];
-    }
-  }
-  systems.push(current);
-  return systems;
-}
-
-/** Parse measure range from a label string like "Section A mm. 1–5 — Chunk" → { start: 1, end: 5 } */
-function parseLabelRange(label: string): { start: number; end: number } | null {
-  const m = label.match(/mm\.\s*(\d+)[–\-–](\d+)/);
-  if (m) return { start: parseInt(m[1], 10), end: parseInt(m[2], 10) };
-  const s = label.match(/mm\.\s*(\d+)/);
-  if (s) return { start: parseInt(s[1], 10), end: parseInt(s[1], 10) };
-  return null;
-}
-
-const NEUTRAL_BAR_COLOR = { border: "#8A877F", bg: "rgba(138,135,127,0.10)" };
-
-function buildBarColorFn(phaseType: string | null): BarColorFn {
-  return (_measureNum: number) => phaseType ? getPhaseColor(phaseType) : NEUTRAL_BAR_COLOR;
-}
-
-function taskKey(sIdx: number, tIdx: number) {
-  return `${sIdx}:${tIdx}`;
-}
-
-function formatTime(sec: number) {
-  const m = String(Math.floor(sec / 60)).padStart(2, "0");
-  const s = String(sec % 60).padStart(2, "0");
-  return `${m}:${s}`;
-}
 
 function formatSessionDate(iso: string) {
   return new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
@@ -166,632 +64,8 @@ function formatSessionDate(iso: string) {
   });
 }
 
-// ── ScoreStepView ─────────────────────────────────────────────────────────────
-
-function ScoreStepView({
-  bars,
-  allBarsForIndex,
-  contextBars,
-  sheetId,
-  focusedBarIdx,
-  onFocusBar,
-  flaggedBars,
-  onToggleFlag,
-  getBarColor,
-  barTooltip,
-  onAddAnnotation,
-  annotations,
-  onAnnotationClick,
-}: {
-  bars: MeasureRow[];
-  allBarsForIndex: MeasureRow[];
-  contextBars: MeasureRow[];
-  sheetId: number | null;
-  focusedBarIdx: number | null;
-  onFocusBar: (idx: number | null) => void;
-  flaggedBars: Map<number, number>;
-  onToggleFlag: (measureId: number, flagId: number | undefined) => void;
-  getBarColor: BarColorFn;
-  barTooltip: string | null;
-  onAddAnnotation?: (measureStart: number, measureEnd: number) => void;
-  annotations?: BarAnnotation[];
-  onAnnotationClick?: (annotation: BarAnnotation) => void;
-}) {
-  const pageUrl = useSheetPageUrl(sheetId);
-  const [heightScale, setHeightScale] = useState(1);
-  const [hoveredBarIdx, setHoveredBarIdx] = useState<number | null>(null);
-  const dragRef = useRef<{ startY: number; startScale: number } | null>(null);
-  const scoreInnerRef = useRef<HTMLDivElement>(null);
-  const [naturalScoreH, setNaturalScoreH] = useState<number | null>(null);
-  const [selectedRange, setSelectedRange] = useState<{ start: number; end: number } | null>(null);
-  const selectDragRef = useRef<{ startMeasure: number } | null>(null);
-
-  const isInSelection = (n: number) =>
-    selectedRange != null && n >= selectedRange.start && n <= selectedRange.end;
-
-  useEffect(() => {
-    function onMouseUp() { selectDragRef.current = null; }
-    function onKeyDown(e: KeyboardEvent) { if (e.key === "Escape") setSelectedRange(null); }
-    window.addEventListener("mouseup", onMouseUp);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("mouseup", onMouseUp);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
-
-  function startResize(e: ReactMouseEvent) {
-    e.preventDefault();
-    dragRef.current = { startY: e.clientY, startScale: heightScale };
-    const onMove = (ev: globalThis.MouseEvent) => {
-      if (!dragRef.current) return;
-      const delta = ev.clientY - dragRef.current.startY;
-      const next = Math.max(0.4, Math.min(5, dragRef.current.startScale + delta / 200));
-      setHeightScale(next);
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
-  function startResizeTouch(e: React.TouchEvent) {
-    const touch = e.touches[0];
-    dragRef.current = { startY: touch.clientY, startScale: heightScale };
-    const onMove = (ev: TouchEvent) => {
-      if (!dragRef.current) return;
-      const t = ev.touches[0];
-      const delta = t.clientY - dragRef.current.startY;
-      const next = Math.max(0.4, Math.min(5, dragRef.current.startScale + delta / 200));
-      setHeightScale(next);
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener("touchmove", onMove);
-      window.removeEventListener("touchend", onUp);
-    };
-    window.addEventListener("touchmove", onMove, { passive: true });
-    window.addEventListener("touchend", onUp);
-  }
-
-  // Build measure → annotation map for indicator display
-  const annotationByMeasure = new Map<number, BarAnnotation>();
-  for (const ann of (annotations ?? [])) {
-    for (let n = ann.measureStart; n <= ann.measureEnd; n++) {
-      annotationByMeasure.set(n, ann);
-    }
-  }
-
-  const useFullPageScore =
-    sheetId != null && bars.length > 0 && measuresUsePageGeometry(bars);
-
-  const scorePageNumbers = useFullPageScore
-    ? Array.from(new Set(bars.filter((b) => b.pageNumber != null).map((b) => b.pageNumber!))).sort((a, b) => a - b)
-    : [];
-
-  if (bars.length === 0) return null;
-
-  return (
-    <div className="border-t border-b border-border/60 bg-white relative overflow-hidden"
-      style={naturalScoreH != null ? { height: naturalScoreH * heightScale } : undefined}
-    >
-      <div ref={scoreInnerRef}>
-        {useFullPageScore ? (
-          scorePageNumbers.map((pageNum) => {
-            const barsOnPage = bars.filter((b) => b.pageNumber === pageNum);
-            return (
-              <div
-                key={pageNum}
-                className="relative w-full bg-white border-b border-border/30 last:border-b-0"
-              >
-                <img
-                  src={pageUrl(pageNum)}
-                  alt=""
-                  className="w-full h-auto block pointer-events-none"
-                  onLoad={() => {
-                    if (scoreInnerRef.current && naturalScoreH == null) {
-                      setNaturalScoreH(scoreInnerRef.current.getBoundingClientRect().height);
-                    }
-                  }}
-                />
-                <div className="absolute inset-0 z-10 pointer-events-none">
-                  {/* Context bars — dimmed for spatial orientation */}
-                  {contextBars
-                    .filter((b) => b.pageNumber === pageNum && b.boundingBox != null)
-                    .map((bar) => (
-                      <div
-                        key={`ctx-${bar.id}`}
-                        style={{
-                          position: "absolute",
-                          left: `${bar.boundingBox!.x * 100}%`,
-                          top: `${bar.boundingBox!.y * 100}%`,
-                          width: `${bar.boundingBox!.w * 100}%`,
-                          height: `${bar.boundingBox!.h * 100}%`,
-                          background: "rgba(0,0,0,0.04)",
-                        }}
-                      />
-                    ))}
-                  {/* Section bars — colored and interactive */}
-                  {barsOnPage.map((bar) => {
-                    const bIdx = allBarsForIndex.findIndex((b) => b.id === bar.id);
-                    const box = bar.boundingBox!;
-                    const isFocused = focusedBarIdx === bIdx;
-                    const isHovered = hoveredBarIdx === bIdx;
-                    const isSelected = isInSelection(bar.measureNumber);
-                    const isSelectionEnd = isSelected && bar.measureNumber === selectedRange!.end;
-                    const color = getBarColor(bar.measureNumber);
-                    return (
-                      <Tooltip key={bar.id}>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => {
-                              if (e.button !== 0) return;
-                              e.stopPropagation();
-                              selectDragRef.current = { startMeasure: bar.measureNumber };
-                              setSelectedRange({ start: bar.measureNumber, end: bar.measureNumber });
-                            }}
-                            onMouseEnter={(e) => {
-                              setHoveredBarIdx(bIdx);
-                              if (selectDragRef.current && e.buttons === 1) {
-                                const a = selectDragRef.current.startMeasure;
-                                const b = bar.measureNumber;
-                                setSelectedRange({ start: Math.min(a, b), end: Math.max(a, b) });
-                              }
-                            }}
-                            onMouseLeave={() => setHoveredBarIdx(null)}
-                            onDoubleClick={() => onFocusBar(isFocused ? null : bIdx)}
-                            style={{
-                              left: `${box.x * 100}%`,
-                              top: `${box.y * 100}%`,
-                              width: `${box.w * 100}%`,
-                              height: `${box.h * 100}%`,
-                              borderColor: isSelected ? "#60a5fa" : (color?.border ?? "transparent"),
-                              backgroundColor: isSelected ? "rgba(96,165,250,0.18)" : (color?.bg ?? "transparent"),
-                            }}
-                            className={cn(
-                              "absolute box-border select-none pointer-events-auto rounded-sm border-2 transition-all cursor-pointer",
-                              isHovered && !isSelected && "!border-[3px] shadow-md",
-                              isSelected && "!border-[3px] shadow-md",
-                              isFocused && "!border-[3px] shadow-lg ring-1 ring-inset",
-                            )}
-                            title={`Bar ${bar.measureNumber} — click to select · double-click to zoom`}
-                          >
-                            {(isHovered || isFocused || isSelected) && (
-                              <div
-                                className="absolute bottom-0 right-0 px-1.5 py-0.5 text-[10px] font-bold leading-none select-none rounded-tl-sm pointer-events-none text-white"
-                                style={{ backgroundColor: isSelected ? "#3b82f6" : (color?.border ?? "#6b5732") }}
-                              >
-                                {bar.measureNumber}
-                              </div>
-                            )}
-                            {(isHovered || isFocused || isSelected || flaggedBars.has(bar.id)) && (
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); onToggleFlag(bar.id, flaggedBars.get(bar.id)); }}
-                                className={cn(
-                                  "absolute top-0.5 right-0.5 w-5 h-5 flex items-center justify-center rounded pointer-events-auto z-20 transition-colors",
-                                  flaggedBars.has(bar.id)
-                                    ? "text-amber-500 bg-white/70"
-                                    : "text-muted-foreground/60 hover:text-amber-500 bg-white/50",
-                                )}
-                                title={flaggedBars.has(bar.id) ? "Unflag this bar" : "Flag as tricky"}
-                              >
-                                <Flag className="w-3 h-3" fill={flaggedBars.has(bar.id) ? "currentColor" : "none"} />
-                              </button>
-                            )}
-                            {isSelectionEnd && (
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); onAddAnnotation?.(selectedRange!.start, selectedRange!.end); }}
-                                className="absolute top-0.5 left-0.5 w-5 h-5 flex items-center justify-center rounded pointer-events-auto z-20 bg-blue-500 text-white hover:bg-blue-600 transition-colors"
-                                title="Add note to selected bars"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                            )}
-                            {annotationByMeasure.has(bar.measureNumber) && !isSelectionEnd && (
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); onAnnotationClick?.(annotationByMeasure.get(bar.measureNumber)!); }}
-                                className="absolute bottom-0.5 left-0.5 w-4 h-4 flex items-center justify-center rounded pointer-events-auto z-20 bg-amber-400/90 text-white hover:bg-amber-500 transition-colors"
-                                title={`Note: ${annotationByMeasure.get(bar.measureNumber)!.text}`}
-                              >
-                                <StickyNote className="w-2.5 h-2.5" />
-                              </button>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        {barTooltip && (
-                          <TooltipContent side="top" className="text-xs max-w-[220px]">
-                            <p className="font-semibold">m.{bar.measureNumber}</p>
-                            <p>{barTooltip}</p>
-                          </TooltipContent>
-                        )}
-                      </Tooltip>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          /* Bar strip fallback */
-          groupIntoSystems(bars).map((system, sysIdx) => {
-            const totalW = system.reduce((sum, b) => sum + (b.boundingBox?.w ?? 1), 0);
-            return (
-              <div
-                key={sysIdx}
-                className={cn("flex w-full bg-white", sysIdx > 0 && "border-t border-border/30")}
-              >
-                {system.map((bar) => {
-                  const bIdx = allBarsForIndex.findIndex((b) => b.id === bar.id);
-                  const widthPct = (bar.boundingBox?.w ?? 1) / totalW * 100;
-                  const isFocused = focusedBarIdx === bIdx;
-                  const isHovered = hoveredBarIdx === bIdx;
-                  const isSelected = isInSelection(bar.measureNumber);
-                  const isSelectionEnd = isSelected && bar.measureNumber === selectedRange!.end;
-                  const color = getBarColor(bar.measureNumber);
-
-                  return (
-                    <button
-                      key={bar.id}
-                      type="button"
-                      onMouseDown={(e) => {
-                        if (e.button !== 0) return;
-                        e.stopPropagation();
-                        selectDragRef.current = { startMeasure: bar.measureNumber };
-                        setSelectedRange({ start: bar.measureNumber, end: bar.measureNumber });
-                      }}
-                      onMouseEnter={(e) => {
-                        setHoveredBarIdx(bIdx);
-                        if (selectDragRef.current && e.buttons === 1) {
-                          const a = selectDragRef.current.startMeasure;
-                          const b = bar.measureNumber;
-                          setSelectedRange({ start: Math.min(a, b), end: Math.max(a, b) });
-                        }
-                      }}
-                      onMouseLeave={() => setHoveredBarIdx(null)}
-                      onDoubleClick={() => onFocusBar(isFocused ? null : bIdx)}
-                      style={{ flex: `0 0 ${widthPct}%`, width: `${widthPct}%` }}
-                      className="relative block select-none cursor-pointer"
-                      title={`Bar ${bar.measureNumber} — click to select · double-click to zoom`}
-                    >
-                      {bar.imageUrl ? (
-                        <img
-                          src={bar.imageUrl}
-                          alt={`Bar ${bar.measureNumber}`}
-                          className="w-full h-auto block pointer-events-none"
-                          onLoad={() => {
-                            if (scoreInnerRef.current && naturalScoreH == null) {
-                              setNaturalScoreH(scoreInnerRef.current.getBoundingClientRect().height);
-                            }
-                          }}
-                        />
-                      ) : (
-                        <div className="flex items-center justify-center bg-white text-[10px] text-muted-foreground" style={{ height: 120 }}>
-                          m.{bar.measureNumber}
-                        </div>
-                      )}
-                      <div
-                        className={cn(
-                          "absolute inset-0 pointer-events-none rounded-sm transition-all border-2",
-                          isHovered && !isSelected && "!border-[3px] shadow-md",
-                          isSelected && "!border-[3px] shadow-md",
-                          isFocused && "!border-[3px] shadow-lg ring-1 ring-inset",
-                        )}
-                        style={{
-                          borderColor: isSelected ? "#60a5fa" : (color?.border ?? "transparent"),
-                          backgroundColor: isSelected ? "rgba(96,165,250,0.18)" : ((isHovered || isFocused) ? color?.bg : "transparent"),
-                        }}
-                      />
-                      {(isHovered || isFocused || isSelected) && (
-                        <div
-                          className="absolute bottom-0 right-0 px-1.5 py-0.5 text-[10px] font-bold leading-none select-none rounded-tl-sm pointer-events-none text-white z-10"
-                          style={{ backgroundColor: isSelected ? "#3b82f6" : (color?.border ?? "#6b5732") }}
-                        >
-                          {bar.measureNumber}
-                        </div>
-                      )}
-                      {(isHovered || isFocused || isSelected || flaggedBars.has(bar.id)) && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); onToggleFlag(bar.id, flaggedBars.get(bar.id)); }}
-                          className={cn(
-                            "absolute top-0.5 right-0.5 w-5 h-5 flex items-center justify-center rounded pointer-events-auto z-20 transition-colors",
-                            flaggedBars.has(bar.id)
-                              ? "text-amber-500 bg-white/70"
-                              : "text-muted-foreground/60 hover:text-amber-500 bg-white/50",
-                          )}
-                          title={flaggedBars.has(bar.id) ? "Unflag this bar" : "Flag as tricky"}
-                        >
-                          <Flag className="w-3 h-3" fill={flaggedBars.has(bar.id) ? "currentColor" : "none"} />
-                        </button>
-                      )}
-                      {isSelectionEnd && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); onAddAnnotation?.(selectedRange!.start, selectedRange!.end); }}
-                          className="absolute top-0.5 left-0.5 w-5 h-5 flex items-center justify-center rounded pointer-events-auto z-20 bg-blue-500 text-white hover:bg-blue-600 transition-colors"
-                          title="Add note to selected bars"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      )}
-                      {annotationByMeasure.has(bar.measureNumber) && !isSelectionEnd && (
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => { e.stopPropagation(); onAnnotationClick?.(annotationByMeasure.get(bar.measureNumber)!); }}
-                          className="absolute bottom-0.5 left-0.5 w-4 h-4 flex items-center justify-center rounded pointer-events-auto z-20 bg-amber-400/90 text-white hover:bg-amber-500 transition-colors"
-                          title={`Note: ${annotationByMeasure.get(bar.measureNumber)!.text}`}
-                        >
-                          <StickyNote className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Resize handle */}
-      <div
-        className="absolute bottom-0 right-0 w-7 h-7 flex items-end justify-end cursor-ns-resize z-10 pb-1 pr-1"
-        onMouseDown={startResize}
-        onTouchStart={startResizeTouch}
-        title="Drag to resize score"
-      >
-        <svg width="11" height="11" viewBox="0 0 11 11" fill="none" className="text-[#8A877F]/60">
-          <path d="M10 1L1 10M10 5.5L5.5 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
-
-      {/* Focused bar viewer */}
-      {focusedBarIdx !== null && allBarsForIndex[focusedBarIdx] && (
-        <FocusedBarViewer
-          bars={allBarsForIndex}
-          focusedIdx={focusedBarIdx}
-          onNavigate={onFocusBar}
-          sheetId={sheetId}
-          flaggedBars={flaggedBars}
-          onToggleFlag={onToggleFlag}
-          getBarColor={getBarColor}
-        />
-      )}
-    </div>
-  );
-}
-
-// ── Focused Bar Viewer ────────────────────────────────────────────────────────
-
-function FocusedBarViewer({
-  bars,
-  focusedIdx,
-  onNavigate,
-  sheetId,
-  flaggedBars,
-  onToggleFlag,
-  getBarColor,
-}: {
-  bars: MeasureRow[];
-  focusedIdx: number;
-  onNavigate: (idx: number | null) => void;
-  sheetId: number | null;
-  flaggedBars: Map<number, number>;
-  onToggleFlag: (measureId: number, flagId: number | undefined) => void;
-  getBarColor: BarColorFn;
-}) {
-  const pageUrl = useSheetPageUrl(sheetId);
-  const bar = bars[focusedIdx];
-  const showPage =
-    sheetId != null && bar.pageNumber != null && bar.boundingBox != null;
-  const isFlagged = flaggedBars.has(bar.id);
-  const color = getBarColor(bar.measureNumber);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "ArrowLeft" && focusedIdx > 0) onNavigate(focusedIdx - 1);
-      if (e.key === "ArrowRight" && focusedIdx < bars.length - 1) onNavigate(focusedIdx + 1);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [focusedIdx, bars.length, onNavigate]);
-
-  return (
-    <div
-      className="mt-3 rounded-lg border-2 bg-white overflow-hidden"
-      style={{ borderColor: color?.border ?? "#C8B388" }}
-    >
-      <div
-        className="flex items-center justify-between px-3.5 py-2 border-b"
-        style={{
-          backgroundColor: color?.bg ?? "rgba(220,202,166,0.12)",
-          borderBottomColor: color ? `${color.border}30` : "rgba(200,179,136,0.3)",
-        }}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-foreground">Bar {bar.measureNumber}</span>
-          <button
-            type="button"
-            onClick={() => onToggleFlag(bar.id, flaggedBars.get(bar.id))}
-            className={cn(
-              "w-6 h-6 flex items-center justify-center rounded transition-colors",
-              isFlagged
-                ? "text-amber-500 bg-amber-50"
-                : "text-muted-foreground/50 hover:text-amber-500 hover:bg-amber-50",
-            )}
-            title={isFlagged ? "Unflag this bar" : "Flag as tricky"}
-          >
-            <Flag className="w-3.5 h-3.5" fill={isFlagged ? "currentColor" : "none"} />
-          </button>
-        </div>
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <button
-            type="button"
-            onClick={() => focusedIdx > 0 && onNavigate(focusedIdx - 1)}
-            disabled={focusedIdx === 0}
-            className="w-[26px] h-[26px] flex items-center justify-center border border-border rounded-[calc(0.5rem-2px)] bg-[#F4F1EA] text-muted-foreground hover:border-[#C8B388] hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-          <span>{focusedIdx + 1} of {bars.length}</span>
-          <button
-            type="button"
-            onClick={() => focusedIdx < bars.length - 1 && onNavigate(focusedIdx + 1)}
-            disabled={focusedIdx === bars.length - 1}
-            className="w-[26px] h-[26px] flex items-center justify-center border border-border rounded-[calc(0.5rem-2px)] bg-[#F4F1EA] text-muted-foreground hover:border-[#C8B388] hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-          <span className="text-muted-foreground/50 ml-1">← → keys</span>
-        </div>
-      </div>
-      <div className="min-h-40 flex items-center justify-center bg-white px-2 py-2">
-        {showPage ? (
-          <div className="w-full max-h-[min(50vh,520px)] overflow-y-auto">
-            <div className="relative w-full">
-              <img
-                src={pageUrl(bar.pageNumber!)}
-                alt=""
-                className="w-full h-auto block"
-              />
-              <div className="absolute inset-0 pointer-events-none">
-                <div
-                  className="absolute border-[3px] rounded-sm shadow-md"
-                  style={{
-                    left: `${bar.boundingBox!.x * 100}%`,
-                    top: `${bar.boundingBox!.y * 100}%`,
-                    width: `${bar.boundingBox!.w * 100}%`,
-                    height: `${bar.boundingBox!.h * 100}%`,
-                    borderColor: color?.border ?? "#C8B388",
-                    backgroundColor: color?.bg ?? "rgba(220,202,166,0.15)",
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        ) : bar.imageUrl ? (
-          <img
-            src={bar.imageUrl}
-            alt={`Bar ${bar.measureNumber}`}
-            className="max-h-full max-w-full object-contain"
-          />
-        ) : (
-          <span className="text-[10px] text-muted-foreground/50 tracking-wide">
-            score image · bar {bar.measureNumber}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Annotation Popover ────────────────────────────────────────────────────────
-
-function AnnotationPopover({
-  open,
-  onOpenChange,
-  measureStart,
-  measureEnd,
-  initialText,
-  onSave,
-  onDelete,
-  isSaving,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  measureStart: number;
-  measureEnd: number;
-  initialText: string;
-  onSave: (text: string) => void;
-  onDelete?: () => void;
-  isSaving: boolean;
-}) {
-  const [draft, setDraft] = useState(initialText);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    if (open) {
-      setDraft(initialText);
-      setTimeout(() => textareaRef.current?.focus(), 50);
-    }
-  }, [open, initialText]);
-
-  const rangeLabel = measureStart === measureEnd ? `m. ${measureStart}` : `mm. ${measureStart}–${measureEnd}`;
-
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
-        <span className="sr-only" />
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-72 p-3 space-y-2"
-        side="top"
-        container={document.body}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-muted-foreground">{rangeLabel}</span>
-          {onDelete && (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="text-xs text-destructive hover:underline"
-            >
-              Delete
-            </button>
-          )}
-        </div>
-        <textarea
-          ref={textareaRef}
-          rows={3}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              if (draft.trim()) onSave(draft.trim());
-            }
-            if (e.key === "Escape") onOpenChange(false);
-          }}
-          placeholder="Add a note…"
-          className="w-full text-sm rounded border border-border bg-background px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={!draft.trim() || isSaving}
-            onClick={() => { if (draft.trim()) onSave(draft.trim()); }}
-            className="flex-1 text-xs font-semibold py-1.5 rounded bg-[#1C1C1A] text-[#DCCAA6] hover:opacity-90 disabled:opacity-40 transition-opacity"
-          >
-            {isSaving ? "Saving…" : "Save"}
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className="text-xs text-muted-foreground hover:text-foreground px-2"
-          >
-            Cancel
-          </button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main Page ────────────────────────────────────────────────────────────────
+// SegmentCard + PlaceholderPanel live in @/components/session-rendering
 
 export default function SessionPage() {
   const params = useParams<{ lessonId: string }>();
@@ -800,37 +74,31 @@ export default function SessionPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Stepper state
-  const [currentStep, setCurrentStep] = useState(0);
-  const [stepTimerStarted, setStepTimerStarted] = useState(false);
-  const [stepElapsedSec, setStepElapsedSec] = useState(0);
-  const [noteSheetOpen, setNoteSheetOpen] = useState(false);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const segmentRefs = useRef<(HTMLElement | null)[]>([]);
+  const registerEl = useCallback((idx: number, el: HTMLElement | null) => {
+    segmentRefs.current[idx] = el;
+  }, []);
 
-  // Feedback modal state
+  const [activeIdx, setActiveIdx] = useState(0);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
-
-  // Task check state: "sIdx:tIdx" → checked
-  const [checkedTasks, setCheckedTasks] = useState<Set<string>>(new Set());
-
-  // Focused bar index (within current section's bar list)
-  const [focusedBarIdx, setFocusedBarIdx] = useState<number | null>(null);
-
-  // Bar flags: measureId → flagId
   const [flaggedBars, setFlaggedBars] = useState<Map<number, number>>(new Map());
+  const [annotationTarget, setAnnotationTarget] = useState<{
+    measureStart: number;
+    measureEnd: number;
+    existing?: BarAnnotation;
+  } | null>(null);
 
-  // Notes
-  const [notes, setNotes] = useState<string>("");
-  const notesInitialised = useRef(false);
-
-  // ── Queries ──────────────────────────────────────────────────────────────
-
+  // ── Queries ─────────────────────────────────────────────
   const { data: bundle, isLoading, isError } = useQuery<SessionBundle>({
     queryKey: [`/api/lessons/${lessonId}/session`],
     enabled: Number.isFinite(lessonId) && lessonId > 0,
   });
 
-  const sheetId = bundle?.plan.sheetMusicId;
+  const sheetId = bundle?.plan.sheetMusicId ?? null;
   const planId = bundle?.plan.id;
+  const isDone = bundle?.lesson.status === "completed";
+  const sections = bundle?.lesson.tasks ?? [];
 
   const { data: allMeasures = [] } = useQuery<MeasureRow[]>({
     queryKey: [`/api/sheet-music/${sheetId}/measures`],
@@ -848,7 +116,6 @@ export default function SessionPage() {
     enabled: Number.isFinite(lessonId) && lessonId > 0 && !!bundle,
   });
 
-  // Sync flaggedBars state once flags load
   useEffect(() => {
     if (existingFlags.length > 0) {
       setFlaggedBars(new Map(existingFlags.map((f) => [f.measureId, f.id])));
@@ -860,12 +127,70 @@ export default function SessionPage() {
     enabled: Number.isFinite(lessonId) && lessonId > 0 && !!bundle,
   });
 
-  // Annotation popover state: null = closed, otherwise the pending range (+optional existing annotation for editing)
-  const [annotationTarget, setAnnotationTarget] = useState<{
-    measureStart: number;
-    measureEnd: number;
-    existing?: BarAnnotation;
-  } | null>(null);
+  // ── Local checklist state (mirrors lesson.tasks; synced on change via PATCH) ──
+  const [localSections, setLocalSections] = useState<SessionSection[] | null>(null);
+  useEffect(() => {
+    if (bundle?.lesson.tasks) setLocalSections(bundle.lesson.tasks);
+  }, [bundle?.lesson.tasks]);
+
+  const effectivePhaseType =
+    bundle?.lesson.phaseType ??
+    bundle?.lesson.tasks?.find((t) => t.type === "piece_practice" && t.phaseType)?.phaseType ??
+    null;
+
+  const activeSections = localSections ?? sections;
+
+  // ── Mutations ──────────────────────────────────────────
+  const patchTasks = useMutation({
+    mutationFn: async (nextTasks: SessionSection[]) => {
+      await apiRequest("PATCH", `/api/lessons/${lessonId}`, { tasks: nextTasks });
+    },
+    onError: () => toast({ title: "Couldn't save task state", variant: "destructive" }),
+  });
+
+  const onToggleTask = useCallback(
+    (sectionIdx: number, taskIdx: number) => {
+      setLocalSections((prev) => {
+        const base = prev ?? bundle?.lesson.tasks ?? [];
+        const next = base.map((sec, si) =>
+          si === sectionIdx
+            ? {
+                ...sec,
+                tasks: sec.tasks.map((task, ti) =>
+                  ti === taskIdx ? { ...task, completed: !task.completed } : task,
+                ),
+              }
+            : sec,
+        );
+        patchTasks.mutate(next);
+        return next;
+      });
+    },
+    [bundle?.lesson.tasks, patchTasks],
+  );
+
+  const toggleFlag = useCallback(
+    async (measureId: number, flagId: number | undefined) => {
+      if (!bundle) return;
+      if (flagId != null) {
+        await apiRequest("DELETE", `/api/lessons/${bundle.lesson.id}/flags/${flagId}`);
+        setFlaggedBars((prev) => {
+          const n = new Map(prev);
+          n.delete(measureId);
+          return n;
+        });
+      } else {
+        const created = await apiRequest("POST", `/api/lessons/${bundle.lesson.id}/flags`, { measureId });
+        const flag = (await created.json()) as BarFlag;
+        setFlaggedBars((prev) => new Map(prev).set(measureId, flag.id));
+      }
+      queryClient.invalidateQueries({ queryKey: [`/api/lessons/${lessonId}/flags`] });
+      if (bundle.plan.id != null) {
+        queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${bundle.plan.id}/flags/summary`] });
+      }
+    },
+    [bundle, lessonId, queryClient],
+  );
 
   const createAnnotation = useMutation({
     mutationFn: (vars: { measureStart: number; measureEnd: number; text: string }) =>
@@ -899,157 +224,13 @@ export default function SessionPage() {
     onError: () => toast({ title: "Couldn't delete note", variant: "destructive" }),
   });
 
-  // ── Derived data ──────────────────────────────────────────────────────────
-
-  const sections = bundle?.lesson.tasks ?? [];
-  const isDone = bundle?.lesson.status === "completed";
-  const currentSection = sections[currentStep] ?? null;
-  const isLastStep = currentStep === sections.length - 1;
-  const isScoreSection =
-    currentSection?.type === "piece_practice" ||
-    currentSection?.type === "sight_reading" ||
-    // v2 scheduler sections use phase names as type (decode/build/connect/shape/perform)
-    currentSection?.phaseType != null;
-
-  // Effective phase type: lesson-level first, then fall back to piece_practice task phase
-  const effectivePhaseType =
-    bundle?.lesson.phaseType ??
-    bundle?.lesson.tasks?.find((t) => t.type === "piece_practice" && t.phaseType)?.phaseType ??
-    null;
-
-  // Section-level phase (use current section's phaseType if available)
-  const sectionPhaseType = currentSection?.phaseType ?? effectivePhaseType;
-  const getBarColor = buildBarColorFn(sectionPhaseType);
-
-  // Bars for the whole lesson (lesson.measureStart → lesson.measureEnd)
-  const lessonBars = bundle
-    ? allMeasures.filter(
-        (m) =>
-          m.measureNumber >= bundle.lesson.measureStart &&
-          m.measureNumber <= bundle.lesson.measureEnd,
-      )
-    : [];
-
-  // Per-section bars: parse measure range from section label or fall back to lesson range
-  const sectionRange = currentSection
-    ? (currentSection.measureStart != null && currentSection.measureEnd != null
-        ? { start: currentSection.measureStart, end: currentSection.measureEnd }
-        : parseLabelRange(currentSection.label) ?? {
-            start: bundle?.lesson.measureStart ?? 1,
-            end: bundle?.lesson.measureEnd ?? 1,
-          })
-    : null;
-
-  const sectionBars = isScoreSection && sectionRange
-    ? allMeasures.filter(
-        (m) =>
-          m.measureNumber >= sectionRange.start &&
-          m.measureNumber <= sectionRange.end &&
-          m.boundingBox != null &&
-          m.pageNumber != null,
-      )
-    : [];
-
-  const sectionPageNums = new Set(sectionBars.map((b) => b.pageNumber!));
-  const sectionContextBars = isScoreSection && sectionRange
-    ? allMeasures.filter(
-        (m) =>
-          m.pageNumber != null &&
-          m.boundingBox != null &&
-          sectionPageNums.has(m.pageNumber!) &&
-          (m.measureNumber < sectionRange.start || m.measureNumber > sectionRange.end),
-      )
-    : [];
-
-  // Phase info for tooltip and description
-  const phaseInfo = sectionPhaseType ? PHASE_LABELS[sectionPhaseType as PhaseType] : null;
-  const barTooltip = phaseInfo ? `${phaseInfo.label} — ${phaseInfo.description}` : null;
-
-  // Timer: per step, reset on step change
-  useEffect(() => {
-    setStepTimerStarted(false);
-    setStepElapsedSec(0);
-    setFocusedBarIdx(null);
-  }, [currentStep]);
-
-  useEffect(() => {
-    if (!stepTimerStarted || isDone) return;
-    const t = setInterval(() => setStepElapsedSec((s) => s + 1), 1000);
-    return () => clearInterval(t);
-  }, [stepTimerStarted, isDone]);
-
-  // Can proceed: either timer not started, or elapsed ≥ duration, or no duration set
-  const durationSec = (currentSection?.durationMin ?? 0) * 60;
-  const canProceed = !stepTimerStarted || stepElapsedSec >= durationSec || durationSec === 0;
-
-  // ── Side effects ──────────────────────────────────────────────────────────
-
-  // Initialise notes from server once
-  useEffect(() => {
-    if (bundle && !notesInitialised.current) {
-      setNotes(bundle.lesson.userNotes ?? "");
-      notesInitialised.current = true;
-    }
-  }, [bundle]);
-
-  // Pre-check all tasks when session is already completed
-  useEffect(() => {
-    if (bundle?.lesson.status === "completed" && bundle.lesson.tasks) {
-      const all = new Set<string>();
-      bundle.lesson.tasks.forEach((sec, sIdx) =>
-        sec.tasks.forEach((_, tIdx) => all.add(taskKey(sIdx, tIdx))),
-      );
-      setCheckedTasks(all);
-      // Jump to last step so "done" state is shown properly
-      setCurrentStep(Math.max(0, (bundle.lesson.tasks?.length ?? 1) - 1));
-    }
-  }, [bundle]);
-
-  // ── Mutations ─────────────────────────────────────────────────────────────
-
-  const saveNotes = useCallback(
-    async (text: string) => {
-      if (!bundle) return;
-      await apiRequest("PATCH", `/api/lessons/${bundle.lesson.id}`, { userNotes: text });
-      queryClient.invalidateQueries({ queryKey: [`/api/lessons/${lessonId}/session`] });
-    },
-    [bundle, lessonId, queryClient],
-  );
-
-  const toggleFlag = useCallback(
-    async (measureId: number, flagId: number | undefined) => {
-      if (!bundle) return;
-      if (flagId != null) {
-        await apiRequest("DELETE", `/api/lessons/${bundle.lesson.id}/flags/${flagId}`);
-        setFlaggedBars((prev) => {
-          const next = new Map(prev);
-          next.delete(measureId);
-          return next;
-        });
-      } else {
-        const created = await apiRequest("POST", `/api/lessons/${bundle.lesson.id}/flags`, { measureId });
-        const flag = (await created.json()) as BarFlag;
-        setFlaggedBars((prev) => new Map(prev).set(measureId, flag.id));
-      }
-      queryClient.invalidateQueries({ queryKey: [`/api/lessons/${lessonId}/flags`] });
-      if (bundle.plan.id != null) {
-        queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${bundle.plan.id}/flags/summary`] });
-      }
-    },
-    [bundle, lessonId, queryClient],
-  );
-
   const completeSession = useMutation({
     mutationFn: async () => {
       if (!bundle) return;
-      // This is the authoritative action — if it succeeds we navigate regardless of what follows.
       await apiRequest("PATCH", `/api/lessons/${bundle.lesson.id}`, {
         status: "completed",
         completedAt: new Date().toISOString(),
-        userNotes: notes || null,
       });
-      // Best-effort: update measure progress without blocking navigation on failure.
-      // Skip if the plan has no sheet music (server would 400 anyway).
       const { plan, lesson } = bundle;
       if (plan.sheetMusicId != null) {
         try {
@@ -1057,7 +238,7 @@ export default function SessionPage() {
             await apiRequest("PUT", `/api/learning-plans/${plan.id}/progress/${n}`, { status: "learned" });
           }
         } catch {
-          // progress updates are non-critical — continue to onSuccess
+          /* non-critical */
         }
       }
       apiRequest("POST", `/api/learning-plans/${plan.id}/suggestions/compute`, {
@@ -1072,439 +253,509 @@ export default function SessionPage() {
       }
       queryClient.invalidateQueries({ queryKey: [`/api/lessons/${lessonId}/session`] });
       toast({ title: "Session complete", description: "Nice work — this day is marked complete." });
-      // Show feedback modal before navigating away
       setFeedbackModalOpen(true);
     },
-    onError: () => {
-      toast({ title: "Couldn't save", description: "Try again in a moment.", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Couldn't save", variant: "destructive" }),
   });
 
-  function goNext() {
-    if (currentStep < sections.length - 1) {
-      setCurrentStep((s) => s + 1);
+  // ── Scroll snap + active index ─────────────────────────────
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller || activeSections.length === 0) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.intersectionRatio > 0.55) {
+            const idx = parseInt((entry.target as HTMLElement).dataset.segmentIdx ?? "0", 10);
+            setActiveIdx(idx);
+          }
+        });
+      },
+      { root: scroller, threshold: [0.55, 0.75] },
+    );
+    segmentRefs.current.forEach((el) => el && obs.observe(el));
+    return () => obs.disconnect();
+  }, [activeSections.length]);
+
+  // Restore / persist active segment
+  useEffect(() => {
+    if (!Number.isFinite(lessonId) || activeSections.length === 0) return;
+    const key = `practivo_session_idx_${lessonId}`;
+    const raw = localStorage.getItem(key);
+    const saved = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(saved) && saved > 0 && saved < activeSections.length) {
+      requestAnimationFrame(() => {
+        segmentRefs.current[saved]?.scrollIntoView({ behavior: "auto", block: "start" });
+      });
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, activeSections.length > 0]);
 
-  // ── Guard ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!Number.isFinite(lessonId)) return;
+    localStorage.setItem(`practivo_session_idx_${lessonId}`, String(activeIdx));
+  }, [lessonId, activeIdx]);
 
+  const scrollTo = useCallback((idx: number) => {
+    const target = Math.max(0, Math.min(activeSections.length - 1, idx));
+    segmentRefs.current[target]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeSections.length]);
+
+  // Keyboard nav
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if (e.key === "ArrowDown" || e.key === "j" || e.key === "PageDown") {
+        e.preventDefault();
+        scrollTo(activeIdx + 1);
+      } else if (e.key === "ArrowUp" || e.key === "k" || e.key === "PageUp") {
+        e.preventDefault();
+        scrollTo(activeIdx - 1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeIdx, scrollTo]);
+
+  // ── Guards ──────────────────────────────────────────────
   if (!Number.isFinite(lessonId) || lessonId <= 0) {
     return (
-      <Layout>
-        <div className="container max-w-lg mx-auto px-4 py-12">
-          <p className="text-muted-foreground">Invalid session link.</p>
-          <Button variant="link" asChild className="mt-2 px-0">
-            <Link href="/">Home</Link>
-          </Button>
+      <div style={{ minHeight: "100vh", background: "#f5f1ea", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ textAlign: "center" }}>
+          <p style={{ color: "#7a7166", marginBottom: 12 }}>Invalid session link.</p>
+          <Link href="/home"><button style={{ color: "#c9a86a", fontSize: 14 }}>← Go home</button></Link>
         </div>
-      </Layout>
+      </div>
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  return (
-    <Layout>
-      {/* Loading / error states */}
-      {isLoading && (
-        <div className="container max-w-2xl mx-auto px-4 py-8 space-y-4">
+  if (isLoading) {
+    return (
+      <div style={{ height: "100vh", background: "#f5f1ea", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ height: 48, background: "#0f2036" }} />
+        <div style={{ flex: 1, padding: "32px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
           <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-8 w-3/4" />
-          <Skeleton className="h-4 w-56" />
-          <Skeleton className="h-32 w-full rounded-lg mt-6" />
+          <Skeleton className="h-10 w-3/4" />
+          <Skeleton className="h-64 w-full rounded-lg mt-4" />
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {isError && (
-        <div className="container max-w-2xl mx-auto px-4 py-8">
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-sm text-muted-foreground">
+  if (isError || !bundle) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f5f1ea", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 24px" }}>
+        <div style={{ background: "#ede8df", border: "1px solid #ddd8cc", borderRadius: 12, padding: "24px 28px", maxWidth: 400, textAlign: "center" }}>
+          <p style={{ color: "#7a7166", fontSize: 14, marginBottom: 16 }}>
             We couldn&apos;t open this session. It may have been removed or you may need to sign in again.
-            <Button variant="link" asChild className="mt-2 block px-0 h-auto">
-              <Link href="/">Go home</Link>
-            </Button>
-          </div>
+          </p>
+          <Link href="/home"><button style={{ color: "#c9a86a", fontSize: 14 }}>← Go home</button></Link>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      {bundle && (
-        <div className="flex flex-col min-h-screen">
+  const currentSection = activeSections[activeIdx];
+  const nextSection = activeSections[activeIdx + 1];
+  const overallProgress = activeSections.length > 0 ? (activeIdx + 1) / activeSections.length : 0;
 
-          {/* ── Sticky header ──────────────────────────────────────────── */}
-          <div className="sticky top-0 z-30 bg-card/95 backdrop-blur-sm border-b border-border px-4 py-3 flex items-center gap-3">
-            <Link href={`/plan/${bundle.plan.id}`} className="shrink-0 p-1 -ml-1 rounded-md text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-muted-foreground truncate">
-                {bundle.composerName} · {bundle.pieceTitle}
+  // ── Empty-sections fallback: single-card "complete" UI ─────
+  if (activeSections.length === 0) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f5f1ea", display: "flex", flexDirection: "column" }}>
+        <SessionTopBar bundle={bundle} sheetId={sheetId} isDone={isDone} completePending={completeSession.isPending} onComplete={() => completeSession.mutate()} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
+          <div style={{ maxWidth: 560, width: "100%" }}>
+            <div style={{ background: "#fffbf2", border: "1px solid #ddd8cc", borderRadius: 14, padding: "28px 32px" }}>
+              <p style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.18em", color: "#7a7166", marginBottom: 8, fontFamily: "Inter, sans-serif" }}>
+                Today's bars
               </p>
-              {sections.length > 0 && (
-                <p className="text-[11px] text-muted-foreground/70">
-                  Step {currentStep + 1} of {sections.length}
-                </p>
-              )}
+              <p style={{ fontFamily: '"Cormorant Garamond", serif', fontSize: 32, color: "#0f2036", marginBottom: 8 }}>
+                Measures {bundle.lesson.measureStart}
+                {bundle.lesson.measureEnd !== bundle.lesson.measureStart ? `–${bundle.lesson.measureEnd}` : ""}
+              </p>
+              <p style={{ fontFamily: '"EB Garamond", serif', fontSize: 15, color: "#7a7166", marginBottom: 4 }}>
+                About {bundle.plan.dailyPracticeMinutes} minutes · work slowly and cleanly through each bar.
+              </p>
+              <p style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "#7a7166" }}>
+                {formatSessionDate(bundle.lesson.scheduledDate)}
+              </p>
             </div>
-
-            {/* Progress dots */}
-            {sections.length > 1 && (
-              <div className="hidden sm:flex items-center gap-1">
-                {sections.map((_, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setCurrentStep(i)}
-                    className={cn(
-                      "w-1.5 h-1.5 rounded-full transition-all",
-                      i < currentStep && "bg-[#729E8F]",
-                      i === currentStep && "bg-[#C8B388] scale-125",
-                      i > currentStep && "bg-muted-foreground/30",
-                    )}
-                    title={sections[i].label}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* Full score link */}
-            {sheetId != null && (
-              <a
-                href={`/score/${sheetId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hidden sm:inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors rounded-md border border-border/60 px-2 py-1.5 bg-card shrink-0"
-              >
-                <Music2 className="w-3.5 h-3.5" />
-                Score
-              </a>
-            )}
-
-            {/* Complete session button */}
-            <Button
-              size="sm"
-              variant={isDone ? "outline" : "default"}
-              className={cn(
-                "shrink-0 gap-1.5 text-xs",
-                isDone && "text-[#3d7065] border-[#729E8F]/50",
-              )}
-              onClick={() => !isDone && completeSession.mutate()}
-              disabled={completeSession.isPending || isDone}
-            >
-              {isDone
-                ? <><Check className="w-3 h-3" /> Done</>
-                : completeSession.isPending
-                  ? "Saving…"
-                  : "Complete"}
-            </Button>
-          </div>
-
-          {/* ── Flat fallback when no structured sections ───────────────── */}
-          {sections.length === 0 && (
-            <div className="container max-w-2xl mx-auto px-4 py-8">
-              <div className="rounded-lg border border-border bg-card p-5">
-                <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">Today's bars</p>
-                <p className="text-base font-medium">
-                  Measures {bundle.lesson.measureStart}
-                  {bundle.lesson.measureEnd !== bundle.lesson.measureStart
-                    ? `–${bundle.lesson.measureEnd}` : ""}
-                </p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  About {bundle.plan.dailyPracticeMinutes} min · work slowly and cleanly through each bar.
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {formatSessionDate(bundle.lesson.scheduledDate)}
-                </p>
-              </div>
-              <div className="mt-8">
-                <button
-                  type="button"
-                  onClick={() => completeSession.mutate()}
-                  disabled={completeSession.isPending || isDone}
-                  className="flex items-center justify-center gap-2 w-full py-3.5 rounded-lg bg-[#1C1C1A] text-[#DCCAA6] text-[15px] font-bold shadow-[0_2px_8px_rgba(0,0,0,0.12)] hover:opacity-90 disabled:opacity-50 transition-opacity"
-                >
-                  {completeSession.isPending ? "Saving…" : "Mark session complete"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Step content ────────────────────────────────────────────── */}
-          {sections.length > 0 && currentSection && (
-            <div
-              key={currentStep}
-              className="flex-1 animate-in slide-in-from-right-8 duration-200 pb-16"
-            >
-              <div className="max-w-lg mx-auto">
-              {/* Section label + phase info */}
-              <div className="px-4 pt-4 pb-2">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  {currentSection.label}
-                </p>
-                {phaseInfo && (
-                  <p className="text-xs text-muted-foreground/80 mt-0.5">{phaseInfo.description}</p>
-                )}
-                {sectionRange && isScoreSection && (
-                  <p className="text-xs text-muted-foreground/50 mt-0.5">
-                    Bars {sectionRange.start}–{sectionRange.end}
-                  </p>
-                )}
-              </div>
-
-              {/* Task checklist — above score */}
-              {currentSection.tasks.length > 0 && (
-                <div className="px-4 py-2 space-y-2 border-t border-border/60">
-                  {currentSection.tasks.map((task, tIdx) => {
-                    const key = taskKey(currentStep, tIdx);
-                    const checked = checkedTasks.has(key);
-                    return (
-                      <button
-                        key={tIdx}
-                        type="button"
-                        onClick={() => {
-                          if (isDone) return;
-                          setCheckedTasks((prev) => {
-                            const next = new Set(prev);
-                            next.has(key) ? next.delete(key) : next.add(key);
-                            return next;
-                          });
-                        }}
-                        className="flex items-start gap-3 w-full text-left group"
-                      >
-                        <div
-                          className={cn(
-                            "mt-0.5 w-4 h-4 shrink-0 rounded-sm border transition-colors flex items-center justify-center",
-                            checked ? "bg-[#729E8F] border-[#729E8F]" : "border-border group-hover:border-[#C8B388]",
-                          )}
-                        >
-                          {checked && <Check className="w-2.5 h-2.5 text-white" />}
-                        </div>
-                        <span className={cn("text-sm leading-snug flex-1", checked && "line-through text-muted-foreground")}>
-                          {task.text}
-                          {task.rationale && (
-                            <span className="block text-xs text-muted-foreground/70 italic mt-0.5 font-normal">
-                              {task.rationale}
-                            </span>
-                          )}
-                        </span>
-                        {task.tag && (
-                          <span className="shrink-0 text-xs text-muted-foreground/60 tabular-nums mt-[2px]">
-                            {task.tag}
-                          </span>
-                        )}
-                        {task.durationMin != null && (
-                          <span className="shrink-0 text-xs text-muted-foreground/60 tabular-nums mt-[2px]">
-                            {task.durationMin}m
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Score — piece_practice / sight_reading only, below tasks */}
-              {isScoreSection && sectionBars.length > 0 && (
-                <>
-                  <ScoreStepView
-                    bars={sectionBars}
-                    allBarsForIndex={sectionBars}
-                    contextBars={sectionContextBars}
-                    sheetId={sheetId ?? null}
-                    focusedBarIdx={focusedBarIdx}
-                    onFocusBar={setFocusedBarIdx}
-                    flaggedBars={flaggedBars}
-                    onToggleFlag={toggleFlag}
-                    getBarColor={getBarColor}
-                    barTooltip={barTooltip}
-                    onAddAnnotation={(start, end) => setAnnotationTarget({ measureStart: start, measureEnd: end })}
-                    annotations={annotations}
-                    onAnnotationClick={(ann) => setAnnotationTarget({ measureStart: ann.measureStart, measureEnd: ann.measureEnd, existing: ann })}
-                  />
-                  <AnnotationPopover
-                    open={annotationTarget !== null}
-                    onOpenChange={(v) => { if (!v) setAnnotationTarget(null); }}
-                    measureStart={annotationTarget?.measureStart ?? 1}
-                    measureEnd={annotationTarget?.measureEnd ?? 1}
-                    initialText={annotationTarget?.existing?.text ?? ""}
-                    isSaving={createAnnotation.isPending || updateAnnotation.isPending}
-                    onSave={(text) => {
-                      if (annotationTarget?.existing) {
-                        updateAnnotation.mutate({ id: annotationTarget.existing.id, text });
-                      } else {
-                        createAnnotation.mutate({ measureStart: annotationTarget!.measureStart, measureEnd: annotationTarget!.measureEnd, text });
-                      }
-                    }}
-                    onDelete={annotationTarget?.existing ? () => deleteAnnotation.mutate(annotationTarget!.existing!.id) : undefined}
-                  />
-                </>
-              )}
-
-              {/* Timer + navigation bar */}
-              <div className="px-4 py-3 border-t border-border flex items-center gap-3 flex-wrap">
-                {!stepTimerStarted ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setStepTimerStarted(true)}
-                    className="gap-1.5 shrink-0"
-                    disabled={isDone}
-                  >
-                    <Play className="w-3.5 h-3.5" />
-                    Start timer
-                    {currentSection.durationMin ? ` · ${currentSection.durationMin} min` : ""}
-                  </Button>
-                ) : (
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xl font-mono tabular-nums">{formatTime(stepElapsedSec)}</span>
-                    {durationSec > 0 && (
-                      <div className="mt-1.5 h-1 bg-muted rounded-full overflow-hidden max-w-[180px]">
-                        <div
-                          className="h-full bg-[#729E8F] rounded-full transition-all duration-1000"
-                          style={{ width: `${Math.min(100, (stepElapsedSec / durationSec) * 100)}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 ml-auto shrink-0">
-                  {currentStep > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setCurrentStep((s) => s - 1)}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1"
-                    >
-                      ← Back
-                    </button>
-                  )}
-                  {!isLastStep && (
-                    <button
-                      type="button"
-                      onClick={goNext}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1"
-                      disabled={isDone}
-                    >
-                      Skip
-                    </button>
-                  )}
-                  <Button
-                    onClick={isLastStep ? () => completeSession.mutate() : goNext}
-                    disabled={(!canProceed && !isLastStep) || completeSession.isPending || isDone}
-                    className={cn((!canProceed && !isLastStep) && "opacity-40 cursor-not-allowed")}
-                    size="sm"
-                  >
-                    {isLastStep
-                      ? (isDone ? "Done" : completeSession.isPending ? "Saving…" : "Finish ✓")
-                      : "Next →"}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Step dots (mobile — shown below timer bar) */}
-              {sections.length > 1 && (
-                <div className="sm:hidden flex items-center justify-center gap-1.5 py-2">
-                  {sections.map((_, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setCurrentStep(i)}
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full transition-all",
-                        i < currentStep && "bg-[#729E8F]",
-                        i === currentStep && "bg-[#C8B388] scale-125",
-                        i > currentStep && "bg-muted-foreground/30",
-                      )}
-                      title={sections[i].label}
-                    />
-                  ))}
-                </div>
-              )}
-              </div>{/* end max-w-lg */}
-            </div>
-          )}
-
-          {/* ── Session feedback modal ──────────────────────────────────── */}
-          <SessionFeedbackModal
-            open={feedbackModalOpen}
-            onClose={() => {
-              setFeedbackModalOpen(false);
-              // "Skip for now" — navigate away same as after submit
-              if (planId != null) navigate(`/plan/${planId}`);
-            }}
-            lessonDayId={bundle.lesson.id}
-            tasks={sections}
-            onSubmitted={() => {
-              setFeedbackModalOpen(false);
-              if (planId != null) navigate(`/plan/${planId}`);
-            }}
-          />
-
-          {/* ── Bottom sheet: notes + flagged bars ─────────────────────── */}
-          <div
-            className={cn(
-              "fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border transition-all duration-300 ease-in-out",
-              noteSheetOpen ? "h-[52vh]" : "h-12",
-            )}
-          >
             <button
               type="button"
-              onClick={() => setNoteSheetOpen((v) => !v)}
-              className="w-full h-12 flex items-center justify-between px-4 shrink-0"
+              onClick={() => completeSession.mutate()}
+              disabled={completeSession.isPending || isDone}
+              style={{
+                marginTop: 20,
+                width: "100%",
+                padding: "14px 0",
+                borderRadius: 8,
+                background: "#0f2036",
+                color: "#c9a86a",
+                fontSize: 14,
+                fontWeight: 700,
+                letterSpacing: "0.05em",
+                border: "none",
+                cursor: completeSession.isPending || isDone ? "default" : "pointer",
+                opacity: completeSession.isPending || isDone ? 0.5 : 1,
+              }}
             >
-              <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                {flaggedBars.size > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] flex items-center justify-center font-bold">
-                    {flaggedBars.size}
-                  </span>
-                )}
-                Notes &amp; flagged bars
-              </span>
-              <ChevronUp
-                className={cn(
-                  "w-4 h-4 text-muted-foreground transition-transform duration-300",
-                  noteSheetOpen && "rotate-180",
-                )}
-              />
+              {completeSession.isPending ? "Saving…" : "Mark session complete →"}
             </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
+  return (
+    <div style={{ height: "100vh", background: "#f5f1ea", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <SessionTopBar bundle={bundle} sheetId={sheetId} isDone={isDone} completePending={completeSession.isPending} onComplete={() => completeSession.mutate()} />
+
+      {/* ── Scroll snap container ─── */}
+      <div
+        ref={scrollerRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          scrollSnapType: "y mandatory",
+          scrollBehavior: "smooth",
+        }}
+      >
+        {activeSections.map((sec, idx) => (
+          <SegmentCard
+            key={idx}
+            index={idx}
+            section={sec}
+            registerEl={registerEl}
+            effectivePhaseType={effectivePhaseType}
+            allMeasures={allMeasures}
+            sheetId={sheetId}
+            flaggedBars={flaggedBars}
+            onToggleFlag={toggleFlag}
+            annotations={annotations}
+            onAddAnnotation={(start, end) => setAnnotationTarget({ measureStart: start, measureEnd: end })}
+            onAnnotationClick={(ann) => setAnnotationTarget({ measureStart: ann.measureStart, measureEnd: ann.measureEnd, existing: ann })}
+            onToggleTask={onToggleTask}
+            isLastSegment={idx === activeSections.length - 1}
+            onComplete={() => completeSession.mutate()}
+            completePending={completeSession.isPending}
+            isDone={!!isDone}
+          />
+        ))}
+        <div style={{ height: 20 }} />
+      </div>
+
+      {/* Annotation popover — one at page level */}
+      <AnnotationPopover
+        open={annotationTarget !== null}
+        onOpenChange={(v) => { if (!v) setAnnotationTarget(null); }}
+        measureStart={annotationTarget?.measureStart ?? 1}
+        measureEnd={annotationTarget?.measureEnd ?? 1}
+        initialText={annotationTarget?.existing?.text ?? ""}
+        isSaving={createAnnotation.isPending || updateAnnotation.isPending}
+        onSave={(text) => {
+          if (annotationTarget?.existing) {
+            updateAnnotation.mutate({ id: annotationTarget.existing.id, text });
+          } else if (annotationTarget) {
+            createAnnotation.mutate({ measureStart: annotationTarget.measureStart, measureEnd: annotationTarget.measureEnd, text });
+          }
+        }}
+        onDelete={annotationTarget?.existing ? () => deleteAnnotation.mutate(annotationTarget!.existing!.id) : undefined}
+      />
+
+      {/* ── Bottom HUD ─── */}
+      <div
+        style={{
+          flexShrink: 0,
+          height: 88,
+          background: "#0f2036",
+          borderTop: "1px solid rgba(201,168,106,0.25)",
+          display: "flex",
+          flexDirection: "column",
+          zIndex: 40,
+        }}
+      >
+        {/* Progress line */}
+        <div style={{ height: 2, background: "rgba(245,241,234,0.12)", position: "relative" }}>
+          <div
+            style={{
+              height: "100%",
+              background: "#c9a86a",
+              width: `${overallProgress * 100}%`,
+              transition: "width 0.25s ease",
+            }}
+          />
+        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "0 20px", gap: 20 }}>
+          {/* Left: current segment label */}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "#c9a86a", marginBottom: 2 }}>
+              {currentSection ? `${String(activeIdx + 1).padStart(2, "0")} · ${labelForSegment(currentSection)}` : "Session"}
+            </div>
             <div
-              className={cn(
-                "px-4 pb-4 overflow-y-auto transition-opacity duration-200",
-                noteSheetOpen ? "opacity-100 h-[calc(52vh-3rem)]" : "opacity-0 pointer-events-none h-0",
-              )}
+              style={{
+                fontFamily: '"Cormorant Garamond", serif',
+                fontSize: 17,
+                color: "#f5f1ea",
+                lineHeight: 1.2,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
             >
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                onBlur={() => saveNotes(notes)}
-                placeholder="Notes for this session…"
-                className="w-full h-28 text-sm resize-none bg-transparent border border-border rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-              {flaggedBars.size > 0 && (
-                <div className="mt-3">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                    Flagged bars ({flaggedBars.size})
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {Array.from(flaggedBars.keys()).map((measureId) => {
-                      const bar = allMeasures.find((m) => m.id === measureId);
-                      if (!bar) return null;
-                      return (
-                        <div
-                          key={measureId}
-                          className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-amber-200 bg-amber-50 text-xs text-amber-800"
-                        >
-                          <Flag className="w-2.5 h-2.5 fill-current" />
-                          m.{bar.measureNumber}
-                        </div>
-                      );
-                    })}
-                  </div>
+              {currentSection?.label ?? "—"}
+            </div>
+          </div>
+
+          {/* Center: dot row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {activeSections.map((sec, i) => {
+              const done = sec.tasks.length > 0 && sec.tasks.every((t) => t.completed);
+              const active = i === activeIdx;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => scrollTo(i)}
+                  title={labelForSegment(sec)}
+                  style={{
+                    width: active ? 22 : 10,
+                    height: 10,
+                    borderRadius: 99,
+                    border: "none",
+                    cursor: "pointer",
+                    background: active ? "#c9a86a" : done ? "rgba(114,158,143,0.9)" : "rgba(245,241,234,0.25)",
+                    transition: "all 0.2s",
+                    padding: 0,
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          {/* Right: peek next + nav */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, justifyContent: "flex-end", minWidth: 0 }}>
+            {nextSection ? (
+              <div style={{ minWidth: 0, textAlign: "right" }}>
+                <div style={{ fontFamily: "Inter, sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(245,241,234,0.55)", marginBottom: 2 }}>
+                  Next
                 </div>
-              )}
+                <div
+                  style={{
+                    fontFamily: '"Cormorant Garamond", serif',
+                    fontStyle: "italic",
+                    fontSize: 14,
+                    color: "rgba(245,241,234,0.85)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: 220,
+                  }}
+                >
+                  {labelForSegment(nextSection)}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontFamily: '"EB Garamond", serif', fontStyle: "italic", fontSize: 13, color: "rgba(245,241,234,0.55)" }}>
+                Last segment
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                type="button"
+                onClick={() => scrollTo(activeIdx - 1)}
+                disabled={activeIdx === 0}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 6,
+                  background: "rgba(245,241,234,0.08)",
+                  color: "#f5f1ea",
+                  border: "1px solid rgba(245,241,234,0.18)",
+                  cursor: activeIdx === 0 ? "default" : "pointer",
+                  opacity: activeIdx === 0 ? 0.3 : 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                title="Previous segment (↑ / k)"
+              >
+                <ArrowUp style={{ width: 14, height: 14 }} />
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTo(activeIdx + 1)}
+                disabled={activeIdx === activeSections.length - 1}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 6,
+                  background: "rgba(201,168,106,0.18)",
+                  color: "#c9a86a",
+                  border: "1px solid rgba(201,168,106,0.35)",
+                  cursor: activeIdx === activeSections.length - 1 ? "default" : "pointer",
+                  opacity: activeIdx === activeSections.length - 1 ? 0.3 : 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                title="Next segment (↓ / j)"
+              >
+                <ArrowDown style={{ width: 14, height: 14 }} />
+              </button>
             </div>
           </div>
         </div>
-      )}
-    </Layout>
+      </div>
+
+      <SessionFeedbackModal
+        open={feedbackModalOpen}
+        onClose={() => {
+          setFeedbackModalOpen(false);
+          if (planId != null) navigate(`/plan/${planId}`);
+        }}
+        lessonDayId={bundle.lesson.id}
+        tasks={activeSections}
+        onSubmitted={() => {
+          setFeedbackModalOpen(false);
+          if (planId != null) navigate(`/plan/${planId}`);
+        }}
+      />
+    </div>
+  );
+}
+
+// ── Session Top Bar ──────────────────────────────────────────────────────────
+
+function SessionTopBar({
+  bundle,
+  sheetId,
+  isDone,
+  completePending,
+  onComplete,
+}: {
+  bundle: SessionBundle;
+  sheetId: number | null;
+  isDone: boolean;
+  completePending: boolean;
+  onComplete: () => void;
+}) {
+  return (
+    <div
+      style={{
+        height: 48,
+        minHeight: 48,
+        background: "#0f2036",
+        display: "flex",
+        alignItems: "center",
+        padding: "0 16px",
+        gap: 12,
+        flexShrink: 0,
+        zIndex: 50,
+        borderBottom: "1px solid rgba(201,168,106,0.18)",
+      }}
+    >
+      <Link href={bundle.plan.id != null ? `/plan/${bundle.plan.id}` : "/"}>
+        <button
+          type="button"
+          style={{
+            color: "#f5f1ea",
+            fontSize: 12,
+            fontFamily: "Inter, sans-serif",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "4px 6px",
+            borderRadius: 6,
+            opacity: 0.8,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <ChevronLeft style={{ width: 14, height: 14 }} /> Back
+        </button>
+      </Link>
+      <div style={{ flex: 1, textAlign: "center", overflow: "hidden", padding: "0 8px" }}>
+        <div
+          style={{
+            fontSize: 9,
+            fontFamily: "Inter, sans-serif",
+            textTransform: "uppercase",
+            letterSpacing: "0.18em",
+            color: "#c9a86a",
+            lineHeight: 1,
+            marginBottom: 3,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {bundle.composerName}
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            fontFamily: '"Cormorant Garamond", serif',
+            color: "#f5f1ea",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            lineHeight: 1.2,
+          }}
+        >
+          {bundle.pieceTitle}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <span
+          style={{
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 11,
+            color: "#f5f1ea",
+            background: "rgba(245,241,234,0.10)",
+            borderRadius: 4,
+            padding: "2px 8px",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Day {bundle.dayIndex + 1}
+        </span>
+        {sheetId != null && (
+          <a
+            href={`/score/${sheetId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "rgba(245,241,234,0.6)", display: "flex", alignItems: "center", gap: 4, fontSize: 11, textDecoration: "none" }}
+            title="Open full score"
+          >
+            <Music2 style={{ width: 13, height: 13 }} />
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={() => !isDone && onComplete()}
+          disabled={completePending || isDone}
+          style={{
+            color: isDone ? "#c9a86a" : "#f5f1ea",
+            fontSize: 12,
+            fontFamily: "Inter, sans-serif",
+            background: "none",
+            border: "none",
+            cursor: isDone || completePending ? "default" : "pointer",
+            padding: "4px 6px",
+            borderRadius: 6,
+            opacity: completePending ? 0.5 : 0.85,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {isDone ? "Done ✓" : completePending ? "Saving…" : "End session"}
+        </button>
+      </div>
+    </div>
   );
 }

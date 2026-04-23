@@ -17,7 +17,6 @@ import {
   RotateCcw, X, BookMarked,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ScoreReviewModal } from "@/components/score-review-modal";
 import {
   PHASE_TYPES, PHASE_LABELS, PHASE_BASE_EFFORT,
   LEVEL_MULTIPLIER, DIFFICULTY_MULTIPLIER,
@@ -27,6 +26,20 @@ import {
 } from "@shared/schema";
 import { useSheetPageUrl, measuresUsePageGeometry } from "@/lib/sheet-page";
 import { SECTION_COLORS } from "@/lib/palette";
+import { generateLessonsWithAutoExtend } from "@/lib/generate-lessons";
+import {
+  loadDraft as loadWizardDraft,
+  saveDraft as saveWizardDraft,
+  clearDraft as clearWizardDraft,
+  isResumable as isDraftResumable,
+} from "@/lib/wizard-draft";
+import {
+  ScoreMarkupShell,
+  PageThumbRail,
+  ScorePagesGrid,
+  SubtleHeaderButton,
+} from "@/components/score-markup/shared";
+import { ReviewBarsStep } from "@/components/score-markup/review-bars-step";
 import {
   DndContext, PointerSensor, useSensor, useSensors,
   useDraggable, useDroppable,
@@ -37,7 +50,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type DraftSection = {
+export type DraftSection = {
   localId: string;
   name: string;
   measureStart: number;
@@ -204,14 +217,6 @@ function defaultPhasesForSection(difficulty: DraftSection["difficulty"]): DraftP
   }));
 }
 
-interface Measure {
-  id: number;
-  measureNumber: number;
-  pageNumber: number;
-  boundingBox: { x: number; y: number; w: number; h: number };
-  imageUrl: string | null;
-}
-
 interface SheetMusicStatus {
   id: number;
   processingStatus: "pending" | "processing" | "ready" | "failed";
@@ -235,14 +240,13 @@ interface Props {
   onSuccess?: (planId: number) => void;
 }
 
-type Step = "setup" | "upload" | "pageRange" | "processing" | "review" | "sectionMark" | "phases" | "confirm";
+type Step = "upload" | "pageRange" | "processing" | "review" | "sectionMark" | "phases" | "confirm";
 
-const STEP_ORDER: Step[] = ["setup", "upload", "pageRange", "processing", "review", "sectionMark", "phases", "confirm"];
+const STEP_ORDER: Step[] = ["upload", "pageRange", "processing", "review", "sectionMark", "phases", "confirm"];
 
 // ─── Step indicators ─────────────────────────────────────────────────────────
 
 const STEP_LABELS: Record<Step, string> = {
-  setup: "Practice setup",
   upload: "Sheet music",
   pageRange: "Page range",
   processing: "Detecting bars",
@@ -255,20 +259,19 @@ const STEP_LABELS: Record<Step, string> = {
 /** Map wizard step to progress dot index. */
 function stepToProgressIndex(step: Step): number {
   switch (step) {
-    case "setup": return 0;
-    case "upload": return 1;
+    case "upload": return 0;
     case "pageRange":
-    case "processing": return 2;
-    case "review": return 3;
-    case "sectionMark": return 4;
-    case "phases": return 4;
-    case "confirm": return 5;
+    case "processing": return 1;
+    case "review": return 2;
+    case "sectionMark": return 3;
+    case "phases": return 3;
+    case "confirm": return 4;
     default: return 0;
   }
 }
 
 function StepDots({ current }: { current: Step }) {
-  const keys = ["setup", "upload", "pages", "review", "sectionMark", "confirm"] as const;
+  const keys = ["upload", "pages", "review", "sectionMark", "confirm"] as const;
   const currentIdx = stepToProgressIndex(current);
   return (
     <div className="flex items-center gap-2 mb-6">
@@ -293,60 +296,9 @@ function StepDots({ current }: { current: Step }) {
   );
 }
 
-// ─── Step: Setup ─────────────────────────────────────────────────────────────
-
-function SetupStep({
-  dailyMinutes, setDailyMinutes,
-  playingLevel,
-  onNext,
-}: {
-  dailyMinutes: number; setDailyMinutes: (v: number) => void;
-  playingLevel: PlayingLevel;
-  onNext: () => void;
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="flex items-center gap-2 text-sm font-medium">
-            <Clock className="w-4 h-4 text-muted-foreground" />
-            Daily practice time
-          </Label>
-          <span className="text-sm font-bold text-primary">{dailyMinutes} min</span>
-        </div>
-        <Slider
-          min={10}
-          max={120}
-          step={5}
-          value={[dailyMinutes]}
-          onValueChange={([v]) => setDailyMinutes(v)}
-          className="w-full"
-        />
-        <div className="flex justify-between text-xs text-muted-foreground">
-          <span>10 min</span>
-          <span>2 hours</span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2">
-        <div className="flex items-center gap-2">
-          <Music2 className="w-4 h-4 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground">Playing level</span>
-        </div>
-        <span className="text-xs font-medium">{PLAYING_LEVEL_LABELS[playingLevel]}</span>
-      </div>
-
-      <Button onClick={onNext} className="w-full">
-        Next: Upload sheet music
-        <ChevronRight className="w-4 h-4 ml-1" />
-      </Button>
-    </div>
-  );
-}
-
 // ─── Step: Upload ─────────────────────────────────────────────────────────────
 
-interface CommunityScoreInfo {
+export interface CommunityScoreInfo {
   id: number;
   sheetMusicId: number;
   totalMeasures: number;
@@ -354,7 +306,7 @@ interface CommunityScoreInfo {
   submittedAt: string;
 }
 
-function UploadStep({
+export function UploadStep({
   pieceTitle, userId, pieceId,
   communityScore,
   onSheetMusicCreated, onUseCommunityScore, onBack,
@@ -474,7 +426,7 @@ function UploadStep({
 
       <div className="flex gap-3">
         <Button variant="outline" onClick={onBack} className="flex-1">
-          <ChevronLeft className="w-4 h-4 mr-1" /> Back
+          Cancel
         </Button>
       </div>
     </div>
@@ -483,7 +435,7 @@ function UploadStep({
 
 // ─── Step: Choose PDF page range ─────────────────────────────────────────────
 
-function PageRangeStep({
+export function PageRangeStep({
   sheetMusicId,
   initialPageCount,
   onStarted,
@@ -617,7 +569,7 @@ function PageRangeStep({
 
 // ─── Step: Processing ─────────────────────────────────────────────────────────
 
-function ProcessingStep({ sheetMusicId, onDone }: { sheetMusicId: number; onDone: () => void }) {
+export function ProcessingStep({ sheetMusicId, onDone }: { sheetMusicId: number; onDone: () => void }) {
   const doneCalledRef = useRef(false);
   const { data } = useQuery<SheetMusicStatus>({
     queryKey: [`/api/sheet-music/${sheetMusicId}/status`],
@@ -686,60 +638,7 @@ function ProcessingStep({ sheetMusicId, onDone }: { sheetMusicId: number; onDone
   );
 }
 
-// ─── Step: Review — opens the full-screen ScoreReviewModal ───────────────────
-
-function ReviewStep({
-  sheetMusicId, pieceTitle, onConfirm, onBack,
-}: {
-  sheetMusicId: number; pieceTitle: string;
-  onConfirm: (totalMeasures: number) => void; onBack: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const { data: measures = [], isLoading } = useQuery<Measure[]>({
-    queryKey: [`/api/sheet-music/${sheetMusicId}/measures`],
-    staleTime: Infinity,
-  });
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-col items-center gap-4 py-8">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        <p className="text-sm text-muted-foreground">Loading measures…</p>
-      </div>
-    );
-  }
-
-  if (measures.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-4 py-8 text-center">
-        <AlertCircle className="w-10 h-10 text-destructive" />
-        <p className="text-sm text-muted-foreground">
-          No bars were detected. The PDF may be a scan or use non-standard notation.
-          You can still create a plan and enter measures manually.
-        </p>
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={onBack}><ChevronLeft className="w-4 h-4 mr-1" />Back</Button>
-          <Button onClick={() => onConfirm(0)}>Continue anyway</Button>
-        </div>
-      </div>
-    );
-  }
-
-  // Full-screen review — the Dialog is dismissed and the modal takes over
-  return (
-    <ScoreReviewModal
-      sheetMusicId={sheetMusicId}
-      totalMeasures={measures.length}
-      pieceTitle={pieceTitle}
-      onConfirm={(savedCount) => {
-        // Bust the cache so SectionMarkStep fetches the user's edited bars, not the originals
-        queryClient.invalidateQueries({ queryKey: [`/api/sheet-music/${sheetMusicId}/measures`] });
-        onConfirm(savedCount ?? measures.length);
-      }}
-      onBack={onBack}
-    />
-  );
-}
+// ─── Step: Review — see @/components/score-markup/review-bars-step ───────────
 
 // ─── Step: Section Marking ────────────────────────────────────────────────────
 
@@ -877,10 +776,14 @@ function DropZone({
   );
 }
 
-function SectionMarkStep({
+export function SectionMarkStep({
   sheetMusicId,
   totalMeasures: _totalMeasures,
   planMovementId,
+  initialLocalSections,
+  initialDifficulties,
+  onEditorStateChange,
+  onSaveAndExit,
   onNext,
   onSkip,
   onBack,
@@ -888,12 +791,28 @@ function SectionMarkStep({
   sheetMusicId: number;
   totalMeasures: number;
   planMovementId?: number | null;
+  initialLocalSections?: LocalSection[] | null;
+  initialDifficulties?: Record<string, ZoneLevel> | null;
+  onEditorStateChange?: (localSections: LocalSection[], difficulties: Record<string, ZoneLevel>) => void;
+  onSaveAndExit?: () => void;
   onNext: (sections: DraftSection[]) => void;
   onSkip: () => void;
   onBack: () => void;
 }) {
-  const [localSections, setLocalSections] = useState<LocalSection[]>([]);
-  const [difficulties, setDifficulties] = useState<Record<string, ZoneLevel>>({});
+  const [localSections, setLocalSections] = useState<LocalSection[]>(
+    () => initialLocalSections ?? [],
+  );
+  const [difficulties, setDifficulties] = useState<Record<string, ZoneLevel>>(
+    () => initialDifficulties ?? {},
+  );
+
+  // Report editor state up to the wizard so it can persist it to localStorage.
+  useEffect(() => {
+    onEditorStateChange?.(localSections, difficulties);
+    // Only push changes when local state changes; the callback identity is
+    // allowed to vary without re-firing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localSections, difficulties]);
   const localSectionsRef = useRef<LocalSection[]>([]);
   const [selStart, setSelStart] = useState<number | null>(null);
   const [selMode, setSelMode] = useState<"idle" | "pending" | "dragging">("idle");
@@ -1246,231 +1165,209 @@ function SectionMarkStep({
     );
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b bg-background/95 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronLeft className="w-4 h-4" /> Back
-          </button>
-          <div className="h-4 w-px bg-border" />
-          <BookMarked className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">Mark & rank sections</span>
-          {localSections.length > 0 && (
-            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-              {localSections.length} section{localSections.length !== 1 ? "s" : ""}
-            </span>
-          )}
+  const banner = (
+    <>
+      {selMode === "idle" && !selError && !hoveredSection && (
+        <div className="mb-3 px-3 py-2 rounded bg-primary/5 border border-primary/20 text-xs text-foreground/80">
+          <span className="font-medium">Step 1 ·</span> Click or drag across bars to mark a section. Then rank its difficulty on the right →
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={onSkip} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            Skip
+      )}
+      {hoveredSection && selMode === "idle" && (
+        <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs flex items-center gap-2">
+          <span className="font-medium text-amber-900">
+            {hoveredSection.name} · bars {hoveredSection.measureStart}–{hoveredSection.measureEnd}
+          </span>
+          <button
+            type="button"
+            onClick={() => removeSection(hoveredSection.tempId)}
+            className="ml-auto inline-flex items-center gap-1 rounded bg-white border border-amber-300 px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
+          >
+            <X className="w-3 h-3" /> Delete section
           </button>
+        </div>
+      )}
+      {selMode === "pending" && selStart !== null && (
+        <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
+          <span className="font-medium">Bar {selStart} selected.</span>
+          <span>Click or drag to another bar to set the end, or click bar {selStart} again to cancel.</span>
+        </div>
+      )}
+      {selError && (
+        <div className="mb-3 px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {selError}
+        </div>
+      )}
+    </>
+  );
+
+  const renderStripRow = (msr: MeasureRow) => {
+    const mNum = msr.measureNumber;
+    const sec = sectionForBar(mNum);
+    const isSelStart = selStart === mNum;
+    const inRange = selPreviewRange && mNum >= selPreviewRange.lo && mNum <= selPreviewRange.hi;
+    const isIgnoredSec = !!sec && ignoredIdSet.has(sec.tempId);
+    const col = sec && !isIgnoredSec ? colorForZoneLevel(getZoneLevel(sec.tempId)) : null;
+    const dimmed = sec && hoveredSectionId !== null && sec.tempId !== hoveredSectionId;
+    return (
+      <div
+        key={msr.id}
+        onPointerDown={(e) => { e.preventDefault(); handleBarPointerDown(mNum); }}
+        onPointerEnter={() => handleBarPointerEnter(mNum, sec)}
+        onPointerLeave={handleBarPointerLeave}
+        onPointerUp={(e) => { e.stopPropagation(); handleBarPointerUp(mNum); }}
+        style={
+          isIgnoredSec && !dimmed
+            ? { background: "rgba(100,116,139,0.12)", borderLeftColor: "rgba(100,116,139,0.7)", borderLeftStyle: "dashed", touchAction: "none" }
+            : col && !dimmed
+            ? { background: col.bg, borderLeftColor: col.border, touchAction: "none" }
+            : { touchAction: "none" }
+        }
+        className={cn(
+          "relative w-full h-10 rounded border text-left overflow-hidden transition-colors cursor-crosshair",
+          isSelStart && "ring-2 ring-amber-400",
+          inRange && !sec && "bg-amber-50 border-l-2 border-amber-400",
+          (col || isIgnoredSec) && !dimmed && "border-l-4",
+          !col && !isIgnoredSec && !isSelStart && !inRange && "bg-white/50",
+          dimmed && "opacity-30",
+        )}
+      >
+        {msr.imageUrl && <img src={msr.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover object-left opacity-80 pointer-events-none" />}
+        <span className="absolute top-0.5 left-1 text-[10px] text-muted-foreground/70 tabular-nums pointer-events-none">{mNum}</span>
+      </div>
+    );
+  };
+
+  const rightPanel = (
+    <div className="w-64 shrink-0 border-l bg-background overflow-y-auto p-3 flex flex-col gap-3">
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Step 2 · Rank difficulty</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Drag sections into the <span className="font-semibold text-rose-600">Hard</span>, <span className="font-semibold text-blue-600">Easy</span>, or <span className="font-semibold text-slate-600">Ignore</span> zone. Click the lines on the left of each card to set the level (1–3).
+        </p>
+      </div>
+
+      {localSections.length === 0 ? (
+        <div className="text-xs text-muted-foreground leading-relaxed border-t pt-3">
+          No sections yet. Click a bar on the score to start a section.
+        </div>
+      ) : (
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <div className="space-y-2">
+            <DropZone id="hard" className="border-rose-300/60 bg-rose-50/50 p-2">
+              <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1 mb-1.5">
+                <span>↑ Harder than average</span>
+                <span className="h-px flex-1 bg-rose-200" />
+              </div>
+              <div className="space-y-1.5 min-h-[24px]">
+                {hardSections.length === 0 ? (
+                  <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                    (drop sections here)
+                  </div>
+                ) : (
+                  <AnimatePresence initial={false}>
+                    {hardSections.map(renderCard)}
+                  </AnimatePresence>
+                )}
+              </div>
+            </DropZone>
+
+            <div className="rounded border border-dashed border-muted-foreground/40 bg-muted/40 px-3 py-1.5 text-center select-none">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">— Everything else —</div>
+              <div className="text-[10px] text-muted-foreground leading-tight">Average difficulty</div>
+            </div>
+
+            <DropZone id="easy" className="border-blue-300/60 bg-blue-50/50 p-2">
+              <div className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold flex items-center gap-1 mb-1.5">
+                <span className="h-px flex-1 bg-blue-200" />
+                <span>↓ Easier than average</span>
+              </div>
+              <div className="space-y-1.5 min-h-[24px]">
+                {easySections.length === 0 ? (
+                  <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                    (drop sections here)
+                  </div>
+                ) : (
+                  <AnimatePresence initial={false}>
+                    {easySections.map(renderCard)}
+                  </AnimatePresence>
+                )}
+              </div>
+            </DropZone>
+
+            <DropZone id="ignore" className="border-slate-300/60 bg-slate-100/60 p-2">
+              <div className="text-[10px] uppercase tracking-wider text-slate-600 font-semibold flex items-center gap-1 mb-1.5">
+                <span>↓ Ignore from learning plan ↓</span>
+                <span className="h-px flex-1 bg-slate-200" />
+              </div>
+              <div className="space-y-1.5 min-h-[24px]">
+                {ignoredSections.length === 0 ? (
+                  <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
+                    (drop to skip from plan)
+                  </div>
+                ) : (
+                  <AnimatePresence initial={false}>
+                    {ignoredSections.map(renderCard)}
+                  </AnimatePresence>
+                )}
+              </div>
+            </DropZone>
+          </div>
+          <p className="text-[10px] text-muted-foreground leading-relaxed border-t pt-2 mt-2">
+            To remove a section entirely, hover it on the score and click <span className="font-semibold">Delete</span>.
+          </p>
+        </DndContext>
+      )}
+    </div>
+  );
+
+  return (
+    <ScoreMarkupShell
+      onBack={onBack}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <BookMarked className="w-4 h-4 text-muted-foreground" /> Mark &amp; rank sections
+        </span>
+      }
+      titleChip={localSections.length > 0 ? (
+        <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+          {localSections.length} section{localSections.length !== 1 ? "s" : ""}
+        </span>
+      ) : undefined}
+      headerActions={
+        <>
+          <SubtleHeaderButton onClick={onSkip}>Skip</SubtleHeaderButton>
+          {onSaveAndExit && (
+            <SubtleHeaderButton
+              onClick={onSaveAndExit}
+              title="Save your progress and close — pick up where you left off later"
+            >
+              Save &amp; exit
+            </SubtleHeaderButton>
+          )}
           <Button size="sm" onClick={handleDone}>
             Next <ChevronRight className="w-4 h-4 ml-1" />
           </Button>
-        </div>
-      </div>
-
-      {/* 3-column body */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: page thumbnails */}
-        <div className="w-16 shrink-0 border-r bg-muted/20 overflow-y-auto py-2 flex flex-col gap-2 items-center">
-          {pages.map((pg) => (
-            <button
-              key={pg.pageNumber}
-              onClick={() => scrollToPage(pg.pageNumber)}
-              className="w-12 rounded border border-border/50 overflow-hidden hover:border-primary/60 transition-colors"
-              title={`Page ${pg.pageNumber}`}
-            >
-              <img src={pg.imageUrl} alt={`p${pg.pageNumber}`} className="w-full h-auto block" />
-              <div className="text-[9px] text-center text-muted-foreground py-0.5 leading-none">{pg.pageNumber}</div>
-            </button>
-          ))}
-        </div>
-
-        {/* Center: score pages */}
-        <div
-          ref={centerRef}
-          className="flex-1 overflow-y-auto bg-neutral-100 p-4"
-          onPointerUp={() => {
-            if (selMode === "dragging") setSelMode("pending");
-            pointerIsDownRef.current = false;
-          }}
-          onMouseLeave={() => { if (selMode === "idle") setHoveredSectionId(null); }}
-        >
-          {/* Instructional banner + hovered section delete affordance */}
-          {selMode === "idle" && !selError && !hoveredSection && (
-            <div className="mb-3 px-3 py-2 rounded bg-primary/5 border border-primary/20 text-xs text-foreground/80">
-              <span className="font-medium">Step 1 ·</span> Click or drag across bars to mark a section. Then rank its difficulty on the right →
-            </div>
-          )}
-          {hoveredSection && selMode === "idle" && (
-            <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs flex items-center gap-2">
-              <span className="font-medium text-amber-900">
-                {hoveredSection.name} · bars {hoveredSection.measureStart}–{hoveredSection.measureEnd}
-              </span>
-              <button
-                type="button"
-                onClick={() => removeSection(hoveredSection.tempId)}
-                className="ml-auto inline-flex items-center gap-1 rounded bg-white border border-amber-300 px-2 py-0.5 text-[11px] text-amber-900 hover:bg-amber-100"
-              >
-                <X className="w-3 h-3" /> Delete section
-              </button>
-            </div>
-          )}
-          {selMode === "pending" && selStart !== null && (
-            <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
-              <span className="font-medium">Bar {selStart} selected.</span>
-              <span>Click or drag to another bar to set the end, or click bar {selStart} again to cancel.</span>
-            </div>
-          )}
-          {selError && (
-            <div className="mb-3 px-3 py-2 rounded bg-destructive/10 border border-destructive/20 text-xs text-destructive flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {selError}
-            </div>
-          )}
-          {usePageGeometry ? (
-            <div className="grid grid-cols-2 gap-4">
-              {pages.map((pg) => (
-                <div
-                  key={pg.pageNumber}
-                  ref={(el) => { pageRefs.current[pg.pageNumber] = el; }}
-                  className="bg-white shadow-sm rounded overflow-hidden relative"
-                >
-                  <img src={getPageUrl(pg.pageNumber)} alt={`Page ${pg.pageNumber}`} className="w-full h-auto block" />
-                  {(measuresByPage[pg.pageNumber] ?? [])
-                    .filter((m) => m.boundingBox != null)
-                    .map((msr) => renderBarOverlay(msr))}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-1 max-w-2xl mx-auto" style={{ userSelect: "none" }}>
-              {measures.map((msr) => {
-                const mNum = msr.measureNumber;
-                const sec = sectionForBar(mNum);
-                const isSelStart = selStart === mNum;
-                const inRange = selPreviewRange && mNum >= selPreviewRange.lo && mNum <= selPreviewRange.hi;
-                const isIgnoredSec = !!sec && ignoredIdSet.has(sec.tempId);
-                const col = sec && !isIgnoredSec ? colorForZoneLevel(getZoneLevel(sec.tempId)) : null;
-                const dimmed = sec && hoveredSectionId !== null && sec.tempId !== hoveredSectionId;
-                return (
-                  <div
-                    key={msr.id}
-                    onPointerDown={(e) => { e.preventDefault(); handleBarPointerDown(mNum); }}
-                    onPointerEnter={() => handleBarPointerEnter(mNum, sec)}
-                    onPointerLeave={handleBarPointerLeave}
-                    onPointerUp={(e) => { e.stopPropagation(); handleBarPointerUp(mNum); }}
-                    style={
-                      isIgnoredSec && !dimmed
-                        ? { background: "rgba(100,116,139,0.12)", borderLeftColor: "rgba(100,116,139,0.7)", borderLeftStyle: "dashed", touchAction: "none" }
-                        : col && !dimmed
-                        ? { background: col.bg, borderLeftColor: col.border, touchAction: "none" }
-                        : { touchAction: "none" }
-                    }
-                    className={cn(
-                      "relative w-full h-10 rounded border text-left overflow-hidden transition-colors cursor-crosshair",
-                      isSelStart && "ring-2 ring-amber-400",
-                      inRange && !sec && "bg-amber-50 border-l-2 border-amber-400",
-                      (col || isIgnoredSec) && !dimmed && "border-l-4",
-                      !col && !isIgnoredSec && !isSelStart && !inRange && "bg-white/50",
-                      dimmed && "opacity-30",
-                    )}
-                  >
-                    {msr.imageUrl && <img src={msr.imageUrl} alt="" className="absolute inset-0 w-full h-full object-cover object-left opacity-80 pointer-events-none" />}
-                    <span className="absolute top-0.5 left-1 text-[10px] text-muted-foreground/70 tabular-nums pointer-events-none">{mNum}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Right: rank panel */}
-        <div className="w-64 shrink-0 border-l bg-background overflow-y-auto p-3 flex flex-col gap-3">
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Step 2 · Rank difficulty</p>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Drag sections into the <span className="font-semibold text-rose-600">Hard</span>, <span className="font-semibold text-blue-600">Easy</span>, or <span className="font-semibold text-slate-600">Ignore</span> zone. Click the lines on the left of each card to set the level (1–3).
-            </p>
-          </div>
-
-          {localSections.length === 0 ? (
-            <div className="text-xs text-muted-foreground leading-relaxed border-t pt-3">
-              No sections yet. Click a bar on the score to start a section.
-            </div>
-          ) : (
-            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-              <div className="space-y-2">
-                <DropZone id="hard" className="border-rose-300/60 bg-rose-50/50 p-2">
-                  <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold flex items-center gap-1 mb-1.5">
-                    <span>↑ Harder than average</span>
-                    <span className="h-px flex-1 bg-rose-200" />
-                  </div>
-                  <div className="space-y-1.5 min-h-[24px]">
-                    {hardSections.length === 0 ? (
-                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
-                        (drop sections here)
-                      </div>
-                    ) : (
-                      <AnimatePresence initial={false}>
-                        {hardSections.map(renderCard)}
-                      </AnimatePresence>
-                    )}
-                  </div>
-                </DropZone>
-
-                <div className="rounded border border-dashed border-muted-foreground/40 bg-muted/40 px-3 py-1.5 text-center select-none">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold">— Everything else —</div>
-                  <div className="text-[10px] text-muted-foreground leading-tight">Average difficulty</div>
-                </div>
-
-                <DropZone id="easy" className="border-blue-300/60 bg-blue-50/50 p-2">
-                  <div className="text-[10px] uppercase tracking-wider text-blue-600 font-semibold flex items-center gap-1 mb-1.5">
-                    <span className="h-px flex-1 bg-blue-200" />
-                    <span>↓ Easier than average</span>
-                  </div>
-                  <div className="space-y-1.5 min-h-[24px]">
-                    {easySections.length === 0 ? (
-                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
-                        (drop sections here)
-                      </div>
-                    ) : (
-                      <AnimatePresence initial={false}>
-                        {easySections.map(renderCard)}
-                      </AnimatePresence>
-                    )}
-                  </div>
-                </DropZone>
-
-                <DropZone id="ignore" className="border-slate-300/60 bg-slate-100/60 p-2">
-                  <div className="text-[10px] uppercase tracking-wider text-slate-600 font-semibold flex items-center gap-1 mb-1.5">
-                    <span>↓ Ignore from learning plan ↓</span>
-                    <span className="h-px flex-1 bg-slate-200" />
-                  </div>
-                  <div className="space-y-1.5 min-h-[24px]">
-                    {ignoredSections.length === 0 ? (
-                      <div className="text-[10px] text-muted-foreground/60 italic text-center py-1">
-                        (drop to skip from plan)
-                      </div>
-                    ) : (
-                      <AnimatePresence initial={false}>
-                        {ignoredSections.map(renderCard)}
-                      </AnimatePresence>
-                    )}
-                  </div>
-                </DropZone>
-              </div>
-              <p className="text-[10px] text-muted-foreground leading-relaxed border-t pt-2 mt-2">
-                To remove a section entirely, hover it on the score and click <span className="font-semibold">Delete</span>.
-              </p>
-            </DndContext>
-          )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+      leftRail={<PageThumbRail pages={pages} onSelect={scrollToPage} />}
+      rightPanel={rightPanel}
+    >
+      <ScorePagesGrid
+        pages={pages}
+        measures={measures}
+        sheetMusicId={sheetMusicId}
+        pageRefs={pageRefs}
+        scrollContainerRef={centerRef}
+        onPointerUp={() => {
+          if (selMode === "dragging") setSelMode("pending");
+          pointerIsDownRef.current = false;
+        }}
+        onMouseLeave={() => { if (selMode === "idle") setHoveredSectionId(null); }}
+        renderOverlay={renderBarOverlay}
+        renderStripRow={renderStripRow}
+        banner={banner}
+      />
+    </ScoreMarkupShell>
   );
 }
 
@@ -1953,11 +1850,12 @@ function PhasesStep({
 // ─── Step: Confirm ─────────────────────────────────────────────────────────────
 
 function ConfirmStep({
-  pieceTitle, dailyMinutes, targetDate, totalMeasures,
+  pieceTitle, dailyMinutes, setDailyMinutes, targetDate, totalMeasures,
   pageCount, tempo, setTempo,
   onConfirm, isLoading, onBack,
 }: {
-  pieceTitle: string; dailyMinutes: number; targetDate: string;
+  pieceTitle: string; dailyMinutes: number; setDailyMinutes: (v: number) => void;
+  targetDate: string;
   totalMeasures: number;
   pageCount: number;
   tempo: Tempo; setTempo: (t: Tempo) => void;
@@ -1969,6 +1867,28 @@ function ConfirmStep({
 
   return (
     <div className="space-y-5">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Label className="flex items-center gap-2 text-sm font-medium">
+            <Clock className="w-4 h-4 text-muted-foreground" />
+            Daily practice time
+          </Label>
+          <span className="text-sm font-bold text-primary">{dailyMinutes} min</span>
+        </div>
+        <Slider
+          min={10}
+          max={120}
+          step={5}
+          value={[dailyMinutes]}
+          onValueChange={([v]) => setDailyMinutes(v)}
+          className="w-full"
+        />
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>10 min</span>
+          <span>2 hours</span>
+        </div>
+      </div>
+
       <div>
         <p className="text-xs font-medium text-muted-foreground mb-2">Pace</p>
         <div className="grid grid-cols-2 gap-2">
@@ -1997,7 +1917,6 @@ function ConfirmStep({
       <div className="rounded-xl border bg-muted/20 divide-y divide-border overflow-hidden">
         {[
           { label: "Piece", value: pieceTitle },
-          { label: "Daily practice", value: `${dailyMinutes} min` },
           { label: "Pages", value: pageCount > 0 ? pageCount.toString() : "—" },
           { label: "Estimated duration", value: `${days} days` },
           { label: "Target date", value: target.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) },
@@ -2031,7 +1950,7 @@ export function LearningPlanWizard({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [step, setStep] = useState<Step>("setup");
+  const [step, setStep] = useState<Step>("upload");
   const [dailyMinutes, setDailyMinutes] = useState(30);
   const [tempo, setTempo] = useState<Tempo>("medium");
   const [sheetMusicId, setSheetMusicId] = useState<number | null>(null);
@@ -2041,6 +1960,77 @@ export function LearningPlanWizard({
   const [sections, setSections] = useState<DraftSection[]>([]);
   const [sectionPhases, setSectionPhases] = useState<Record<string, DraftPhase[]>>({});
   const [cameViaCommunityScore, setCameViaCommunityScore] = useState(false);
+
+  // In-progress section-mark editor state, persisted alongside the wizard draft
+  // so users can exit mid-marking and resume without losing their zones/ranges.
+  const [sectionMarkEditor, setSectionMarkEditor] = useState<{
+    localSections: LocalSection[];
+    difficulties: Record<string, ZoneLevel>;
+  } | null>(null);
+
+  const [resumedBanner, setResumedBanner] = useState(false);
+  const hydratedForEntryIdRef = useRef<number | null>(null);
+  const draftReadyRef = useRef(false);
+
+  // Hydrate from localStorage when the wizard opens for a given repertoire entry.
+  // Runs once per (entryId, open=true) edge; subsequent opens with the same
+  // entryId also re-check (they'll no-op if nothing changed).
+  useEffect(() => {
+    if (!open) {
+      draftReadyRef.current = false;
+      return;
+    }
+    if (hydratedForEntryIdRef.current === repertoireEntryId) {
+      draftReadyRef.current = true;
+      return;
+    }
+    const draft = loadWizardDraft(repertoireEntryId);
+    if (draft && isDraftResumable(draft)) {
+      const draftStep = (draft.step as string) === "setup" ? "upload" : draft.step;
+      setStep(draftStep);
+      setDailyMinutes(draft.dailyMinutes);
+      setTempo(draft.tempo);
+      setSheetMusicId(draft.sheetMusicId);
+      setPdfSourcePageCount(draft.pdfSourcePageCount);
+      setTotalMeasures(draft.totalMeasures);
+      setSections(draft.sections);
+      setSectionPhases(draft.sectionPhases);
+      setCameViaCommunityScore(draft.cameViaCommunityScore);
+      setSectionMarkEditor(draft.sectionMarkState ?? null);
+      setResumedBanner(true);
+    }
+    hydratedForEntryIdRef.current = repertoireEntryId;
+    draftReadyRef.current = true;
+  }, [open, repertoireEntryId]);
+
+  // Auto-save wizard state to the draft whenever it changes meaningfully.
+  useEffect(() => {
+    if (!open || !draftReadyRef.current) return;
+    if (step === "upload" && !sheetMusicId) return; // nothing interesting yet
+    saveWizardDraft(repertoireEntryId, {
+      step, sheetMusicId, pdfSourcePageCount, totalMeasures,
+      sections, sectionPhases, dailyMinutes, tempo, cameViaCommunityScore,
+      sectionMarkState: sectionMarkEditor ?? undefined,
+    });
+  }, [
+    open, repertoireEntryId, step, sheetMusicId, pdfSourcePageCount,
+    totalMeasures, sections, sectionPhases, dailyMinutes, tempo,
+    cameViaCommunityScore, sectionMarkEditor,
+  ]);
+
+  const startOver = () => {
+    clearWizardDraft(repertoireEntryId);
+    setResumedBanner(false);
+    setStep("upload");
+    setSheetMusicId(null);
+    setPdfSourcePageCount(null);
+    setTotalMeasures(0);
+    setSections([]);
+    setSectionPhases({});
+    setTempo("medium");
+    setCameViaCommunityScore(false);
+    setSectionMarkEditor(null);
+  };
 
   // Fetch user profile for playing level
   const { data: userProfile } = useQuery<{ playingLevel?: string | null }>({
@@ -2110,7 +2100,7 @@ export function LearningPlanWizard({
   }, [open, communityScoreUrl]);
 
   const confirmPlan = useMutation({
-    mutationFn: async (): Promise<number> => {
+    mutationFn: async (): Promise<{ planId: number; extended: Awaited<ReturnType<typeof generateLessonsWithAutoExtend>> }> => {
       if (sheetMusicId) {
         await apiRequest("POST", `/api/sheet-music/${sheetMusicId}/confirm`, {});
       }
@@ -2172,16 +2162,25 @@ export function LearningPlanWizard({
 
       // Scheduler v2: passage-state-machine model with spaced repetition +
       // modality library + dynamic replanning. Opt-in via schedulerVersion=2.
-      await apiRequest("POST", `/api/learning-plans/${planId}/generate-lessons?v=2`, { schedulerVersion: 2 });
-      return planId;
+      // Auto-extend the deadline if the server reports infeasibility.
+      const gen = await generateLessonsWithAutoExtend(planId);
+      return { planId, extended: gen };
     },
-    onSuccess: (planId) => {
+    onSuccess: ({ planId, extended }) => {
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans`] });
       queryClient.invalidateQueries({ queryKey: [`/api/repertoire/${userId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/entry/${repertoireEntryId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}`] });
       queryClient.invalidateQueries({ queryKey: [`/api/learning-plans/${planId}/lessons`] });
-      toast({ title: "Plan created!", description: "Your daily lessons are ready." });
+      clearWizardDraft(repertoireEntryId);
+      if (extended.extendedDays) {
+        toast({
+          title: "Plan created — deadline extended",
+          description: `Needed ${extended.extendedDays} days of practice. Target moved to ${extended.newTargetDate}.`,
+        });
+      } else {
+        toast({ title: "Plan created!", description: "Your daily lessons are ready." });
+      }
       onOpenChange(false);
       onSuccess?.(planId);
     },
@@ -2192,22 +2191,12 @@ export function LearningPlanWizard({
 
   const handleClose = () => {
     if (confirmPlan.isPending) return;
+    // Keep in-memory + localStorage state so re-opening resumes where the user
+    // left off. Explicit "Start fresh" button clears the draft.
     onOpenChange(false);
-    // Reset after close animation
-    setTimeout(() => {
-      setStep("setup");
-      setSheetMusicId(null);
-      setPdfSourcePageCount(null);
-      setTotalMeasures(0);
-      setSections([]);
-      setSectionPhases({});
-      setTempo("medium");
-      setCameViaCommunityScore(false);
-    }, 300);
   };
 
   const stepTitles: Record<Step, string> = {
-    setup: "Start a learning plan",
     upload: "Upload sheet music",
     pageRange: "Which pages to analyse",
     processing: "Analysing score",
@@ -2220,7 +2209,7 @@ export function LearningPlanWizard({
   // Full-screen steps — bypass the Dialog entirely
   if (step === "review" && sheetMusicId) {
     return (
-      <ReviewStep
+      <ReviewBarsStep
         sheetMusicId={sheetMusicId}
         pieceTitle={pieceTitle}
         onConfirm={(n) => { setTotalMeasures(n); setStep("sectionMark"); }}
@@ -2235,12 +2224,24 @@ export function LearningPlanWizard({
         sheetMusicId={sheetMusicId}
         totalMeasures={totalMeasures}
         planMovementId={movementId}
+        initialLocalSections={sectionMarkEditor?.localSections ?? null}
+        initialDifficulties={sectionMarkEditor?.difficulties ?? null}
+        onEditorStateChange={(ls, diffs) =>
+          setSectionMarkEditor({ localSections: ls, difficulties: diffs })
+        }
+        onSaveAndExit={() => onOpenChange(false)}
         onNext={(drafts) => {
           setSections(drafts);
           setSectionPhases({});
+          setSectionMarkEditor(null);
           setStep("confirm");
         }}
-        onSkip={() => { setSections([]); setSectionPhases({}); setStep("confirm"); }}
+        onSkip={() => {
+          setSections([]);
+          setSectionPhases({});
+          setSectionMarkEditor(null);
+          setStep("confirm");
+        }}
         onBack={() => cameViaCommunityScore ? setStep("upload") : setStep("review")}
       />
     );
@@ -2256,12 +2257,17 @@ export function LearningPlanWizard({
 
         <StepDots current={step} />
 
-        {step === "setup" && (
-          <SetupStep
-            dailyMinutes={dailyMinutes} setDailyMinutes={setDailyMinutes}
-            playingLevel={playingLevel}
-            onNext={() => setStep("upload")}
-          />
+        {resumedBanner && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+            <span>Resumed from where you left off.</span>
+            <button
+              type="button"
+              onClick={() => { startOver(); }}
+              className="font-medium text-primary hover:underline"
+            >
+              Start fresh
+            </button>
+          </div>
         )}
 
         {step === "upload" && (
@@ -2280,7 +2286,7 @@ export function LearningPlanWizard({
               setCameViaCommunityScore(true);
               setStep("sectionMark");
             }}
-            onBack={() => setStep("setup")}
+            onBack={() => onOpenChange(false)}
           />
         )}
 
@@ -2312,7 +2318,7 @@ export function LearningPlanWizard({
 
         {step === "confirm" && (
           <ConfirmStep
-            pieceTitle={pieceTitle} dailyMinutes={dailyMinutes}
+            pieceTitle={pieceTitle} dailyMinutes={dailyMinutes} setDailyMinutes={setDailyMinutes}
             targetDate={targetDate} totalMeasures={totalMeasures}
             pageCount={pageCount}
             tempo={tempo} setTempo={setTempo}

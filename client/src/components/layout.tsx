@@ -7,10 +7,6 @@ import { Search } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-/** Warm cream chrome for top & bottom bars (reference ~#F5E9CC). */
-const CHROME_CREAM = "bg-[#F5E9CC]";
-const CHROME_BORDER = "border-[#E5D4B0]";
-
 function NavBtn({ href, label, active, testId }: { href: string; label: string; active: boolean; testId?: string }) {
   return (
     <Link href={href}>
@@ -18,8 +14,11 @@ function NavBtn({ href, label, active, testId }: { href: string; label: string; 
         variant="ghost"
         data-testid={testId}
         className={cn(
-          "text-xs sm:text-sm font-semibold px-2 sm:px-3 h-9",
-          active ? "bg-[#1C1C1A]/10 text-[#1C1C1A]" : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
+          "text-xs px-2 sm:px-3 h-9 font-normal tracking-[0.1em] uppercase",
+          "font-sans",
+          active
+            ? "bg-[#0f2036]/10 text-[#0f2036]"
+            : "text-[#0f2036]/70 hover:bg-[#0f2036]/[0.06] hover:text-[#0f2036]",
         )}
       >
         {label}
@@ -43,9 +42,13 @@ export function Navbar() {
 
   const qc = useQueryClient();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
     localStorage.removeItem("isLoggedIn");
     localStorage.removeItem("userId");
+    localStorage.removeItem("username");
+    localStorage.removeItem("firstName");
+    localStorage.removeItem("isNewUser");
     setIsLoggedIn(false);
     qc.clear();
     setLocation("/");
@@ -59,12 +62,13 @@ export function Navbar() {
   };
 
   return (
-    <nav className={cn(
-      "w-full py-3 px-4 md:px-8 xl:px-10 flex justify-between items-center z-50 transition-all duration-300",
-      isLanding
-        ? "absolute top-0 left-0 bg-transparent text-white"
-        : cn("sticky top-0 border-b text-[#1C1C1A] backdrop-blur-sm", CHROME_CREAM, CHROME_BORDER)
-    )}
+    <nav
+      className={cn(
+        "w-full py-3 px-4 md:px-8 xl:px-10 flex justify-between items-center z-50 transition-all duration-300",
+        isLanding
+          ? "absolute top-0 left-0 bg-transparent text-white"
+          : "sticky top-0 border-b border-[#ddd8cc] bg-[#f5f1ea] text-[#0f2036] backdrop-blur-sm",
+      )}
     >
       <div className="flex items-center gap-8 flex-1">
         <Link href="/">
@@ -79,17 +83,16 @@ export function Navbar() {
 
         {isLoggedIn && !isLanding && (
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            <NavBtn href="/" label="Library" active={location === "/"} />
-            <NavBtn href="/profile" label="Profile" active={location === "/profile"} testId="link-profile" />
+            <NavBtn href="/home" label="Home" active={location === "/home"} testId="link-profile" />
           </div>
         )}
 
         {isLoggedIn && !isLanding && (
           <form onSubmit={handleSearch} className="hidden md:flex relative max-w-sm w-full">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#1C1C1A]/45" />
-            <Input 
-              placeholder="Search musicians or pieces..." 
-              className="pl-10 bg-white/85 border border-[#E5D4B0] text-[#1C1C1A] placeholder:text-[#1C1C1A]/45 focus-visible:ring-1 focus-visible:ring-[#C8B388]/40"
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#0f2036]/40" />
+            <Input
+              placeholder="Search musicians or pieces..."
+              className="pl-10 bg-[#f5f1ea] border border-[#ddd8cc] text-[#0f2036] placeholder:text-[#0f2036]/40 focus-visible:ring-1 focus-visible:ring-[#c9a86a]/60"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -103,10 +106,10 @@ export function Navbar() {
             variant="ghost"
             onClick={handleLogout}
             className={cn(
-              "text-xs sm:text-sm font-semibold px-2 sm:px-3 h-9",
+              "text-xs px-2 sm:px-3 h-9 font-normal tracking-[0.1em] uppercase font-sans",
               isLanding
                 ? "text-white hover:text-white hover:bg-white/10"
-                : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
+                : "text-[#0f2036]/70 hover:bg-[#0f2036]/[0.06] hover:text-[#0f2036]",
             )}
             data-testid="button-logout"
           >
@@ -115,20 +118,27 @@ export function Navbar() {
         ) : (
           <>
             <Link href="/auth">
-              <Button variant="ghost" className={cn(
-                "text-base font-semibold",
-                isLanding ? "text-white hover:text-white hover:bg-white/10" : "text-[#1C1C1A]/85 hover:bg-[#1C1C1A]/[0.06]",
-              )}>
+              <Button
+                variant="ghost"
+                className={cn(
+                  "text-xs font-normal tracking-[0.1em] uppercase font-sans",
+                  isLanding
+                    ? "text-white hover:text-white hover:bg-white/10"
+                    : "text-[#0f2036]/70 hover:bg-[#0f2036]/[0.06] hover:text-[#0f2036]",
+                )}
+              >
                 Log In
               </Button>
             </Link>
             <Link href="/auth?tab=register">
-              <Button className={cn(
-                "rounded-full px-6 font-semibold transition-all shadow-none",
-                isLanding 
-                  ? "bg-white text-black hover:bg-white/90" 
-                  : "bg-primary text-primary-foreground hover:bg-primary/90"
-              )}>
+              <Button
+                className={cn(
+                  "rounded-sm px-5 font-sans text-xs tracking-[0.08em] uppercase font-medium transition-all shadow-none",
+                  isLanding
+                    ? "bg-white text-[#0f2036] hover:bg-white/90"
+                    : "bg-[#0f2036] text-[#f5f1ea] hover:bg-[#0f2036]/90",
+                )}
+              >
                 Join Now
               </Button>
             </Link>
@@ -141,29 +151,33 @@ export function Navbar() {
 
 export function Footer() {
   return (
-    <footer className={cn("border-t text-[#1C1C1A] py-16 px-4 md:px-8", CHROME_CREAM, CHROME_BORDER)}>
+    <footer className="border-t border-[#ddd8cc] bg-[#f5f1ea] text-[#0f2036] py-16 px-4 md:px-8">
       <div className="max-w-[1700px] mx-auto grid grid-cols-1 md:grid-cols-4 gap-12">
         <div className="col-span-1 md:col-span-2">
           <div className="mb-4">
             <BrandWordmark size="lg" className="self-start" />
           </div>
-          <p className="text-[#1C1C1A]/65 max-w-sm leading-relaxed">
-            The definitive platform for serious classical musicians to track repertoire, 
+          <p className="text-[#0f2036]/60 max-w-sm leading-relaxed">
+            The definitive platform for serious classical musicians to track repertoire,
             showcase their journey, and connect with peers.
           </p>
         </div>
-        
+
         <div>
-          <h3 className="font-sans font-semibold mb-4 tracking-wide text-sm uppercase text-[#1C1C1A]/55">Company</h3>
+          <h3
+            className="font-sans font-medium mb-4 tracking-[0.12em] text-[11px] uppercase text-[#7a7166]"
+          >
+            Company
+          </h3>
           <ul className="space-y-3">
-            <li><Link href="#" className="text-[#1C1C1A]/80 hover:text-primary transition-colors">About Us</Link></li>
-            <li><Link href="#" className="text-[#1C1C1A]/80 hover:text-primary transition-colors">Careers</Link></li>
-            <li><Link href="#" className="text-[#1C1C1A]/80 hover:text-primary transition-colors">Contact</Link></li>
+            <li><Link href="#" className="text-[#0f2036]/75 hover:text-[#c9a86a] transition-colors text-sm">About Us</Link></li>
+            <li><Link href="#" className="text-[#0f2036]/75 hover:text-[#c9a86a] transition-colors text-sm">Careers</Link></li>
+            <li><Link href="#" className="text-[#0f2036]/75 hover:text-[#c9a86a] transition-colors text-sm">Contact</Link></li>
           </ul>
         </div>
       </div>
-      <div className={cn("max-w-[1700px] mx-auto mt-16 pt-8 border-t text-center md:text-left text-sm text-[#1C1C1A]/50", CHROME_BORDER)}>
-        © 2024 Réperto. All rights reserved.
+      <div className="max-w-[1700px] mx-auto mt-16 pt-8 border-t border-[#ddd8cc] text-center md:text-left text-sm text-[#0f2036]/45">
+        © 2024 Practivo. All rights reserved.
       </div>
     </footer>
   );
